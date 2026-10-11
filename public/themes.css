@@ -1,0 +1,64 @@
+/* Selectable themes. "Indigo ledger" (light) is the default and needs no rules; "Indigo night" is the existing
+   [data-theme="dark"] set. The skins below override the same CSS variables, so every screen follows them.
+   Dark skins also set data-theme="dark" so the existing dark-mode tweaks apply. Loaded last. */
+[data-skin]{--focus:var(--saffron)}
+[data-skin] button.primary:hover{background:var(--ix);filter:brightness(1.12)}
+
+/* Midnight amber: the Dividend Income Planner palette */
+[data-skin="midnight"]{
+  --bg:#0b0f16;--paper:#0b0f16;--card-bg:#121826;--ink:#e7ecf3;--muted:#8a95a8;--line:#232b3a;
+  --navy:#f2b53c;--navy-hover:#ffc659;--accent:#f2b53c;--input-bg:#0f141f;--input-border:#2a3446;--btn-bg:#0f141f;--btn-border:#2a3446;
+  --hover-row:#172033;--selected-row:#1d2840;--border-row:#1b2231;--pill-bg:#1b2231;--pill-color:#8a95a8;--bar-track:#1b2231;
+  --suggest-bg:#0f141f;--suggest-border:#232b3a;--tab-badge-bg:rgba(255,255,255,.12);--tab-badge-color:#e7ecf3;
+  --ix:#161d2c;--ix-soft:#1d2638;--saffron:#f2b53c;
+  --good:#4fd8b6;--good-bg:#0f3a31;--fair:#6bd08a;--fair-bg:#183322;--warn:#f2b53c;--warn-bg:#3a2c0d;--bad:#ef6f9e;--bad-bg:#3d1626;--mute-bg:#1b2231;
+}
+[data-skin="midnight"] header{background:linear-gradient(180deg,#121826,#0b0f16);border-bottom:1px solid #232b3a}
+[data-skin="midnight"] th{background:#0f141f;color:#8a95a8;text-transform:uppercase;font-size:11px;letter-spacing:.04em;border-bottom:1px solid #232b3a}
+[data-skin="midnight"] button.primary{background:#f2b53c;border-color:#f2b53c;color:#1b1200}
+[data-skin="midnight"] .side-nav .viewTab.active,[data-skin="midnight"] .pf-chip.active,[data-skin="midnight"] .views .viewTab.active{background:#f2b53c;color:#1b1200;border-color:#f2b53c}
+[data-skin="midnight"] .dv-col i,[data-skin="midnight"] .hbar i{background:#5c9df2}
+
+/* Ivory & espresso: warm paper, serif-free but softer */
+[data-skin="ivory"]{
+  --bg:#f6f1e7;--paper:#f6f1e7;--card-bg:#fffcf6;--ink:#2b2218;--muted:#7a6a58;--line:#e6dccb;
+  --navy:#3a2b1d;--navy-hover:#2a1f15;--accent:#b5652a;--input-bg:#fffdf9;--input-border:#d8cab4;--btn-bg:#fffdf9;--btn-border:#d8cab4;
+  --hover-row:#f8efe0;--selected-row:#f1e2c9;--border-row:#efe6d7;--pill-bg:#efe6d7;--pill-color:#7a6a58;--bar-track:#efe6d7;
+  --ix:#3a2b1d;--ix-soft:#f0e5d3;--saffron:#c9772f;
+  --good:#3f7d4e;--good-bg:#e3efdf;--fair:#6b8a3a;--fair-bg:#eef2dc;--warn:#b5652a;--warn-bg:#f7e5d1;--bad:#a8432f;--bad-bg:#f6dfd8;--mute-bg:#efe6d7;
+}
+
+/* Forest: deep green header, calm light body */
+[data-skin="forest"]{
+  --bg:#f1f5f1;--paper:#f1f5f1;--card-bg:#ffffff;--ink:#14261c;--muted:#5d7065;--line:#d6e2d8;
+  --navy:#173d2e;--navy-hover:#0f2c21;--accent:#2f7a55;--input-bg:#fff;--input-border:#bfd1c3;--btn-bg:#fff;--btn-border:#bfd1c3;
+  --hover-row:#eaf3ec;--selected-row:#dcebdf;--border-row:#e6eee7;--pill-bg:#e3ece5;--pill-color:#5d7065;--bar-track:#e3ece5;
+  --ix:#173d2e;--ix-soft:#e1ede4;--saffron:#d9a441;
+  --good:#1f7a4d;--good-bg:#dcf0e3;--fair:#5b8a2f;--fair-bg:#ebf3dc;--warn:#b07a12;--warn-bg:#fbefd2;--bad:#b23b2e;--bad-bg:#f9e1dd;--mute-bg:#e3ece5;
+}
+
+/* Slate: high-contrast dark for long sessions */
+[data-skin="slate"]{
+  --bg:#0e1116;--paper:#0e1116;--card-bg:#161b22;--ink:#f0f3f6;--muted:#a3adba;--line:#2d333b;
+  --navy:#58a6ff;--navy-hover:#79b8ff;--accent:#58a6ff;--input-bg:#0d1117;--input-border:#3a414b;--btn-bg:#0d1117;--btn-border:#3a414b;
+  --hover-row:#1c232d;--selected-row:#203048;--border-row:#22282f;--pill-bg:#22282f;--pill-color:#a3adba;--bar-track:#22282f;
+  --suggest-bg:#0d1117;--suggest-border:#2d333b;--tab-badge-bg:rgba(255,255,255,.14);--tab-badge-color:#f0f3f6;
+  --ix:#1f2937;--ix-soft:#222c3a;--saffron:#58a6ff;
+  --good:#3fb950;--good-bg:#12301b;--fair:#7ee787;--fair-bg:#17301c;--warn:#d29922;--warn-bg:#352a0e;--bad:#f85149;--bad-bg:#3c1618;--mute-bg:#22282f;
+}
+[data-skin="slate"] button.primary{background:#238636;border-color:#2ea043;color:#fff}
+
+/* Theme picker */
+.theme-wrap{position:relative}
+.theme-menu{position:absolute;right:0;top:calc(100% + 8px);width:260px;background:var(--card-bg,#fff);color:var(--ink);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px -14px rgba(0,0,0,.45);padding:6px;z-index:60}
+.theme-menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:transparent;color:var(--ink);padding:9px 10px;border-radius:8px;font-weight:600}
+.theme-menu button:hover,.theme-menu button:focus-visible{background:var(--ix-soft)}
+.theme-menu button[aria-checked="true"]::after{content:"✓";margin-left:auto;color:var(--good);font-weight:800}
+.swatch{display:inline-flex;border-radius:6px;overflow:hidden;border:1px solid rgba(0,0,0,.15);flex-shrink:0}
+.swatch i{width:12px;height:22px}
+[data-skin] header .sub{color:rgba(255,255,255,.74)}[data-skin="ivory"] header .eyebrow,[data-skin="forest"] header .eyebrow{color:var(--saffron)}
+/* theme picker groups */
+.theme-menu{width:310px;max-height:min(80vh,620px);overflow:auto}
+.tm-h{margin:10px 10px 4px;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.tm-h small{text-transform:none;letter-spacing:0;font-weight:600}
+.tm-txt{display:flex;flex-direction:column;min-width:0}.tm-txt small{font-weight:500;font-size:11.5px;color:var(--muted);white-space:normal;line-height:1.35;margin-top:1px}

@@ -1,0 +1,1612 @@
+{
+  "TITAN": [
+    {
+      "d": "2026-10-04",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 4515.7,
+      "fv": 1314
+    },
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 4515.7,
+      "fv": 1446
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 4588,
+      "fv": 1446
+    }
+  ],
+  "BLS": [
+    {
+      "d": "2026-10-04",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 216.51,
+      "fv": 730
+    },
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 216.51,
+      "fv": 727
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 220.7,
+      "fv": 727
+    }
+  ],
+  "NATCOPHARM": [
+    {
+      "d": "2026-10-04",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 821.3,
+      "fv": 2226
+    },
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 821.3,
+      "fv": 1585
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 819,
+      "fv": 1585
+    }
+  ],
+  "TCS": [
+    {
+      "d": "2026-10-04",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 2075,
+      "fv": 3787
+    },
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 2075,
+      "fv": 3796
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 2102.2,
+      "fv": 3796
+    }
+  ],
+  "POLYCAB": [
+    {
+      "d": "2026-10-04",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 7990,
+      "fv": 6836
+    },
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 7990,
+      "fv": 8384
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 8125.5,
+      "fv": 8384
+    }
+  ],
+  "PERSISTENT": [
+    {
+      "d": "2026-10-04",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 5367,
+      "fv": 3683
+    },
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 5367,
+      "fv": 5409
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 5519,
+      "fv": 5409
+    }
+  ],
+  "M&M": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 2860,
+      "fv": 3113
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 2849.7,
+      "fv": 3113
+    }
+  ],
+  "POLICYBZR": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "In zone",
+      "price": 980,
+      "fv": 95
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "In zone",
+      "price": 987.1,
+      "fv": 95
+    }
+  ],
+  "VBL": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 425.3,
+      "fv": 301
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 440.45,
+      "fv": 301
+    }
+  ],
+  "HDFCAMC": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "In zone",
+      "price": 2308.1,
+      "fv": 826
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 2353.8,
+      "fv": 826
+    }
+  ],
+  "CRISIL": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 4428.6,
+      "fv": 1181
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 4516,
+      "fv": 1181
+    }
+  ],
+  "UNOMINDA": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 1111,
+      "fv": 711
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 1103.5,
+      "fv": 711
+    }
+  ],
+  "KEI": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 4502,
+      "fv": 3174
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 4603.2,
+      "fv": 3174
+    }
+  ],
+  "MOTHERSON": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 157.03,
+      "fv": 129
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 156.77,
+      "fv": 129
+    }
+  ],
+  "APLAPOLLO": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 2115.7,
+      "fv": 1083
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 2140.7,
+      "fv": 1083
+    }
+  ],
+  "CARTRADE": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 2806.6,
+      "fv": 1637
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 2946.1,
+      "fv": 1637
+    }
+  ],
+  "POONAWALLA": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 433.4,
+      "fv": 76
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 452.75,
+      "fv": 76
+    }
+  ],
+  "KAYNES": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 3399,
+      "fv": 1204
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 3371.8,
+      "fv": 1204
+    }
+  ],
+  "BSE": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 3046,
+      "fv": 937
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 3266.1,
+      "fv": 937
+    }
+  ],
+  "GVT&D": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 4253.2,
+      "fv": 131
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 4246.4,
+      "fv": 131
+    }
+  ],
+  "SYRMA": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 1717.9,
+      "fv": 476
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 1689.9,
+      "fv": 476
+    }
+  ],
+  "ETERNAL": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 313.9,
+      "fv": 12
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 320.55,
+      "fv": 12
+    }
+  ],
+  "SONACOMS": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 805,
+      "fv": 285
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 796.8,
+      "fv": 285
+    }
+  ],
+  "SUDEEPPHRM": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 1199.8,
+      "fv": 463
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 1186.2,
+      "fv": 463
+    }
+  ],
+  "SHILPAMED": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 1064.1,
+      "fv": 254
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 1054.3,
+      "fv": 254
+    }
+  ],
+  "CDSL": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 1242.5,
+      "fv": 248
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 1261.9,
+      "fv": 248
+    }
+  ],
+  "MCX": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 3204,
+      "fv": 672
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 3215.8,
+      "fv": 672
+    }
+  ],
+  "DIXON": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 12700,
+      "fv": 11639
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 12847,
+      "fv": 11639
+    }
+  ],
+  "GROWW": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 180.11,
+      "fv": 50
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 191.47,
+      "fv": 50
+    }
+  ],
+  "PINELABS": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 167.59,
+      "fv": 31
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 171.5,
+      "fv": 31
+    }
+  ],
+  "SHADOWFAX": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 273.15,
+      "fv": 85
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 286.35,
+      "fv": 85
+    }
+  ],
+  "HBLENGINE": [
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 779.35,
+      "fv": 1302
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 762.95,
+      "fv": 1302
+    }
+  ],
+  "STLTECH": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 955.35,
+      "fv": 52
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 1040,
+      "fv": 52
+    }
+  ],
+  "HFCL": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 238.36,
+      "fv": 33
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 262.78,
+      "fv": 33
+    }
+  ],
+  "AVALON": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 2280.2,
+      "fv": 603
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 2315.8,
+      "fv": 603
+    }
+  ],
+  "RRKABEL": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 2518.2,
+      "fv": 2245
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 2655.1,
+      "fv": 2245
+    }
+  ],
+  "AZAD": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 2860.9,
+      "fv": 496
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 2964,
+      "fv": 496
+    }
+  ],
+  "ACUTAAS": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 3196.5,
+      "fv": 1838
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 3173.4,
+      "fv": 1838
+    }
+  ],
+  "YATHARTH": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 1033.7,
+      "fv": 575
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 1009.5,
+      "fv": 575
+    }
+  ],
+  "SKYGOLD": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 810.65,
+      "fv": 677
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 846.2,
+      "fv": 677
+    }
+  ],
+  "SENORES": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 1349.6,
+      "fv": 661
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 1329,
+      "fv": 661
+    }
+  ],
+  "MTARTECH": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 7797,
+      "fv": 599
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 7520,
+      "fv": 599
+    }
+  ],
+  "MOSCHIP": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 198.03,
+      "fv": 49
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 197.72,
+      "fv": 49
+    }
+  ],
+  "HINDCOPPER": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "Wait (far above)",
+      "price": 462.15,
+      "fv": 301
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 483,
+      "fv": 301
+    }
+  ],
+  "TATACAP": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 319.3,
+      "fv": 99
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 319.7,
+      "fv": 99
+    }
+  ],
+  "CAMS": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 677.25,
+      "fv": 231
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 682.65,
+      "fv": 231
+    }
+  ],
+  "CHOLAFIN": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 1580,
+      "fv": 683
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 1606.8,
+      "fv": 683
+    }
+  ],
+  "SHRIRAMFIN": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 945,
+      "fv": 521
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 970.9,
+      "fv": 521
+    }
+  ],
+  "NUVAMA": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 1701.4,
+      "fv": 691
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 1850,
+      "fv": 691
+    }
+  ],
+  "TVSMOTOR": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 4021,
+      "fv": 1713
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 4000.6,
+      "fv": 1713
+    }
+  ],
+  "LAURUSLABS": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 1984,
+      "fv": 299
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 1971,
+      "fv": 299
+    }
+  ],
+  "DIVISLAB": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 9249,
+      "fv": 2508
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 9215.5,
+      "fv": 2508
+    }
+  ],
+  "SANSERA": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 4276.6,
+      "fv": 1637
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 4208.5,
+      "fv": 1637
+    }
+  ],
+  "COFORGE": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 1826,
+      "fv": 1698
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 1841.6,
+      "fv": 1698
+    }
+  ],
+  "KALYANKJIL": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 528.5,
+      "fv": 459
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 572.3,
+      "fv": 459
+    }
+  ],
+  "WAAREEENER": [
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 2340,
+      "fv": 5656
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 2369.9,
+      "fv": 5656
+    }
+  ],
+  "LALPATHLAB": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 2005.1,
+      "fv": 1157
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 2008.5,
+      "fv": 1157
+    }
+  ],
+  "ICICIBANK": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 1310.6,
+      "fv": 745
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 1331,
+      "fv": 745
+    }
+  ],
+  "BHARTIARTL": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 1741.1,
+      "fv": 1542
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "In zone",
+      "price": 1776.8,
+      "fv": 1542
+    }
+  ],
+  "HEROMOTOCO": [
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 5168,
+      "fv": 10462
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 5045,
+      "fv": 10462
+    }
+  ],
+  "HAL": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 4601,
+      "fv": 3660
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 4718,
+      "fv": 3660
+    }
+  ],
+  "MAXHEALTH": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "In zone",
+      "price": 940.95,
+      "fv": 375
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "In zone",
+      "price": 901.85,
+      "fv": 375
+    }
+  ],
+  "BAJFINANCE": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 948.3,
+      "fv": 319
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 971.2,
+      "fv": 319
+    }
+  ],
+  "HINDUNILVR": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "In zone",
+      "price": 1836,
+      "fv": 1107
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "In zone",
+      "price": 1860.4,
+      "fv": 1107
+    }
+  ],
+  "INFY": [
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 1035,
+      "fv": 2058
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 1013.65,
+      "fv": 2058
+    }
+  ],
+  "HDFCBANK": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "In zone",
+      "price": 721.2,
+      "fv": 423
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "In zone",
+      "price": 706.3,
+      "fv": 423
+    }
+  ],
+  "COALINDIA": [
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 420.4,
+      "fv": 1380
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 424.45,
+      "fv": 1380
+    }
+  ],
+  "GULFOILLUB": [
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 1093,
+      "fv": 2158
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 1078.9,
+      "fv": 2158
+    }
+  ],
+  "IGL": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 142.79,
+      "fv": 158
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 141.01,
+      "fv": 158
+    }
+  ],
+  "RECLTD": [
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 287.75,
+      "fv": 648
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 298.45,
+      "fv": 648
+    }
+  ],
+  "HCLTECH": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 1243.1,
+      "fv": 1571
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 1201.9,
+      "fv": 1571
+    }
+  ],
+  "ASIANPAINT": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 2407,
+      "fv": 1051
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 2361.1,
+      "fv": 1051
+    }
+  ],
+  "ITC": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 255.9,
+      "fv": 354
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 266.95,
+      "fv": 354
+    }
+  ],
+  "GNFC": [
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 589.15,
+      "fv": 993
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 596.8,
+      "fv": 993
+    }
+  ],
+  "POWERGRID": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "In zone",
+      "price": 254.55,
+      "fv": 175
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "In zone",
+      "price": 257.4,
+      "fv": 175
+    }
+  ],
+  "RELIANCE": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "In zone",
+      "price": 1167.7,
+      "fv": 716
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "In zone",
+      "price": 1194.7,
+      "fv": 716
+    }
+  ],
+  "SBIN": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 954.1,
+      "fv": 906
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "Above zone",
+      "price": 956.6,
+      "fv": 906
+    }
+  ],
+  "PIDILITIND": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 1464,
+      "fv": 643
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 1476,
+      "fv": 643
+    }
+  ],
+  "BAJAJ-AUTO": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 10045,
+      "fv": 12027
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 9990,
+      "fv": 12027
+    }
+  ],
+  "COLPAL": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "In zone",
+      "price": 1735,
+      "fv": 713
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "In zone",
+      "price": 1784.6,
+      "fv": 713
+    }
+  ],
+  "MARUTI": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 11386,
+      "fv": 13588
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 11544,
+      "fv": 13588
+    }
+  ],
+  "HINDALCO": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 941.85,
+      "fv": 1346
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair",
+      "status": "In zone",
+      "price": 945,
+      "fv": 1346
+    }
+  ],
+  "PWL": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 120.17,
+      "fv": 6
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 133.05,
+      "fv": 6
+    }
+  ],
+  "PCJEWELLER": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "Wait (far above)",
+      "price": 12.82,
+      "fv": 9.84
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "Wait (far above)",
+      "price": 13.09,
+      "fv": 9.84
+    }
+  ],
+  "JIOFIN": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "In zone",
+      "price": 212.5,
+      "fv": 127
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "In zone",
+      "price": 215.77,
+      "fv": 127
+    }
+  ],
+  "AEROFLEX": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 521.35,
+      "fv": 118
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 539.35,
+      "fv": 118
+    }
+  ],
+  "E2E": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 648,
+      "fv": 30
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 682,
+      "fv": 30
+    }
+  ],
+  "VINCOFE": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 178.95,
+      "fv": 151
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 183.4,
+      "fv": 151
+    }
+  ],
+  "BLACKBUCK": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 606.15,
+      "fv": 319
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Above zone",
+      "price": 598.2,
+      "fv": 319
+    }
+  ],
+  "RPTECH": [
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 953.15,
+      "fv": 1431
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 948.15,
+      "fv": 1431
+    }
+  ],
+  "PNGJL": [
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 581.95,
+      "fv": 886
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 586.85,
+      "fv": 886
+    }
+  ],
+  "SENCO": [
+    {
+      "d": "2026-10-06",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 317.4,
+      "fv": 777
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Undervalued",
+      "status": "In zone",
+      "price": 321.6,
+      "fv": 777
+    }
+  ],
+  "DELHIVERY": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 400,
+      "fv": 26
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Above zone",
+      "price": 404.85,
+      "fv": 26
+    }
+  ],
+  "APOLLO": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 402,
+      "fv": 78
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 404,
+      "fv": 78
+    }
+  ],
+  "ANANDRATHI": [
+    {
+      "d": "2026-10-06",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 2132,
+      "fv": 355
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Very rich",
+      "status": "Wait (far above)",
+      "price": 2153,
+      "fv": 355
+    }
+  ],
+  "GRAVITA": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 1424,
+      "fv": 1167
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "Above zone",
+      "price": 1478.3,
+      "fv": 1167
+    }
+  ],
+  "SAFARI": [
+    {
+      "d": "2026-10-06",
+      "view": "Fair to rich",
+      "status": "In zone",
+      "price": 1309,
+      "fv": 878
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Fair to rich",
+      "status": "In zone",
+      "price": 1308.8,
+      "fv": 878
+    }
+  ],
+  "SHAILY": [
+    {
+      "d": "2026-10-06",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 3013,
+      "fv": 1620
+    },
+    {
+      "d": "2026-10-08",
+      "view": "Rich",
+      "status": "Wait (far above)",
+      "price": 3072.3,
+      "fv": 1620
+    }
+  ]
+}

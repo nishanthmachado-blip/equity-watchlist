@@ -1,0 +1,50 @@
+# Equity Watchlist + MongoDB. Works the same on Windows (Docker Desktop), a Mac mini (Docker Desktop / OrbStack) and
+# a Linux server on AWS.
+#
+#   1. cp .env.example .env   and set MONGO_PASSWORD (letters and digits) and SETUP_CODE
+#   2. docker compose up -d --build
+#   3. open http://localhost:4173 and create the owner account with SETUP_CODE
+#
+# Data lives in the "mongo-data" volume: rebuilding or updating the app never touches it. Back it up with
+# scripts/backup-mongo.sh (or .ps1 on Windows).
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-ewadmin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?Set MONGO_PASSWORD in .env}
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - "127.0.0.1:27019:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  app:
+    build: .
+    image: equity-watchlist:latest
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      MONGO_URL: mongodb://${MONGO_USER:-ewadmin}:${MONGO_PASSWORD}@mongo:27017/?authSource=admin
+      MONGO_DB: ${MONGO_DB:-equity_watchlist}
+      HOST: 0.0.0.0
+      DATA_DIR: /data
+    ports:
+      # Only this computer can open the app by default. On a home network set BIND_ADDR=0.0.0.0 in .env.
+      - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-4173}:4173"
+    volumes:
+      # Read once on the very first start (empty database) to bring in data from an existing install, then unused.
+      - ./data:/data:ro
+    stop_grace_period: 20s
+
+volumes:
+  mongo-data:

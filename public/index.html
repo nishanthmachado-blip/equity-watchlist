@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Equity Watchlist</title><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#1f2460"><link rel="icon" href="/icons/icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Watchlist"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=JetBrains+Mono:wght@400;600;700&family=Playfair+Display:wght@700;800&family=Source+Serif+4:ital,wght@0,400;0,600;1,400;1,600&display=swap"><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="theme.css"><link rel="stylesheet" href="home.css"><link rel="stylesheet" href="themes.css"><link rel="stylesheet" href="shell.css"><link rel="stylesheet" href="networth.css"><link rel="stylesheet" href="redesigns.css"><script>try{const T={"indigo-night":[1,0],"midnight":[1,1],"ivory":[0,1],"forest":[0,1],"slate":[1,1],"terminal":[1,1],"glass":[1,1],"editorial":[0,1],"vibe":[0,1],"vibe-night":[1,1]};let id=localStorage.getItem("equity-skin");if(!localStorage.getItem("equity-skin-chosen"))id="indigo";const t=T[id];if(t){if(t[0])document.documentElement.setAttribute("data-theme","dark");if(t[1])document.documentElement.setAttribute("data-skin",id)}}catch(e){}</script></head>
+<body>
+  <header><div><p class="eyebrow">INDIAN EQUITY RESEARCH</p><h1>Is this stock worth buying?</h1><p class="sub">Enter any NSE stock and get a fair-value estimate, buy zone and a Value / Growth verdict.</p></div><div class="header-actions"><button id="bellBtn" class="ghost bell-btn" aria-label="Alerts" title="Alerts: buy-zone entries and verdict changes">🔔<span id="bellCount" class="bell-count" hidden>0</span></button><button id="menuBtn" class="ghost menu-btn" aria-controls="sideMenu" aria-expanded="false">☰ Menu</button><button id="themeToggle" class="ghost theme-toggle" title="Toggle color theme" aria-label="Toggle color theme">🌙 Dark</button><span id="provider" class="pill muted">Local research mode</span></div></header>
+  <div id="menuScrim" class="scrim" hidden></div>
+  <aside id="sideMenu" class="side-menu" aria-label="More tools" aria-hidden="true">
+    <div class="side-head"><strong>Menu</strong><button id="menuPin" type="button" class="ghost menu-pin" aria-pressed="false" title="Keep the menu open">📌</button><button id="menuClose" type="button" class="modal-close" aria-label="Close menu">&times;</button></div>
+    <nav class="side-nav" aria-label="View">
+      <p class="side-label">Main</p>
+      <button id="viewHome" class="viewTab active" title="Value a stock"><span class="ico" aria-hidden="true">🔎</span><span class="lbl">Value a stock</span></button>
+      <button id="viewLists" class="viewTab" title="Watchlists"><span class="ico" aria-hidden="true">⭐</span><span class="lbl">Watchlists</span></button>
+      <button id="viewMarket" class="viewTab" title="Market today"><span class="ico" aria-hidden="true">📈</span><span class="lbl">Market today</span></button>
+      <button id="viewUs" class="viewTab" title="US stocks"><span class="ico" aria-hidden="true">🇺🇸</span><span class="lbl">US stocks</span></button>
+      <button id="viewDividends" class="viewTab" title="Dividend income planner"><span class="ico" aria-hidden="true">💰</span><span class="lbl">Dividend income planner</span></button>
+      <p class="side-label">Your portfolio</p>
+      <button id="viewNetworth" class="viewTab" title="Net worth"><span class="ico" aria-hidden="true">🏦</span><span class="lbl">Net worth</span></button>
+      <button id="viewTax" class="viewTab" title="Tax view"><span class="ico" aria-hidden="true">🧾</span><span class="lbl">Tax view</span></button>
+      <button id="viewPortfolio" class="viewTab" title="My holdings"><span class="ico" aria-hidden="true">📂</span><span class="lbl">My holdings</span></button>
+      <button id="viewModel" class="viewTab" title="Model portfolio"><span class="ico" aria-hidden="true">🧩</span><span class="lbl">Model portfolio</span></button>
+      <button id="viewFocus" class="viewTab" title="Focus list"><span class="ico" aria-hidden="true">🎯</span><span class="lbl">Focus list</span></button>
+      <button id="viewInvest" class="viewTab" title="Where to invest ₹X"><span class="ico" aria-hidden="true">₹</span><span class="lbl">Where to invest ₹X</span></button>
+      <button id="viewAlerts" class="viewTab" title="Alerts"><span class="ico" aria-hidden="true">🔔</span><span class="lbl">Alerts</span></button>
+      <button id="viewIntegrations" class="viewTab" title="Connect brokers"><span class="ico" aria-hidden="true">🔗</span><span class="lbl">Connect brokers</span></button>
+      <p class="side-label">Screens <small>(selected watchlist)</small></p>
+      <button id="viewValuation" class="viewTab" title="Valuation table"><span class="ico" aria-hidden="true">📊</span><span class="lbl">Valuation table</span></button>
+      <button id="viewPicks" class="viewTab" title="Value · Growth · Dividend"><span class="ico" aria-hidden="true">🧮</span><span class="lbl">Value · Growth · Dividend</span></button>
+      <button id="viewFunds" class="viewTab" title="Mutual fund X-ray"><span class="ico" aria-hidden="true">🧺</span><span class="lbl">Mutual fund X-ray</span></button>
+      <button id="viewGrowth" class="viewTab" hidden>Growth screen</button>
+      <details class="side-group" id="sideResearch"><summary class="side-label"><span class="lbl">My research <small>(curated lists, plan, thesis)</small></span></summary>
+        <button id="viewWatchlist" class="viewTab" title="Curated watchlist tabs"><span class="ico" aria-hidden="true">⭐</span><span class="lbl">Curated watchlist tabs</span></button>
+        <button id="viewPlan" class="viewTab" title="Buying plan"><span class="ico" aria-hidden="true">🪜</span><span class="lbl">Buying plan</span></button>
+        <button id="viewThesis" class="viewTab" title="Thesis"><span class="ico" aria-hidden="true">📝</span><span class="lbl">Thesis</span></button>
+        <button id="viewReports" class="viewTab" title="Reports"><span class="ico" aria-hidden="true">🖨️</span><span class="lbl">Reports</span></button>
+      </details>
+      <p class="side-label">Data</p>
+      <button id="refresh" class="primary" title="Refresh prices &amp; news"><span class="ico" aria-hidden="true">⟳</span><span class="lbl">Refresh prices &amp; news</span></button>
+    </nav>
+  </aside>
+  <main>
+    <div id="freshBar" class="fresh-bar" hidden></div>
+    <div id="listBar" class="list-bar" role="group" aria-label="Watchlist"><label for="listSelect">Watchlist</label><select id="listSelect"></select><button id="listNew" type="button" class="ghost">+ New watchlist</button><button id="listManage" type="button" class="ghost">Choose stocks</button><button id="listOpen" type="button" class="ghost">⭐ Open watchlist</button><span id="listCount" class="hint"></span></div>
+    <p id="backHome" class="back-home" hidden><button type="button" class="ghost" id="backHomeBtn">← Value a stock</button></p>
+
+    <section id="homeView">
+      <form id="vsForm" class="vs-box" autocomplete="off">
+        <label for="vsSymbol" class="vs-label">Stock to value</label>
+        <div class="vs-row"><div class="vs-search"><input id="vsSymbol" placeholder="Type a company name, NSE symbol or BSE code, e.g. Titan, INDIGO, 544252" autofocus autocomplete="off" spellcheck="false"><div id="vsDrop" class="vs-drop" role="listbox" aria-label="Suggestions" hidden></div></div><button id="vsBtn" class="primary" type="submit">Get valuation</button></div>
+        <p id="vsStatus" class="hint" role="status">The stock is added to your watchlist and its fundamentals are fetched automatically.</p>
+      </form>
+      <section id="vsResult" aria-live="polite"></section>
+      <section id="vsRecentWrap" hidden><h2 class="vs-h2">Recently valued</h2><div class="table-wrap"><table><thead><tr><th>Company</th><th>Price</th><th>Verdict</th><th>Valuation</th><th>Buy zone</th><th>Status</th></tr></thead><tbody id="vsRecent"></tbody></table></div></section>
+    </section>
+
+
+    <section id="alertsView" hidden>
+      <p class="hint">Logged whenever a stock enters its buy zone or its verdict changes class. Checked after every price refresh (every 15 minutes while the market is open and this server is running) and whenever you open the app. A stock is not alerted twice for the same thing within 24 hours.</p>
+      <section class="toolbar"><button id="alMarkAll" type="button" class="primary">Mark all read</button><button id="alNotify" type="button" class="ghost">Enable browser notifications</button><span id="alStatus" class="hint"></span></section>
+      <div id="alList"></div>
+    </section>
+
+    <section id="investView" hidden>
+      <p class="hint">Splits an amount across stocks that are in their buy zone (with a trustworthy zone), weighted by quality and upside to base fair value, and capped per stock and per sector against the portfolio you would have afterwards. Holdings come from your synced brokers. A planning aid, not advice: check each stock first.</p>
+      <form id="ivForm" class="toolbar" style="display:flex">
+        <label class="lens-control">Amount ₹<input id="ivAmount" type="number" min="1000" step="1000" value="100000" style="width:130px"></label>
+        <label class="lens-control">Max per stock %<input id="ivStock" type="number" min="1" max="100" value="15" style="width:70px"></label>
+        <label class="lens-control">Max per sector %<input id="ivSector" type="number" min="1" max="100" value="30" style="width:70px"></label>
+        <label class="lens-control">Max ₹ per stock<input id="ivStockAmt" type="number" min="0" step="1000" placeholder="optional" style="width:110px"></label>
+        <label class="lens-control">Only<select id="ivTag"><option value="">any buy-zone stock</option><option>Value</option><option>Growth</option><option>Dividend</option></select></label>
+        <label class="lens-control">From<select id="ivScope"><option value="watchlist">selected watchlist</option><option value="holdings">stocks I already hold</option></select></label>
+        <button id="ivBtn" class="primary" type="submit">Suggest split</button><span id="ivStatus" class="hint"></span>
+      </form>
+      <section class="table-wrap"><table style="min-width:0"><thead><tr><th>Stock</th><th>Verdict</th><th>Price</th><th>Shares</th><th>Amount</th><th>Weight after</th><th>Upside to base</th></tr></thead><tbody id="ivRows"></tbody></table></section>
+      <p class="hint" id="ivNote"></p>
+    </section>
+
+    <section id="divView" hidden>
+      <p class="hint">Plan the income your dividend stocks pay. Dividend per share is the last 12 months of payouts (Yahoo history, refreshed weekly); edit it if you expect a different payout. Payment months come from the last three years. Figures are before tax and are estimates, not promises: companies can cut dividends.</p>
+      <nav class="views sub dv-tabs" aria-label="Dividend planner"><button type="button" class="viewTab active" data-dvtab="mine">My dividend income</button><button type="button" class="viewTab" data-dvtab="goal">Goal planner</button></nav>
+      <div id="dvMine">
+      <section class="metrics" id="dvCards" aria-label="Dividend income summary"></section>
+      <section class="dv-target" id="dvTarget"></section>
+      <section class="toolbar dv-settings" aria-label="Planner settings">
+        <label class="lens-control">Target income ₹ / month<input id="dvTargetIn" type="number" min="0" step="1000" style="width:120px"></label>
+        <label class="lens-control">Invest ₹ / month<input id="dvContrib" type="number" min="0" step="1000" style="width:110px"></label>
+        <label class="lens-control">Dividend growth % / yr<input id="dvGrowth" type="number" min="0" max="30" step="0.5" style="width:70px"></label>
+        <label class="lens-control">Yield on new money %<input id="dvNewYield" type="number" min="0.5" max="15" step="0.1" style="width:70px"></label>
+        <label class="lens-control"><input id="dvReinvest" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">Reinvest dividends</label>
+        <span id="dvSaveStatus" class="hint"></span>
+      </section>
+      <section class="toolbar" aria-label="Add a dividend stock">
+        <div class="vs-search dv-search"><input id="dvSym" placeholder="Add a dividend stock: name, NSE symbol or BSE code" autocomplete="off"><div id="dvDrop" class="vs-drop" role="listbox" hidden></div></div>
+        <input id="dvShares" type="number" min="0" step="1" placeholder="Shares" style="min-width:90px;flex:0">
+        <button id="dvAdd" type="button" class="primary">Add stock</button>
+        <button id="dvImport" type="button" class="ghost">Import my holdings</button>
+        <button id="dvRefresh" type="button" class="ghost">Refresh dividend data</button>
+        <label class="lens-control"><input id="dvHideZero" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0" checked>Hide non-payers</label>
+        <span id="dvStatus" class="hint"></span>
+      </section>
+      <section class="table-wrap"><table class="dv-table"><thead><tr><th>Stock</th><th>Shares</th><th>Price</th><th>Dividend / share (12m)</th><th>Yield</th><th>Annual income</th><th>Per month</th><th>Safety</th><th>Years paid</th><th>5-yr growth</th><th>Pays in</th><th></th></tr></thead><tbody id="dvRows"></tbody></table></section>
+      <section class="report-grid two">
+        <div class="report-card"><h3>Income calendar</h3><p class="hint">Expected payouts by month, from each stock's usual payment months.</p><div id="dvCalendar" class="dv-cal"></div></div>
+        <div class="report-card"><h3>Path to your target</h3><p class="hint" id="dvProjNote"></p><div id="dvProj" class="dv-proj"></div></div>
+      </section>
+      <div class="report-card" style="margin-top:14px"><h3>Dividend ideas from your tracked stocks</h3><p class="hint">Highest trailing yield among stocks you track whose dividend is rated Safe or Watch. Check the safety reason before adding.</p><div id="dvIdeas"></div></div>
+      </div>
+      <div id="dvGoal" hidden>
+        <section class="metrics" id="dgCards" aria-label="Goal summary"></section>
+        <section class="toolbar dv-settings" aria-label="Goal settings">
+          <label class="lens-control">Monthly dividend goal ₹<input id="dgGoal" type="number" min="0" step="1000" style="width:130px"></label>
+          <label class="lens-control">Calculation method<select id="dgMethod"><option value="equalDiv">Equal dividend contribution</option><option value="equalCap">Equal capital per stock</option><option value="yieldWeighted">Yield-weighted capital</option></select></label>
+          <span id="dgMethodHelp" class="hint"></span><span id="dgSave" class="hint"></span>
+        </section>
+        <div class="report-card">
+          <div class="toolbar" style="margin:0 0 10px"><button id="dgTop" type="button" class="primary">Select top 15 by yield</button><button id="dgMine" type="button" class="ghost">Add my dividend stocks</button><button id="dgCsv" type="button" class="ghost">Download CSV</button><button id="dgReset" type="button" class="ghost">Reset to starter list</button></div>
+          <div class="toolbar" style="margin:0 0 12px">
+            <div class="vs-search dv-search"><input id="dgSym" placeholder="Add a stock: name or symbol (live price and dividend filled in when available)" autocomplete="off"><div id="dgDrop" class="vs-drop" role="listbox" hidden></div></div>
+            <input id="dgPrice" type="number" min="0" step="0.5" placeholder="Price ₹ (optional)" style="min-width:130px;flex:0">
+            <input id="dgDiv" type="number" min="0" step="0.1" placeholder="Div / share ₹ (optional)" style="min-width:150px;flex:0">
+            <button id="dgAdd" type="button" class="ghost">+ Add</button>
+          </div>
+          <div class="table-wrap"><table class="dg-table"><thead><tr><th><span class="sr-only">Select</span></th><th>Company</th><th>Price ₹</th><th>Div / share ₹</th><th>Yield</th><th>Dividend safety</th><th></th></tr></thead><tbody id="dgRows"></tbody></table></div>
+          <p class="hint">Live = today's price or the last 12 months of payouts for stocks the app tracks; snapshot = starter values; yours = a figure you typed. Edit any figure to test your own assumptions.</p>
+        </div>
+        <section class="report-grid two" id="dgOut">
+          <div class="report-card"><h3>Your plan</h3><div class="table-wrap"><table style="min-width:0"><thead><tr><th>Company</th><th>Shares</th><th>Capital ₹</th><th>Annual div ₹</th><th>Monthly ₹</th></tr></thead><tbody id="dgPlan"></tbody></table></div></div>
+          <div class="report-card"><h3>Capital allocation</h3><div class="donutwrap"><div class="donut" id="dgDonut" role="img"><div class="donutcenter"><strong id="dgDonutCap">₹0</strong><span>capital</span></div></div><div class="legend" id="dgLegend"></div></div></div>
+        </section>
+        <p class="hint">Yield shown is trailing (dividend ÷ price) and will change with the market. Dividends can be cut. Not investment advice.</p>
+      </div>
+    </section>
+
+    <section id="listsView" hidden>
+      <div class="wl-top"><div class="wl-tabs" id="wlTabs" role="tablist" aria-label="Your watchlists"></div><button type="button" class="primary" id="wlNew">+ New watchlist</button></div>
+      <div class="wl-head"><div><h2 id="wlName"></h2><p class="hint" id="wlMeta"></p></div><div class="wl-head-acts"><button type="button" class="ghost" id="wlRename">✎ Rename</button><button type="button" class="ghost danger-text" id="wlDelete">Delete</button></div></div>
+      <div class="wl-add us-search"><input id="wlQ" placeholder="Add a stock to this watchlist: company name or NSE symbol (e.g. IOC, ONGC, Titan)" autocomplete="off" aria-label="Add a stock"><div id="wlDrop" class="us-drop" hidden></div></div>
+      <p class="hint" id="wlStatus" role="status"></p>
+      <section class="metrics wl-cards" id="wlCards"></section>
+      <section class="toolbar wl-tools"><div id="wlFilters" class="wl-filters"></div><label class="lens-control">Sort<select id="wlSort"><option value="upside">Upside to fair value</option><option value="zone">Closest to buy zone</option><option value="pe">Lowest P/E</option><option value="name">Name</option><option value="added">Recently added</option></select></label></section>
+      <section class="table-wrap"><table class="wl-table"><thead><tr><th>Stock</th><th class="num">Price</th><th class="num">P/E <small>(sector)</small></th><th>Verdict</th><th>Buy zone</th><th class="num">Upside</th><th>52-week range</th><th class="num">Div yield</th><th></th></tr></thead><tbody id="wlRows"></tbody></table></section>
+      <p class="vs-fine">The watchlist chosen here is also the one the Valuation table, Value · Growth · Dividend picks, plan and reports use. Click a stock for its full valuation.</p>
+    </section>
+    <section id="modelView" hidden>
+      <p class="hint">Builds a model portfolio for your risk profile, goal and style: how to split money between equity, debt and gold, and which stocks (from the ones this app has valued) to hold, with weights that respect per-stock and per-sector limits. A rule-based starting point for your own research, not investment advice.</p>
+      <div class="report-card md-form">
+        <div class="md-row"><span class="md-lbl">Risk profile</span><div class="md-seg" id="mdProfile" role="radiogroup" aria-label="Risk profile"></div></div>
+        <div class="md-row"><span class="md-lbl">Style</span><div class="md-seg" id="mdStyle" role="radiogroup" aria-label="Investment style"></div></div>
+        <div class="md-grid">
+          <label>Amount to invest (₹)<input id="mdAmount" inputmode="decimal" placeholder="e.g. 1000000"></label>
+          <label>Number of stocks<select id="mdN"><option value="">Suggested</option><option>10</option><option>15</option><option>20</option><option>25</option><option>30</option></select></label>
+          <label>Goal<select id="mdGoal"></select></label>
+          <label id="mdYearsWrap">Years until you need the money<input id="mdYears" inputmode="decimal" placeholder="e.g. 10"></label>
+        </div>
+        <div class="md-actions"><button type="button" class="primary" id="mdBuild">Build model portfolio</button><span id="mdStatus" class="hint" role="status"></span></div>
+      </div>
+      <div id="mdOut" hidden>
+        <div class="md-two">
+          <div class="report-card"><h3>1 · Split between asset classes</h3><div id="mdMix"></div></div>
+          <div class="report-card"><h3>Basket at a glance</h3><section class="metrics md-stats" id="mdStats"></section><div id="mdSecs"></div></div>
+        </div>
+        <div id="mdWarn"></div>
+        <div class="nw-head" style="margin-top:20px"><h3>2 · Equity basket <small class="hint" id="mdBasketNote"></small></h3><span class="md-acts"><button type="button" class="ghost" id="mdSaveList">⭐ Save as watchlist</button><button type="button" class="ghost" id="mdCsv">⬇ CSV</button></span></div>
+        <section class="table-wrap"><table class="md-table"><thead><tr><th class="num">#</th><th>Stock</th><th class="num">Weight</th><th class="num">Amount</th><th class="num">~Shares</th><th>Verdict</th><th>How to buy</th><th>Why it is in</th></tr></thead><tbody id="mdRows"></tbody></table></section>
+        <p class="vs-fine" id="mdRules"></p>
+      </div>
+    </section>
+    <section id="usView" hidden>
+      <p class="hint">US-listed companies valued from their SEC filings (10-K annual reports via SEC EDGAR, free and official) and the latest price (Stooq, else Yahoo). Fair value = average of a fair P/E for the company's growth and quality and a 10-year free-cash-flow DCF at 9%; it also shows the growth today's price already assumes. Prices and values in US dollars.</p>
+      <section class="toolbar us-tools">
+        <div class="us-search"><input id="usQ" placeholder="Add a US stock: ticker or company (e.g. AAPL, Costco)" autocomplete="off" aria-label="Search US stocks"><div id="usDrop" class="us-drop" hidden></div></div>
+        <div class="md-seg" id="usList"><button type="button" data-list="mine" class="active">My US list</button><button type="button" data-list="popular">Popular large caps</button></div>
+        <button type="button" class="ghost" id="usRefresh">⟳ Refresh</button><span id="usStatus" class="hint" role="status"></span>
+      </section>
+      <section class="toolbar" id="usScreens" aria-label="Screens"></section>
+      <section class="table-wrap"><table class="us-table"><thead><tr><th>Company</th><th class="num">Price</th><th class="num">P/E</th><th class="num">Fair value</th><th class="num">Upside</th><th>Verdict</th><th class="num">Rev growth 3y</th><th class="num">EPS growth 3y</th><th class="num">ROIC</th><th class="num">Net margin</th><th class="num">Debt/equity</th><th class="num">Div yield</th><th>Tags</th></tr></thead><tbody id="usRows"></tbody></table></section>
+      <p class="vs-fine">Annual (10-K) figures from the latest fiscal year; companies filing 20-F (most foreign ADRs) are not covered. Banks and insurers are valued on earnings only. Set SEC_USER_AGENT on the server (your name and email) as SEC asks.</p>
+    </section>
+    <section id="taxView" hidden>
+      <p class="hint">Long- vs short-term gains on what you hold and what you sold this financial year, from your Zerodha Console tradebook (first in, first out, like the tax rules). Listed shares and equity funds: <b>long term after 12 months</b>, taxed 12.5% above ₹1.25 lakh a year; short term taxed 20% (Finance Act 2024 rates, unchanged in Budget 2026). An estimate to plan with, not tax advice: confirm with your CA or Console's Tax P&amp;L.</p>
+      <section class="toolbar"><button type="button" class="primary" id="txPick">⬆ Import tradebook (CSV / Excel)</button><button type="button" class="ghost" id="txClear">Clear tradebook</button><input type="file" id="txFile" accept=".csv,.xlsx,.txt" hidden><span id="txStatus" class="hint" role="status"></span></section>
+      <div id="txImports"></div>
+      <div id="txEmpty" class="fd-empty"><div class="fd-empty-ico">🧾</div><h2>Import your tradebook to see your tax position</h2>
+        <p>Zerodha Console → <b>Reports → Tradebook</b> → segment <b>Equity</b> → pick a date range from your first purchase (one financial year at a time) → <b>Download CSV</b>. Repeat for each year, and for segment <b>Mutual funds</b> if you hold Coin funds. Drop the files here.</p>
+        <p class="hint">The file stays in your private account folder. Holdings bought before 31 Jan 2018 use your actual price (the grandfathering rule is not applied).</p>
+        <button type="button" class="primary" id="txPick2">Choose tradebook file</button></div>
+      <div id="txBody" hidden>
+        <section class="metrics tx-cards" id="txCards"></section>
+        <div id="txWarn"></div>
+        <div class="tx-ideas">
+          <div class="report-card"><h3>💡 Use this year's ₹1.25 L exemption</h3><div id="txIdeaHarvest"></div></div>
+          <div class="report-card"><h3>⏳ Wait a few days, pay less</h3><p class="hint">These profitable lots turn long term soon: selling after the date moves the gain from 20% to 12.5%.</p><div id="txIdeaWait"></div></div>
+          <div class="report-card"><h3>📉 Losses you could book</h3><div id="txIdeaLoss"></div></div>
+        </div>
+        <div class="nw-head" style="margin-top:22px"><h3>Holdings by tax status</h3><span class="hint">Click a row to see its lots</span></div>
+        <section class="table-wrap"><table class="tx-table"><thead><tr><th>Holding</th><th class="num">Qty</th><th class="num">Value</th><th class="num">Long-term gain</th><th class="num">Short-term gain</th><th class="num">Date unknown</th><th>Next lot turns long term</th></tr></thead><tbody id="txRows"></tbody></table></section>
+      </div>
+    </section>
+    <section id="nwView" hidden>
+      <section class="nw-hero" id="nwHero" aria-label="Net worth summary"><p class="hint">Loading…</p></section>
+      <div class="report-card nw-card nw-goals-card"><div class="nw-head"><h3>🎯 Goals</h3><button type="button" class="ghost" id="nwAddGoal">+ Add goal</button></div><div id="nwGoals"></div></div>
+      <section class="toolbar nw-tools"><button type="button" class="primary" id="nwAddAsset">+ Add asset</button><button type="button" class="ghost" id="nwAddLiab">+ Add liability</button><button type="button" class="ghost" id="nwSync" title="Stocks and mutual funds from every logged-in Zerodha account">⟳ Sync from Zerodha</button><span id="nwStatus" class="hint" role="status"></span></section>
+      <section id="nwMix" class="nw-mix" aria-label="Asset mix"></section>
+      <section id="nwCats" class="nw-cats" aria-label="Categories"></section>
+      <div class="nw-head"><h3>Everything you own and owe</h3><span id="nwFilterNote" class="hint"></span></div>
+      <section class="table-wrap nw-table"><table><thead><tr><th>Item</th><th class="num">Value</th><th class="num">Invested</th><th class="num">Gain</th><th>Updated</th><th></th></tr></thead><tbody id="nwRows"></tbody></table></section>
+      <div class="report-card nw-card"><div class="nw-head"><h3>🧺 Mutual funds</h3></div>
+        <p class="hint">Funds bought through Zerodha Coin come in with <b>Sync from Zerodha</b> (read-only <code>get_mf_holdings</code> on Kite MCP). Link each fund to its portfolio in <b>Mutual fund X-ray</b> to count the stocks inside it below.</p>
+        <div id="nwFundAccts"></div>
+        <div class="table-wrap"><table class="nw-fund-table"><thead><tr><th>Fund</th><th class="num">Units</th><th class="num">Avg NAV</th><th class="num">NAV</th><th class="num">Value</th><th class="num">P/L</th><th>X-ray portfolio</th></tr></thead><tbody id="nwFundRows"></tbody></table></div>
+      </div>
+      <div class="report-card nw-card"><div class="nw-head"><h3>🔍 What you really own: stocks + funds look-through</h3></div>
+        <p class="hint">Each stock's value held directly plus its share inside every linked fund (fund value × the stock's weight in the latest portfolio). Shows true concentration and stocks you are doubling up on. Click a row for its valuation.</p>
+        <div class="nw-look-sum" id="nwLookSum"></div><div class="nw-overlap" id="nwOverlap"></div><p class="hint" id="nwLookNote"></p>
+        <div class="table-wrap"><table class="nw-look-table"><thead><tr><th class="num">#</th><th>Stock</th><th class="num">Direct</th><th class="num">Via funds</th><th class="num">Total</th><th>% of equity</th><th>Through</th></tr></thead><tbody id="nwLookRows"></tbody></table></div>
+      </div>
+      <p class="vs-fine">Stock and fund values come from your last broker sync; everything else is what you entered. A snapshot of the total is saved once a day when you open this page, which builds the trend line.</p>
+    </section>
+    <section id="focusView" hidden>
+      <p class="hint">Ranks the stocks you hold so you can concentrate on your best 25–30. Score = 65% business quality (returns on capital, growth, debt, cash conversion, promoter, dividend) + 35% valuation, less penalties for a broken thesis or old data. <b>Accumulate</b> = top of the list and reasonably priced · <b>Hold</b> = keep, add only on dips · <b>Trim</b> = too large or too expensive for its rank · <b>Exit</b> = weak business, a candidate to recycle into the top list. A rule-based aid on public data, not advice; selling can trigger capital-gains tax.</p>
+      <section class="toolbar"><label class="lens-control">Focus list size<select id="fcN"><option>25</option><option selected>30</option><option>20</option><option>15</option></select></label><label class="lens-control">Account<select id="fcAcc"><option value="">All accounts</option></select></label><span id="fcStatus" class="hint"></span></section>
+      <section class="metrics" id="fcCards" aria-label="Focus summary"></section>
+      <section class="toolbar" id="fcFilters" aria-label="Filter by action"></section>
+      <section class="table-wrap"><table class="fc-table"><thead><tr><th>#</th><th>Stock</th><th>Action</th><th>Score</th><th>Quality</th><th>Valuation</th><th>Weight now → target</th><th>Suggested move</th><th>Why</th></tr></thead><tbody id="fcRows"></tbody></table></section>
+      <div class="report-card" id="fcIdeasCard" style="margin-top:14px" hidden><h3>Ideas to round out your list</h3><p class="hint">You hold fewer stocks than the list size. These are the best-scoring stocks on your watchlist that you do not own yet (good quality, in or near their buy zone).</p><div id="fcIdeas"></div></div>
+    </section>
+
+    <section id="marketView" hidden>
+      <nav class="views sub mk-tabs" aria-label="Market list"><button type="button" class="viewTab active" data-mk="52high">52-week highs</button><button type="button" class="viewTab" data-mk="52low">52-week lows</button><button type="button" class="viewTab" data-mk="volume">Most active · volume</button><button type="button" class="viewTab" data-mk="value">Most active · value</button><button type="button" class="viewTab" data-mk="gainers">Top gainers</button><button type="button" class="viewTab" data-mk="losers">Top losers</button></nav>
+      <section class="toolbar"><label class="lens-control">Source<select id="mkSource"><option value="mine">My watchlist + holdings (Kite live quotes)</option><option value="nse">Whole market (NSE, often blocked)</option></select></label><label class="lens-control" id="mkMineWrap" hidden><input id="mkMine" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">Only stocks I track or hold</label><input id="mkSearch" placeholder="Filter by symbol or name" style="min-width:200px;flex:0"><button id="mkRefresh" type="button" class="ghost">Refresh</button><span id="mkStatus" class="hint"></span></section>
+      <p id="mkNote" class="mk-note" hidden></p>
+      <section class="table-wrap"><table class="mk-table"><thead id="mkHead"></thead><tbody id="mkRows"></tbody></table></section>
+      <p class="hint">Today's movers among the stocks you track and hold, from your Kite login's live quotes (Yahoo if Kite is not logged in). 52-week lists show stocks within 2% of their 52-week high or low. "Whole market (NSE)" asks NSE's own lists, which NSE blocks on many home connections. Refreshed every 5 minutes in market hours; click a row to value the stock.</p>
+    </section>
+
+    <section id="fundView" hidden>
+      <div class="fd-top"><nav class="views sub fd-tabs" id="fdTabs" aria-label="Saved funds"></nav><button type="button" class="primary" id="fdAdd">+ Add a fund</button></div>
+      <section id="fdImport" class="report-card fd-import" hidden>
+        <h3>Add a mutual fund</h3>
+        <p class="hint">Every fund house publishes its full portfolio each month (a SEBI rule), usually as an Excel file under <b>Downloads</b>, <b>Disclosures</b> or <b>Monthly portfolio</b> on its website (for example Helios MF or Trust MF). Upload that file, or copy the holdings table from Value Research / Moneycontrol and paste it below. Only equity holdings are kept.</p>
+        <div class="toolbar"><input id="fdName" placeholder="Fund name, e.g. Helios Flexi Cap Fund" style="min-width:280px"><input id="fdAsOf" placeholder="Portfolio date (optional), e.g. Sep 2026" style="min-width:200px;flex:0"></div>
+        <div class="fd-drop" id="fdDrop" tabindex="0"><input type="file" id="fdFile" accept=".xlsx,.csv,.txt" hidden><b>Drop the portfolio Excel / CSV here</b> or <button type="button" class="ghost" id="fdPick">choose a file</button><div class="hint" id="fdFileName"></div></div>
+        <details><summary>…or paste a table</summary><textarea id="fdPaste" rows="6" style="width:100%" placeholder="Company	Sector	% of assets&#10;HDFC Bank Ltd.	Banks	8.12%"></textarea></details>
+        <div class="toolbar"><button type="button" class="primary" id="fdRead">Read holdings</button><button type="button" class="ghost" id="fdCancel">Cancel</button><span id="fdStatus" class="hint"></span></div>
+        <div id="fdPreview"></div>
+      </section>
+      <div id="fdBody"></div>
+    </section>
+
+    <section id="portfolioView" hidden>
+      <p class="hint">Your holdings from every broker, one tab per account. To sync Kite, Angel One, Dhan or Groww, or import an INDmoney CSV, open <b>Add or sync holdings</b> below the table. Read-only: this app never places orders.</p>
+      <nav class="views sub pf-acc" id="pfAccTabs" aria-label="Broker account"></nav>
+      <section class="metrics" id="pfCards" aria-label="Portfolio summary"></section>
+      <section class="toolbar" id="pfFilters" aria-label="Filter holdings"></section>
+      <section class="table-wrap"><table><thead><tr><th>Stock</th><th>Qty</th><th>Avg cost</th><th>Price</th><th>P/E</th><th>Sector P/E</th><th>P/L</th><th>% of total</th><th>Verdict</th><th>Valuation</th><th>Fair value (base)</th><th>Buy zone</th><th>Status</th><th></th></tr></thead><tbody id="pfRows"></tbody></table></section>
+      <p class="hint" id="pfNote"></p>
+      <details id="pfSetup" class="pf-setup"><summary><strong>Add or sync holdings</strong> <span class="hint">Kite, Angel One, Dhan, Groww, INDmoney CSV · add holdings to the watchlist</span></summary>
+      <section class="report-grid two">
+        <div class="report-card"><h3>1. Get your holdings</h3>
+          <div id="pfAccounts" class="hint">Checking…</div>
+          <div class="toolbar"><button id="pfConnect" type="button" class="primary">Connect / sync Kite, Angel One, Dhan, Groww</button></div>
+          <details id="pfCsv"><summary><strong>INDmoney or any broker: import a CSV</strong></summary>
+            <p class="hint">INDmoney has no public holdings API, so export your holdings (or build a small sheet) with columns <code>symbol, quantity, average price</code> and paste it here. Use NSE symbols (TCS, not company names). Example:<br><code>symbol,quantity,average price<br>TCS,10,3450<br>ITC,200,410</code></p>
+            <div class="toolbar"><input id="pfCsvLabel" placeholder="Account label" value="INDmoney - Demat" style="min-width:200px;flex:none"><input id="pfCsvFile" type="file" accept=".csv,.txt,text/csv" style="flex:none"></div>
+            <textarea id="pfCsvText" rows="5" style="width:100%" placeholder="symbol,quantity,average price"></textarea>
+            <div class="toolbar"><button id="pfCsvBtn" type="button" class="primary">Import holdings</button><span id="pfCsvStatus" class="hint"></span></div></details></div>
+        <div class="report-card"><h3>2. Add to watchlist &amp; value</h3>
+          <p class="hint">Adds every holding that is not tracked yet and fetches fundamentals in the background (a few seconds per stock). Already-fetched stocks are skipped.</p>
+          <div class="toolbar"><button id="pfAddAll" type="button" class="primary">Add all holdings &amp; value them</button><span id="pfAddStatus" class="hint"></span></div></div>
+      </section>
+      </details>
+      <section class="report-grid" id="pfHealth" aria-label="Portfolio health"></section>
+    </section>
+
+
+    <section id="watchlistView" hidden>
+      <section class="metrics" aria-label="Watchlist summary"><div><span>Tracked stocks</span><strong id="stockCount">0</strong></div><div><span>Buy now / gradual</span><strong id="buyCount">0</strong></div><div><span>Live price loaded</span><strong id="zoneCount">0</strong></div><div><span>Needs live refresh</span><strong id="refreshCount">0</strong></div></section>
+      
+      <nav class="views sub category-tabs" aria-label="Watchlist category">
+        <button id="tabCore" class="viewTab active" data-tab="Core">Core <span id="countCore" class="tab-badge">0</span></button>
+        <button id="tabDownturn" class="viewTab" data-tab="Downturn">Downturn top 10 <span id="countDownturn" class="tab-badge">0</span></button>
+        <button class="viewTab" data-tab="ValueQuality">Value / Quality top 10 <span id="countValueQuality" class="tab-badge">0</span></button>
+        <button class="viewTab" data-tab="Momentum">Momentum top 10 <span id="countMomentum" class="tab-badge">0</span></button>
+        <button class="viewTab" data-tab="GrowthTop10">Growth top 10 <span id="countGrowthTop10" class="tab-badge">0</span></button>
+        <button class="viewTab" data-tab="Top30">Best 30 (10-yr) <span id="countTop30" class="tab-badge">0</span></button>
+        <button class="viewTab" data-tab="NewAge">New Age candidates <span id="countNewAge" class="tab-badge">0</span></button>
+        <button id="tabSatellite" class="viewTab" data-tab="Satellite">Satellite <span id="countSatellite" class="tab-badge">0</span></button>
+        <button id="tabAvoid" class="viewTab" data-tab="Avoid">Avoid <span id="countAvoid" class="tab-badge">0</span></button>
+        <button id="tabAll" class="viewTab" data-tab="All">All Stocks <span id="countAll" class="tab-badge">0</span></button>
+      </nav>
+
+      <section class="toolbar"><input id="search" placeholder="Search company or ticker"><select id="account"><option value="All">All accounts</option><option>Zerodha - Nishanth</option><option>Zerodha - Sophia</option><option>INDmoney - Demat</option><option>Angel One - Demat</option></select><select id="bucket"><option value="All">All buckets</option><option>Core</option><option>Growth</option><option>Turnaround</option><option>Speculative</option></select><select id="action"><option value="All">All actions</option><option>Buy gradually</option><option>Buy on dips</option><option>Buy on correction</option><option>Wait for correction</option><option>Watch</option><option>Avoid</option></select><button id="export">Download Excel-ready CSV</button></section>
+        <p id="focusNote" class="focus-note">Curated research watchlists, not live factor rankings or investment recommendations.</p>
+      <section class="table-wrap"><table><thead><tr><th>Company</th><th>Held in</th><th>Bucket</th><th>Style</th><th>Action</th><th>Valuation</th><th>Latest close</th><th>P/E <small>(fair)</small></th><th>52W range</th><th>Zone 1</th><th>Deep zone</th><th>Order book / KPI</th><th>Last update</th></tr></thead><tbody id="rows"></tbody></table></section>
+      <div id="pagination" class="pagination-bar"></div>
+      </section>
+<div id="stockModal" class="modal" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="detailTitle"><button id="modalClose" type="button" class="modal-close" aria-label="Close">&times;</button><nav class="views sub modal-tabs" aria-label="Stock detail"><button id="mTabOverview" type="button" class="viewTab active">Overview</button><button id="mTabValuation" type="button" class="viewTab">Valuation</button></nav><div id="modalLinksSlot"></div><section id="modalOverview" class="detail"><div><h2 id="detailTitle">Select a company</h2><p id="detailMeta">Choose a row to review the thesis and update data.</p><p id="detailNote">This app separates price data from investment judgement. News should update the evidence, not silently change a recommendation.</p><div id="detailHistory" class="mini-history"></div><div id="advisorBox" class="advisor-box"><div class="advisor-head"><h4>Financial advisor</h4><label class="lens-control">Research lens<select id="singleAdvisorLens"><option value="balanced">Balanced</option><option value="value">Value</option><option value="growth">Growth</option><option value="momentum">Momentum</option></select></label><button id="askAdvisor" type="button" class="ghost">Ask the advisor</button></div><p class="hint">Uses your selected research lens to assess this stock with your Claude API key. Suggestions require your review before they can be applied. Not financial advice.</p><div id="advisorResult"></div></div></div><form id="editor"><label>Bucket<select id="editBucket"><option>Core</option><option>Growth</option><option>Turnaround</option><option>Speculative</option><option>Imported</option></select></label><label>Action<select id="editAction"><option>Buy gradually</option><option>Buy on dips</option><option>Buy on correction</option><option>Wait for correction</option><option>Watch</option><option>Avoid</option><option>Small accumulation</option><option>Small buy only</option><option>Small turnaround position</option></select></label><label>Valuation<input id="editValuation" type="text" placeholder="e.g. Fair to rich"></label><label>Latest close ₹<input id="price" type="number" min="0" step="0.01"></label><label>52W low ₹<input id="low" type="number" min="0" step="0.01"></label><label>52W high ₹<input id="high" type="number" min="0" step="0.01"></label><label>Order book / KPI<textarea id="kpi" rows="3"></textarea></label><label>Research note<textarea id="note" rows="3"></textarea></label><button class="primary" type="submit">Save local update</button></form></section><section id="modalValuation" class="detail val-detail" hidden></section></div></div>
+
+    <section id="valuationView" hidden>
+      <p class="hint">Rule-based valuation view and buy zones from P/E, growth, ROCE, leverage and promoter selling (rules shown below the table). Fundamentals are pulled from Screener.in, Yahoo Finance or NSE (free, no API key) and cached in <code>data/fundamentals-cache.json</code>; ROCE and growth are derived from annual statements, promoter % comes from Screener (or Yahoo's approximate insider holding). A heuristic aid, not a forecast or licensed advice; stale fundamentals give stale verdicts.</p>
+      <details id="addBar" class="toolbar" style="display:block"><summary style="cursor:pointer;font-weight:700">+ Add a new stock (any NSE-listed company)</summary>
+        <div class="toolbar" style="margin:10px 0 0"><input id="qaSymbol" placeholder="NSE symbol, e.g. INDIGO" style="min-width:200px;flex:none"><input id="qaName" placeholder="Name (optional, filled in automatically)" style="min-width:240px;flex:none"><button id="qaBtn" class="primary">Add &amp; get valuation</button><span id="qaStatus" class="hint"></span></div>
+        <p class="hint">Use the symbol shown on NSE or Screener (the part in screener.in/company/<b>SYMBOL</b>). The stock is added to your watchlist and its P/E, growth, ROCE and valuation are fetched straight away.</p></details>
+      <section class="metrics" aria-label="Valuation summary" id="valCards"></section>
+      <section class="toolbar"><input id="valSearch" placeholder="Search company or ticker"><select id="valFilter"><option value="All">All statuses</option><option value="In zone">In zone</option><option value="Below zone">Below zone</option><option value="Above zone">Above zone</option><option value="Wait (far above)">Wait (far above)</option><option value="Fetch needed">Fetch needed</option></select><select id="valCap"><option value="All">All caps</option><option value="Large">Largecap</option><option value="Mid">Midcap</option><option value="Small">Smallcap</option></select><label class="lens-control"><input id="valBest30" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">Best 30 only</label><label class="lens-control">Max stocks<input id="valLimit" type="number" min="1" max="200" value="10" style="width:70px"></label><label class="lens-control">Source<select id="valSource"><option value="auto">Screener → Yahoo → NSE</option><option value="screener">Screener only</option><option value="yahoo">Yahoo only</option><option value="nse">NSE only</option></select></label><button id="valFetchBtn" class="primary">Fetch data</button><button id="valAllBtn" class="primary">Refresh all</button><label class="lens-control"><input id="valAllForce" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">Re-fetch even if fresh</label><button id="valAllCancel" class="ghost" hidden>Cancel</button><button id="valImportToggle" class="ghost">Manual CSV override</button><button id="valTemplate" class="ghost">CSV template</button><span id="valFetchStatus" class="hint"></span></section>
+      <section id="valImport" hidden><textarea id="valCsv" rows="6" style="width:100%" placeholder="symbol,price,pe,pb,roce,roe,promoter,promoterChange3y,salesCagr3,profitCagr3,borrowings,reserves,asOf,source,flags"></textarea><div class="toolbar"><button id="valImportBtn" class="primary">Import</button><span id="valImportStatus" class="hint"></span></div></section>
+      <section class="table-wrap"><table><thead><tr><th>Company</th><th>Price</th><th>52W range</th><th>P/E</th><th>Fair multiple</th><th>Sector P/E</th><th>P/B</th><th>ROCE %</th><th>ROE %</th><th>Promoter %</th><th>Valuation view</th><th>Fair value<br>bear · base · bull</th><th>Buy zone</th><th>Gap to zone</th><th>Status</th><th>Why / flags</th><th>Data age</th><th></th></tr></thead><tbody id="valRows"></tbody></table></section>
+      <p class="hint" id="valModel"></p>
+      <details id="valChecks"><summary><strong>Data checks &amp; verdict tracking</strong></summary>
+        <section class="report-grid two">
+          <div class="report-card"><h3>Yahoo vs Screener (20 reference stocks)</h3><p class="hint" id="cmpNote">Compares the cached Yahoo numbers with Screener figures captured by hand on 1 Oct 2026. Fetch those stocks first.</p><button id="cmpLoad" type="button" class="ghost">Run comparison</button><div id="cmpOut"></div></div>
+          <div class="report-card"><h3>Forward tracker: did the verdicts work?</h3><p class="hint" id="perfNote">Each verdict is logged once a day; this shows what prices did afterwards.</p><button id="perfLoad" type="button" class="ghost">Show results</button><div id="perfOut"></div></div>
+        </section>
+      </details>
+    </section>
+
+    <section id="picksView" hidden>
+      <nav class="views sub screen-nav" aria-label="Screens"><button type="button" class="viewTab" data-screen="picks">Value</button><button type="button" class="viewTab" data-screen="growth">Growth</button><button type="button" class="viewTab" data-screen="dividends">Dividend</button></nav>
+      <nav class="views sub" aria-label="Value picks"><button id="pkTabValue" class="viewTab active">Undervalued &amp; fair</button><button id="pkTabMine" class="viewTab">My 10 wishlist</button></nav>
+      <div id="pkValue">
+        <p class="hint" id="pkNote">Stocks the model rates Undervalued or Fair, cheapest versus fair multiple first. Needs fundamentals (Valuation tab → Fetch data). A screen, not a recommendation: check the reasons and flags.</p>
+        <section class="toolbar"><input id="pkSearch" placeholder="Search company or ticker"><select id="pkCap"><option value="All">All caps</option><option value="Large">Largecap</option><option value="Mid">Midcap</option><option value="Small">Smallcap</option></select><label class="lens-control"><input id="pkZoneOnly" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">Only in / below buy zone</label><label class="lens-control"><input id="pkRich" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">Include Fair to rich</label><label class="lens-control"><input id="pkHigh" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0" checked>Hide low-confidence (NSE-only)</label><span id="pkCount" class="hint"></span></section>
+        <section class="table-wrap"><table><thead><tr><th>Company</th><th>Price</th><th>P/E</th><th>Fair multiple</th><th>Price ÷ fair</th><th>View</th><th>Fair value (base)</th><th>Buy zone</th><th>Status</th><th>ROCE %</th><th>Promoter %</th><th>Why / flags</th><th>Data age</th></tr></thead><tbody id="pkRows"></tbody></table></section>
+      </div>
+      <div id="pkMine" hidden>
+        <p class="hint">Drag stocks from the left into your list (or press +). Up to 10. The table below shows the fetched data for just these, and the fetch button pulls only these, which keeps requests low.</p>
+        <div style="display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:16px;align-items:start">
+          <div><input id="pkPoolSearch" placeholder="Search all stocks" style="width:100%"><div id="pkPool" style="max-height:340px;overflow:auto;margin-top:8px"></div></div>
+          <div><div id="pkSlots" style="min-height:120px;border:2px dashed var(--line,#9aa7bd);border-radius:10px;padding:10px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start"></div>
+            <div class="toolbar" style="margin-top:10px"><span id="pkMineCount" class="hint"></span><label class="lens-control">Source<select id="pkSource"><option value="auto">Screener → Yahoo → NSE</option><option value="screener">Screener only</option><option value="yahoo">Yahoo only</option><option value="nse">NSE only</option></select></label><button id="pkFetch" class="primary">Fetch data for my list</button><button id="pkClear" class="ghost">Clear list</button><span id="pkFetchStatus" class="hint"></span></div></div>
+        </div>
+        <section class="table-wrap"><table><thead><tr><th>Company</th><th>Price</th><th>P/E</th><th>Fair multiple</th><th>Price ÷ fair</th><th>View</th><th>Fair value (base)</th><th>Buy zone</th><th>Status</th><th>ROCE %</th><th>Promoter %</th><th>Why / flags</th><th>Data age</th></tr></thead><tbody id="pkMineRows"></tbody></table></section>
+      </div>
+    </section>
+    <section id="growthView" hidden>
+      <nav class="views sub screen-nav" aria-label="Screens"><button type="button" class="viewTab" data-screen="picks">Value</button><button type="button" class="viewTab" data-screen="growth">Growth</button><button type="button" class="viewTab" data-screen="dividends">Dividend</button></nav>
+      <p class="hint" id="gpNote">Stocks that pass every growth and durability gate: 3-yr sales and profit CAGR of at least 12% and 15%, ROCE of at least 15% (ROE of at least 13% for lenders), borrowings not above reserves, positive free cash flow, cash conversion of at least 0.6× profit, and promoters not selling more than 5 pts. Ranked by a 100-point score (growth 35, returns on capital 25, balance sheet and cash 20, promoter 10, valuation 10). Needs fundamentals (Valuation tab → Fetch data). Past growth is not a forecast and no 10-year outcome is guaranteed; check the thesis before buying.</p>
+      <section class="toolbar"><input id="gpSearch" placeholder="Search company or ticker"><select id="gpCap"><option value="All">All caps</option><option value="Large">Largecap</option><option value="Mid">Midcap</option><option value="Small">Smallcap</option></select><label class="lens-control"><input id="gpNotRich" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">Hide Rich / Very rich</label><label class="lens-control"><input id="gpZoneOnly" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">Only in / below buy zone</label><span id="gpCount" class="hint"></span></section>
+      <section class="table-wrap"><table><thead><tr><th>#</th><th>Company</th><th>Score</th><th>Price</th><th>Sales CAGR 3y</th><th>Profit CAGR 3y</th><th>ROCE / ROE %</th><th>Cash conv.</th><th>Promoter %</th><th>Valuation</th><th>Buy zone</th><th>Status</th><th>Strengths / watch-outs</th><th>Data age</th></tr></thead><tbody id="gpRows"></tbody></table></section>
+    </section>
+    <section id="planView" hidden>
+      <p class="hint">Your buying ladder: first buy, then add a fixed tranche at each dip below your first buy price (Standard −15/−25/−35/−45%, Smaller −25/−40%). A trigger only says <strong>ADD</strong> if the valuation gate is OK (Undervalued, Fair or Fair to rich, with no data-check flag); otherwise it says HOLD. Stress rows show the cash needed if every stock fell together. Not financial advice.</p>
+      <section class="metrics" id="planCards" aria-label="Plan summary"></section>
+      <section class="toolbar"><label class="lens-control">Tranche ₹<input id="planTranche" type="number" min="1" style="width:100px"></label><label class="lens-control">Cash reserve ₹<input id="planReserve" type="number" min="0" style="width:120px"></label><button id="planSettingsBtn" type="button">Save settings</button><span id="planSettingsStatus" class="hint"></span></section>
+      <section class="toolbar"><select id="planStock"></select><select id="planLadder"><option value="standard">Standard ladder</option><option value="smaller">Smaller ladder</option><option value="none">No ladder</option></select><button id="planLadderBtn" type="button">Set ladder</button><input id="buyPrice" type="number" step="0.01" min="0" placeholder="Buy price ₹" style="min-width:120px;flex:0"><input id="buyAmount" type="number" min="0" placeholder="Amount ₹" style="min-width:110px;flex:0"><input id="buyDate" type="date" style="flex:0"><button id="planBuyBtn" class="primary" type="button">Record buy</button><span id="planStatus" class="hint"></span></section>
+      <section class="table-wrap"><table><thead><tr><th>Company</th><th>Ladder</th><th>Price</th><th>Invested</th><th>Avg cost</th><th>P/L</th><th>Next trigger</th><th>Valuation gate</th><th>Action</th><th>Detail</th><th></th></tr></thead><tbody id="planRows"></tbody></table></section>
+      <section class="report-grid two">
+        <div class="report-card"><h3>Sector exposure</h3><p class="hint">Planned maximum per sector. ⚑ = one sector above 25% of the plan.</p><div id="planExposure"></div></div>
+        <div class="report-card"><h3>Stress: cash needed if everything falls</h3><p class="hint">Tranches that would trigger if every held stock fell by the same %. Ignores the valuation gate (worst case).</p><div id="planStress"></div></div>
+      </section>
+      <details><summary><strong>Manage stocks</strong> &mdash; add a stock, or fix a wrong ticker</summary>
+        <section class="toolbar"><input id="addCompany" placeholder="Company name"><input id="addSymbol" placeholder="NSE symbol e.g. GRAVITA" style="min-width:180px;flex:0"><button id="addStockBtn" type="button">Add stock</button></section>
+        <section class="toolbar"><select id="fixStock"></select><input id="fixSymbol" placeholder="Correct NSE symbol" style="min-width:180px;flex:0"><button id="fixSymbolBtn" type="button">Fix ticker</button><span id="manageStatus" class="hint"></span></section>
+        <p class="hint">Fixing a ticker clears that stock&rsquo;s price; click Refresh sources afterwards, then fetch its fundamentals again.</p>
+      </details>
+    </section>
+
+    <section id="integrationsView" hidden>
+      <section class="report-grid two">
+        <div class="report-card"><h3>Price sources</h3>
+          <p class="hint">Prices refresh from the first working source, in this order. Google Finance is read from its public quote page (best effort: Google has no official API, so a layout change falls back to the next source). The 52-week range is taken from Yahoo or Google, because Kite's last-traded price has none.</p>
+          <div id="intSources"></div>
+          <div class="toolbar"><input id="intCmpSymbol" placeholder="NSE symbol, e.g. RELIANCE" style="min-width:200px;flex:none"><button id="intCmpBtn" type="button">Compare sources</button></div>
+          <div id="intCmpOut"></div></div>
+        <div class="report-card"><h3>Zerodha Kite (MCP)</h3>
+          <p class="hint">Read-only: this app can fetch your profile, holdings and live prices from Zerodha's Kite MCP server, and can never place, modify or cancel orders. Always on: just press Log in to Kite (no API key needed; set <code>KITE_MCP_ENABLED=0</code> in <code>.env</code> to switch it off). Each account below is its own login, so you can keep several Zerodha accounts connected at once (family members, a second demat): add one, log in, sync. Zerodha expires logins daily, so log in again when a card says so. Holdings from every account and broker are combined into one table.</p>
+          <div id="intKiteSlots" class="kslots">Checking…</div><div class="toolbar"><button id="intKiteAdd" type="button" class="primary">+ Add another Zerodha account</button><button id="intKiteDiagnose" type="button" class="ghost">Diagnose</button></div><div id="intKiteDiag"></div></div>
+      </section>
+      <h3 style="margin:22px 0 0">Angel One · Dhan · Groww · INDmoney</h3><p class="hint" style="margin:4px 0 0">INDmoney: use the INDmoney card below (daily access token from indstocks.com), or import a CSV from <button type="button" class="ghost" id="intGoCsv">My holdings → Add or sync holdings</button>.</p>
+      <p class="hint" style="margin:4px 0 0">Read-only: each broker's official API is used only for login, profile, holdings and last-traded price. Orders, GTTs and fund transfers are refused in code. Always on: enter your details in each card's Settings (every field says where to find it in the broker's app or website). They are saved only on this computer, and with the optional PIN/TOTP secret the app logs in by itself every day.</p>
+      <section class="report-grid" id="intBrokers" aria-label="Angel One, Dhan and Groww"><div class="report-card"><p class="hint">Checking…</p></div></section>
+      <div class="report-card holdings-moved" style="margin-top:14px"><h3>Synced accounts</h3><p class="hint">Your holdings are listed under <b>My holdings</b>, with one tab per broker account.</p><div class="toolbar" style="margin:4px 0 10px"><button type="button" class="primary" id="intGoHoldings">Open My holdings →</button></div><div id="intKiteAccounts"></div></div>
+      <div id="intLegacyHoldings" hidden>
+      <section class="metrics" id="intKiteCards" aria-label="Holdings summary" style="margin-top:16px"></section>
+      <p id="intKiteStances" style="margin:12px 0 0"></p>
+      <section class="table-wrap" style="margin-top:16px"><table><thead><tr><th>Symbol</th><th>Company</th><th>Qty</th><th>Avg cost</th><th>Invested</th><th>Value</th><th>P/L</th><th>% of total</th><th>Stance</th><th>Held in</th><th>Watchlist</th></tr></thead><tbody id="intKiteRows"></tbody></table></section>
+      <p class="hint" id="intKiteNote"></p>
+      </div>
+    </section>
+
+    <section id="thesisView" hidden>
+      <p class="hint">Write down <b>why</b> you own a stock and the numbers that would prove the reason wrong (&ldquo;thesis holds while ROCE &ge; 15&rdquo;). Every time fundamentals are refreshed the conditions are re-checked, and a stock whose reason has stopped being true is flagged here and in Reports &rarr; Change history, whatever the price did. Broken thesis on a stock you hold in Zerodha is shown first.</p>
+      <section class="metrics" id="thCards" aria-label="Thesis summary"></section>
+      <details id="thForm" class="toolbar" style="display:block" open><summary style="cursor:pointer;font-weight:700">Write or edit a thesis</summary>
+        <div class="toolbar" style="margin:10px 0 0"><select id="thStock"></select></div>
+        <textarea id="thReasons" rows="3" style="width:100%;margin-top:8px" placeholder="Why do I own this? e.g. Market leader in cables; ROCE above 20% from pricing power; promoter not selling."></textarea>
+        <div id="thConds" style="margin-top:8px"></div>
+        <div class="toolbar" style="margin:8px 0 0"><select id="thAddMetric"></select><select id="thAddOp"></select><input id="thAddValue" type="number" step="any" placeholder="value" style="min-width:90px;flex:0"><button id="thAddBtn" type="button">Add condition</button><span class="hint">or a starting point:</span><span id="thPresets"></span></div>
+        <div class="toolbar" style="margin:10px 0 0"><button id="thSave" type="button" class="primary">Save thesis</button><button id="thClear" type="button" class="ghost">Clear form</button><span id="thStatus" class="hint"></span></div>
+      </details>
+      <div id="thList"></div>
+    </section>
+
+    <div id="listModal" class="modal" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="lmTitle"><button id="lmClose" type="button" class="modal-close" aria-label="Close">&times;</button>
+      <h2 id="lmTitle" style="margin:0 40px 4px 0">Choose stocks</h2>
+      <p class="hint" id="lmSub"></p>
+      <div class="toolbar" style="margin:8px 0"><input id="lmName" placeholder="Watchlist name" style="min-width:200px;flex:none"><button id="lmRename" type="button" class="ghost">Rename</button><button id="lmDelete" type="button" class="ghost">Delete watchlist</button><span id="lmStatus" class="hint"></span></div>
+      <div class="toolbar" style="margin:8px 0"><input id="lmSearch" placeholder="Search tracked stocks"><label class="lens-control"><input id="lmOnly" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">Only selected</label><button id="lmAddSym" type="button" class="ghost">Add a new stock by symbol…</button></div>
+      <div id="lmList" class="lm-list"></div></div></div>
+
+    <div id="holdingModal" class="modal" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-label="Holding details"><button id="holdingClose" type="button" class="modal-close" aria-label="Close">&times;</button><div id="holdingBody"></div></div></div>
+    <section id="reportsView" hidden>
+      <nav class="views sub" aria-label="Report type"><button id="subDashboard" class="viewTab active">Dashboard</button><button id="subPrint" class="viewTab">Printable report</button><button id="subHistory" class="viewTab">Change history</button><button id="subAdvisor" class="viewTab">Advisor</button></nav>
+
+      <section id="dashboardPanel">
+        <section class="metrics" aria-label="Portfolio summary" id="dashCards"></section>
+        <section class="report-grid">
+          <div class="report-card"><h3>By bucket</h3><div id="chartBucket" class="bars"></div></div>
+          <div class="report-card"><h3>By action</h3><div id="chartAction" class="bars"></div></div>
+          <div class="report-card"><h3>By valuation</h3><div id="chartValuation" class="bars"></div></div>
+        </section>
+        <section class="report-grid two">
+          <div class="report-card"><h3>Needs attention</h3><p class="hint">Stocks where the price/ticker feed isn't current.</p><ul id="attentionList" class="flag-list"></ul></div>
+          <div class="report-card"><h3>Least recently reviewed</h3><p class="hint">Oldest tracked research edits — due for a fresh look.</p><ul id="staleList" class="flag-list"></ul></div>
+        </section>
+      </section>
+
+      <section id="printPanel" hidden>
+        <section class="toolbar">
+          <select id="printMode"><option value="full">Full watchlist</option><option value="single">Single stock</option></select>
+          <select id="printStock"></select>
+          <button id="printBtn" class="primary">Print / save as PDF</button>
+        </section>
+        <section id="printArea" class="print-area"></section>
+      </section>
+
+      <section id="historyPanel" hidden>
+        <section class="toolbar"><input id="historySearch" placeholder="Filter by company or field"></section>
+        <section class="table-wrap"><table><thead><tr><th>When</th><th>Company</th><th>Field</th><th>From</th><th>To</th></tr></thead><tbody id="historyRows"></tbody></table></section>
+        <p class="hint" id="historyCount"></p>
+      </section>
+
+      <section id="advisorPanel" hidden>
+        <p class="hint">Calls your own Claude API key once per selected stock to suggest an action, a refreshed valuation, a Core / Satellite / Growth / Momentum style, and a long-term-story verdict. Nothing is written to the watchlist until you review the results below and apply them. Requires <code>ANTHROPIC_API_KEY</code> set on the server — see README. This is an AI research aid, not licensed financial advice.</p>
+        <section class="toolbar">
+          <select id="advisorScope"><option value="watch">All Watch stocks</option><option value="all">Every stock</option></select>
+          <label class="lens-control">Research lens<select id="advisorLens"><option value="balanced">Balanced</option><option value="value">Value</option><option value="growth">Growth</option><option value="momentum">Momentum</option></select></label>
+          <button id="advisorRunBtn" class="primary">Run advisor</button>
+          <span id="advisorProgress" class="hint"></span>
+        </section>
+        <section class="table-wrap"><table><thead><tr><th><input id="advisorSelectAll" type="checkbox"></th><th>Company</th><th>Current action</th><th>Suggested action</th><th>Current valuation</th><th>Suggested valuation</th><th>Style</th><th>Long-term story</th><th>Confidence</th></tr></thead><tbody id="advisorRows"></tbody></table></section>
+        <section class="toolbar"><button id="advisorApplyBtn" class="primary">Apply selected</button><span id="advisorApplyStatus" class="hint"></span></section>
+      </section>
+    </section>
+  </main>
+  <nav class="tabbar" aria-label="Quick navigation">
+    <button type="button" data-go="viewHome"><span aria-hidden="true">🔎</span>Value</button>
+    <button type="button" data-go="viewLists"><span aria-hidden="true">⭐</span>Lists</button>
+    <button type="button" data-go="viewPortfolio"><span aria-hidden="true">📂</span>Holdings</button>
+    <button type="button" data-go="viewNetworth"><span aria-hidden="true">🏦</span>Net worth</button>
+    <button type="button" data-go="menu"><span aria-hidden="true">☰</span>More</button>
+  </nav>
+  <footer>Research snapshot only. Verify exchange filings, results and live prices before investing.</footer>
+  <script src="ui.js"></script><script src="account.js"></script>
+  <script src="app.js"></script>
+  <script src="integrations.js"></script>
+  <script src="thesis.js"></script>
+  <script src="home.js"></script>
+  <script src="networth.js"></script>
+  <script src="tax.js"></script>
+  <script src="model.js"></script>
+  <script src="us.js"></script>
+  <script src="freshness.js"></script>
+</body></html>

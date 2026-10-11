@@ -1,0 +1,111 @@
+/* Visual refresh: indigo ledger look. Loaded after styles.css; only restyles, no layout rules the app depends on. */
+:root{
+  --ix:#1f2460;          /* indigo ink: header, table heads */
+  --ix-soft:#e9ebf8;
+  --saffron:#f2a33a;     /* active / attention */
+  --paper:#f3f4f9;
+  --good:#12875b; --good-bg:#e1f4ec;
+  --fair:#4c8f3a; --fair-bg:#ecf5df;
+  --warn:#c98100; --warn-bg:#fff0cf;
+  --bad:#c2402f;  --bad-bg:#fde7e3;
+  --mute-bg:#eceef5;
+  --ui-font:"Plus Jakarta Sans",Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+[data-theme="dark"]{
+  --ix:#0f1230; --ix-soft:#1c2150; --paper:#0b0e24;
+  --good:#3ddc97; --good-bg:#10382b; --fair:#9bd36a; --fair-bg:#25351a;
+  --warn:#f5b73d; --warn-bg:#3b2d0c; --bad:#ff7b6b; --bad-bg:#431b17; --mute-bg:#1c2140;
+}
+:root{background:var(--paper)}
+body{font-family:var(--ui-font);font-variant-numeric:tabular-nums;background:var(--paper)}
+[data-theme="dark"] body{background:var(--paper)}
+
+/* Header becomes a full-width indigo band */
+header{max-width:none;margin:0;padding:28px max(32px,calc((100vw - 1480px)/2 + 32px)) 64px;background:var(--ix);color:#fff;position:relative}
+header h1{color:#fff;font-size:34px;font-weight:800;letter-spacing:-.035em}
+header .eyebrow{color:var(--saffron)}
+header .sub{color:#b9bfe8}
+header .pill.muted{background:rgba(255,255,255,.12);color:#dfe3ff}
+header button.ghost{background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.25)}
+header .primary{background:var(--saffron);border-color:var(--saffron);color:#1a1a2e}
+header .primary:hover{background:#ffb64f}
+main{position:relative}
+/* main nav: segmented bar that overlaps the header */
+main>nav.views{margin:-30px 0 22px;padding:6px;gap:4px;background:var(--card-bg,#fff);border:1px solid var(--line);border-radius:14px;width:fit-content;box-shadow:0 10px 30px -14px rgba(31,36,96,.35)}
+main>nav.views .viewTab{border:0;background:transparent;border-radius:9px;padding:9px 18px;font-weight:700;color:var(--muted)}
+main>nav.views .viewTab:hover{background:var(--ix-soft);color:var(--ink)}
+main>nav.views .viewTab.active{background:var(--ix);color:#fff;box-shadow:inset 0 -3px 0 var(--saffron)}
+[data-theme="dark"] main>nav.views .viewTab.active{background:#2a3180}
+
+/* Stat tiles: a coloured edge says what the number is */
+.metrics{gap:14px}
+.metrics div{border:1px solid var(--line);border-left:5px solid var(--ix);border-radius:12px;padding:16px 18px;box-shadow:none}
+.metrics div:nth-child(2){border-left-color:var(--good)}
+.metrics div:nth-child(3){border-left-color:var(--warn)}
+.metrics div:nth-child(4){border-left-color:var(--bad)}
+.metrics strong{font-size:30px;font-weight:800;letter-spacing:-.03em}
+
+/* Tables */
+.table-wrap{border-radius:14px;border:1px solid var(--line);box-shadow:0 12px 30px -22px rgba(31,36,96,.5)}
+th{background:var(--ix);font-weight:700;font-size:12px;letter-spacing:.01em;padding:13px 10px}
+tbody tr{transition:background .12s}
+tbody tr:hover{background:var(--ix-soft)}
+td{padding:12px 10px}
+.company{font-weight:700;letter-spacing:-.01em}
+
+/* Chips */
+.chip{display:inline-block;padding:3px 9px;border-radius:999px;font-weight:700;font-size:11.5px;white-space:nowrap}
+.chip.v-under{background:var(--good-bg);color:var(--good)}
+.chip.v-fair{background:var(--fair-bg);color:var(--fair)}
+.chip.v-rich1{background:var(--warn-bg);color:var(--warn)}
+.chip.v-rich{background:var(--bad-bg);color:var(--bad)}
+.chip.v-none{background:var(--mute-bg);color:var(--muted)}
+.chip.s-in{background:var(--good-bg);color:var(--good)}
+.chip.s-above{background:var(--warn-bg);color:var(--warn)}
+.chip.s-far{background:var(--bad-bg);color:var(--bad)}
+.account-tag.cap{background:var(--ix-soft);color:var(--ix);font-weight:700}
+[data-theme="dark"] .account-tag.cap{color:#c5cbff}
+
+/* Valuation gauge: where today's multiple sits against fair (centre mark = fair) */
+.gauge{position:relative;width:130px;height:8px;border-radius:99px;margin:7px 0 4px;
+  background:linear-gradient(90deg,var(--good) 0 28%,var(--fair) 28% 46%,var(--warn) 46% 64%,var(--bad) 64% 100%);opacity:.9}
+.gauge i{position:absolute;top:-4px;width:4px;height:16px;border-radius:2px;background:var(--ink);box-shadow:0 0 0 2px var(--card-bg,#fff);transform:translateX(-2px)}
+.gauge-num{font-size:11px;color:var(--muted)}
+/* 52-week range bar */
+.rbar{position:relative;width:120px;height:6px;border-radius:99px;background:var(--mute-bg);margin:6px 0 3px}
+.rbar i{position:absolute;top:-3px;width:12px;height:12px;border-radius:50%;background:var(--saffron);border:2px solid var(--card-bg,#fff);transform:translateX(-6px);box-shadow:0 0 0 1px var(--ix)}
+.rbar-txt{font-size:11px;color:var(--muted);white-space:nowrap}
+
+/* Toolbars and buttons */
+.toolbar{align-items:center}
+button.primary{background:var(--ix);border-color:var(--ix);border-radius:9px}
+button.primary:hover{background:#2f357f}
+[data-theme="dark"] button.primary{background:#3a43b8;border-color:#3a43b8}
+button{border-radius:9px;transition:transform .08s}
+button:active{transform:translateY(1px)}
+:focus-visible{outline:3px solid var(--saffron);outline-offset:2px}
+@media(max-width:800px){header{padding:22px 18px 56px}main>nav.views{width:auto;overflow-x:auto}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* fixes: checkboxes inside toolbars, header refresh button */
+.toolbar input[type="checkbox"]{min-width:0;flex:none;width:auto!important;margin:0 6px 0 0!important}
+.toolbar .lens-control{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.toolbar .lens-control select,.toolbar .lens-control input[type="number"]{margin-left:6px}
+header #refresh{background:var(--saffron);border-color:var(--saffron);color:#1a1a2e}
+header #refresh:hover{background:#ffb64f}
+header #refresh:disabled{opacity:.7}
+.metrics+.views,.metrics+nav{margin-top:20px}
+
+/* Holding popup (Integrations tab) */
+#holdingModal .detail-block{margin-bottom:18px}
+#holdingModal .detail-block h3{margin:0 0 8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#holdingModal .detail-block p{margin:6px 0}
+#holdingModal .val-actions{margin-top:6px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+@media(max-width:800px){#holdingModal .detail{grid-template-columns:1fr!important}}
+/* v1.4 broker cards (Angel One / Dhan / Groww) */
+#intBrokers .report-card h3{margin-top:0}#intBrokers .bstate{margin:8px 0}#intBrokers .broker-mode .toolbar input{flex:1}
+@media(max-width:1000px){#intBrokers{grid-template-columns:1fr}}
+#intBrokers .bsettings{border:1px solid var(--line,#dce4ee);border-radius:8px;padding:8px 10px;margin:8px 0}#intBrokers .bsettings summary{cursor:pointer;font-weight:650}
+#intBrokers .bfield{margin:8px 0}#intBrokers .bfield label{display:block}#intBrokers .bfield .hint{font-size:11px;margin-top:3px}#intBrokers .linkish{padding:2px 6px;font-size:11px}
+#intBrokers button:disabled{opacity:.45;cursor:not-allowed}
+#intBrokers .seg{display:flex;gap:6px;align-items:center;margin:8px 0}#intBrokers .seg button{padding:6px 10px}#intBrokers .mcpbox{border-left:3px solid var(--navy,#183b62);padding:2px 0 2px 10px;margin:6px 0}#intBrokers .mcpbox code{word-break:break-all}
