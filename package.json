@@ -1,0 +1,19 @@
+{
+  "name": "equity-watchlist-mvp",
+  "version": "4.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "start:advisor": "node --env-file=.env server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:mongo": "TEST_MONGO_URL=${TEST_MONGO_URL:-mongodb://127.0.0.1:27017/} node --test test/storage.test.mjs",
+    "docker:up": "docker compose up -d --build"
+  },
+  "dependencies": {
+    "mongodb": "^6.21.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+.env
+data/kite-holdings.json
+data/kite-session.json
+data/broker-sessions.json
+data/broker-credentials.json
+data/broker-mcp.json
+data/auth/
+data/users/
+backups/

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Equity Watchlist</title><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#1f2460"><link rel="icon" href="/icons/icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+<style>
+:root{--ix:#1f2460;--ix-soft:#e9ebf8;--saffron:#f2a33a;--paper:#f3f4f9;--card:#fff;--ink:#14162e;--muted:#5d6280;--line:#dfe2ee;--bad:#c2402f;--bad-bg:#fde7e3;--good:#12875b;--good-bg:#e1f4ec;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--ix:#0f1230;--ix-soft:#1c2150;--paper:#0b0e24;--card:#151938;--ink:#eef0ff;--muted:#a3a8cc;--line:#2a2f5c;--bad:#ff7b6b;--bad-bg:#431b17;--good:#3ddc97;--good-bg:#10382b;color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--paper);color:var(--ink);font:15px/1.5 "Plus Jakarta Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+.band{background:var(--ix);color:#fff;padding:44px 16px 120px;text-align:center}
+.band p{margin:0;color:var(--saffron);font-size:12px;font-weight:800;letter-spacing:.14em}
+.band h1{margin:8px 0 0;font-size:clamp(26px,5vw,34px);letter-spacing:-.035em;font-weight:800}
+.band span{display:block;color:#b9bfe8;margin-top:6px}
+.card{width:min(420px,calc(100% - 32px));margin:-84px auto 40px;background:var(--card);border:1px solid var(--line);border-radius:22px;padding:28px 26px 24px;box-shadow:0 30px 70px -30px rgba(10,10,40,.45)}
+.card h2{margin:0 0 4px;font-size:21px;letter-spacing:-.02em}
+.card .lead{margin:0 0 18px;color:var(--muted);font-size:14px}
+label{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin:14px 0 6px;letter-spacing:.02em}
+input{display:block;width:100%;font:inherit;font-size:16px;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:transparent;color:var(--ink)}
+input:focus{outline:none;border-color:#4b55c9;box-shadow:0 0 0 4px rgba(75,85,201,.2)}
+button{margin-top:20px;width:100%;font:inherit;font-weight:800;font-size:15px;padding:13px;border:0;border-radius:12px;background:var(--ix);color:#fff;cursor:pointer}
+@media (prefers-color-scheme:dark){button{background:#4b55c9}}
+button:disabled{opacity:.6;cursor:progress}
+.err{margin:14px 0 0;padding:9px 12px;border-radius:10px;background:var(--bad-bg);color:var(--bad);font-size:13px;font-weight:600}
+.note{margin:18px 0 0;color:var(--muted);font-size:12.5px;line-height:1.55}
+.note code{background:var(--ix-soft);padding:1px 6px;border-radius:6px;font-size:12px}
+.lock{display:flex;gap:10px;align-items:flex-start;margin-top:18px;padding:12px 14px;border-radius:12px;background:var(--good-bg);color:var(--ink);font-size:12.5px}
+.lock b{color:var(--good)}
+[hidden]{display:none!important}
+</style></head>
+<body>
+  <div class="band"><p>INDIAN EQUITY RESEARCH</p><h1>Equity Watchlist</h1><span>Your holdings and watchlists stay private to your account.</span></div>
+  <main class="card">
+    <form id="loginForm" hidden>
+      <h2>Sign in</h2><p class="lead">Use the account the app owner gave you.</p>
+      <label for="lu">Username</label><input id="lu" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      <label for="lp">Password</label><input id="lp" name="password" type="password" autocomplete="current-password" required>
+      <p class="err" id="loginErr" hidden></p>
+      <button type="submit">Sign in</button>
+      <p class="note">No sign-up here: accounts are created by the owner. Forgot your password? Ask the owner to reset it.</p>
+    </form>
+    <form id="setupForm" hidden>
+      <h2>Create the owner account</h2><p class="lead">First run. This account sees only its own data, and can add accounts for other people later.</p>
+      <label for="sc">Setup code</label><input id="sc" name="code" autocomplete="one-time-code" spellcheck="false" required>
+      <label for="sn">Your name</label><input id="sn" name="name" autocomplete="name">
+      <label for="su">Username</label><input id="su" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      <label for="sp">Password <small>(10+ characters)</small></label><input id="sp" name="password" type="password" autocomplete="new-password" minlength="10" required>
+      <label for="sp2">Repeat password</label><input id="sp2" type="password" autocomplete="new-password" minlength="10" required>
+      <p class="err" id="setupErr" hidden></p>
+      <button type="submit">Create owner account</button>
+      <p class="note">The setup code is printed in the server log when it starts, and saved in <code>data/auth/setup-code.txt</code>. It stops working once the owner exists. Anything already in the app (watchlist, synced holdings, broker logins) moves into this account.</p>
+    </form>
+    <div class="lock"><span aria-hidden="true">🔒</span><span><b>Private by account.</b> Each person's holdings, watchlists, alerts and broker logins are stored separately and are never shown to other accounts.</span></div>
+  </main>
+  <script src="login.js"></script>
+</body></html>

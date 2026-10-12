@@ -1,0 +1,25 @@
+# Add-on for a public server (AWS EC2 / Lightsail): Caddy in front with automatic HTTPS for your domain.
+#   DOMAIN=watchlist.example.com in .env, DNS pointing at the server, ports 80 and 443 open, then:
+#   docker compose -f docker-compose.yml -f docker-compose.aws.yml up -d --build
+services:
+  app:
+    environment:
+      TRUST_PROXY: "1"
+      COOKIE_SECURE: "1"
+      PUBLIC_URL: https://${DOMAIN:?Set DOMAIN in .env}
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    command: caddy reverse-proxy --from ${DOMAIN} --to app:4173
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:
