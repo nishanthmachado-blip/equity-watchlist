@@ -31,7 +31,6 @@ import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { PROFILES, STYLES, buildModel, assetMix } from "./model.mjs";
-import { SWING_DEFAULTS, parseTargets, sanitizePosition, sanitizeWatch, applyBuy, applySell, parseSheet, evaluateSwing, diffSwingAlerts } from "./swing.mjs";
 import { SEED as SCRIP_SEED, parseKiteInstruments, parseNseEquityList, mergeMaster, searchMaster } from "./scripmaster.mjs";
 import { US_POPULAR, cleanUsSymbol, parseSecTickers, searchTickers, seriesFromFacts, usValuation, fetchUsPrices, fetchSecJson, companyFactsUrl, SEC_TICKERS_URL } from "./us.mjs";
 import { LISTS as MARKET_LISTS, parseNseList, rankFromQuotes } from "./market.mjs";
@@ -688,52 +687,6 @@ async function yahooSearch(q) {
   } catch { return { quotes: [], error: "Online search unavailable." }; }
 }
 
-// ---- Swing trading: live prices (Kite quotes → Yahoo → saved prices), positions, swing watchlist, alerts ----
-const swingFile = () => userFile("swing.json");
-const livePriceCache = new Map(); // "EX:SYM" -> { price, prevClose, source, at } (shared: prices are public)
-async function livePrices(items, maxAgeMs = 45e3) {
-  const out = new Map(), need = [];
-  for (const it of items) { const c = livePriceCache.get(`${it.exchange || "NSE"}:${it.symbol}`); if (c && Date.now() - c.at < maxAgeMs) out.set(it.symbol, c); else need.push(it); }
-  if (need.length) {
-    const kc = await anyKiteWithSession().catch(() => null);
-    if (kc) for (const ex of ["NSE", "BSE"]) {
-      const syms = need.filter(i => (i.exchange || "NSE") === ex).map(i => i.symbol); if (!syms.length) continue;
-      try { for (const [k, q] of await kc.quotes(syms, ex)) { const v = { price: q.price, prevClose: q.close ?? null, source: "Kite", at: Date.now() }; out.set(k, v); livePriceCache.set(`${ex}:${k}`, v); } } catch { /* fall through */ }
-    }
-    const rest = need.filter(i => !out.has(i.symbol));
-    if (rest.length) { try { for (const [k, q] of await yahooQuotes(rest.map(i => ({ symbol: i.symbol, exchange: i.exchange || "NSE" })))) if (q.price > 0) { const prev = Number.isFinite(q.pChange) ? q.price / (1 + q.pChange / 100) : null; const v = { price: q.price, prevClose: prev, source: "Yahoo", at: Date.now() }; out.set(k, v); livePriceCache.set(`${rest.find(i => i.symbol === k)?.exchange || "NSE"}:${k}`, v); } } catch { /* fall through */ } }
-    const still = need.filter(i => !out.has(i.symbol));
-    if (still.length) { // last resort: the saved watchlist / holdings price (marked as such)
-      const [stocks, view] = await Promise.all([readWatchlist(), kiteHoldingsView().catch(() => ({ holdings: [] }))]);
-      for (const i of still) { const st = stocks.find(x => symOf(x) === i.symbol), h = view.holdings.find(x => x.symbol === i.symbol); const p = h?.syncPrice ?? st?.price; if (p > 0) out.set(i.symbol, { price: p, prevClose: null, source: h?.syncPrice ? "last broker sync" : "saved price", at: Date.now() }); }
-    }
-  }
-  return out;
-}
-async function swingView({ alerts = true } = {}) {
-  const st = await readJson(swingFile(), {}), positions = st.positions || [], watch = st.watch || [];
-  const prices = await livePrices([...positions, ...watch]);
-  const view = evaluateSwing({ positions, watch, prices, settings: st.settings || {} });
-  if (alerts && (positions.length || watch.length)) {
-    const store = await readJson(U.alertsFile, { state: {}, events: [] });
-    const { next, fresh } = diffSwingAlerts(st.alertState || {}, view, { events: store.events });
-    if (fresh.length) { await writeJson(U.alertsFile, { ...store, events: mergeEvents(store.events, fresh) }); console.log(`[swing] ${fresh.map(e => e.title).join(" | ")}`); }
-    if (JSON.stringify(next) !== JSON.stringify(st.alertState || {})) await writeJson(swingFile(), { ...st, alertState: next });
-  }
-  const closed = (st.closed || []).slice(0, 100);
-  return { ...view, closed, realised: { count: closed.length, pnl: Math.round(closed.reduce((a, t) => a + t.pnl, 0)) }, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
-}
-async function resolveNames(names) {
-  const [master, stocks] = await Promise.all([scripMaster(), readWatchlist()]);
-  const norm = x => String(x).toLowerCase().replace(/\b(ltd|limited|the|india|co)\b|[^a-z0-9&]/g, "");
-  return names.map(n => {
-    const tracked = stocks.find(s => norm(s.company) === norm(n) || symOf(s) === String(n).toUpperCase().replace(/\s+/g, ""));
-    if (tracked) return { symbol: symOf(tracked), name: tracked.company, exchange: tracked.exchange || "NSE", how: "your watchlist" };
-    const hit = searchMaster(master.list, n, 3)[0];
-    return hit ? { symbol: hit.symbol, name: hit.name, exchange: hit.exchange, how: "company list" } : { symbol: null, name: n, exchange: "NSE", how: "not found" };
-  });
-}
-
 // ---- Model portfolio (Indian stocks this app has valued) ----
 async function modelView(b = {}) {
   const [{ rows }, view, nw] = await Promise.all([computeRows(), kiteHoldingsView(), readJson(networthFile(), {})]);
@@ -964,8 +917,6 @@ async function refreshOne(stock, withNews, kitePrices = new Map()) {
 async function mapLimit(items, limit, worker) { const results = new Array(items.length); let cursor = 0; async function run() { while (cursor < items.length) { const i = cursor++; results[i] = await worker(items[i]); } } await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run)); return results; }
 async function refreshWatchlist(stocks, withNews = true) { console.log(`[refresh] Starting ${stocks.length}-stock refresh${withNews ? " with news" : ""} (sources: ${PRICE_SOURCES.join(" → ")}).`); const kitePrices = await fetchKitePrices(stocks); const refreshed = await mapLimit(stocks, 3, stock => refreshOne(stock, withNews, kitePrices)); await persistWatchlist(refreshed, stocks); if (refreshed.some(s => s.feedStatus === "Price refreshed")) { lastPriceRefreshAt = new Date().toISOString(); await writeJson(userFile("meta.json"), { ...(await readJson(userFile("meta.json"), {})), lastPriceRefresh: lastPriceRefreshAt }); } console.log(`[refresh] Finished: ${refreshed.filter(s => s.feedStatus === "Price refreshed").length}/${stocks.length} prices refreshed.`); return refreshed; }
 function marketIsOpen() { const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts().filter(p => p.type !== "literal").map(p => [p.type, p.value])); const minutes = Number(parts.hour) * 60 + Number(parts.minute); return !["Sat", "Sun"].includes(parts.weekday) && minutes >= 555 && minutes <= 930; }
-// Swing alerts: every 5 minutes during market hours, per account (positions hitting the profit target or add levels).
-setInterval(() => { if (marketIsOpen()) forEachUser(async () => { const st = await readJson(swingFile(), {}); if ((st.positions || []).length || (st.watch || []).length) await swingView(); }); }, 5 * 60 * 1000).unref();
 // Background work runs once per account, each inside that account's own context (its files, its Kite login).
 async function forEachUser(fn) { for (const u of auth.listUsers()) { try { await asUser(u, fn); } catch (e) { console.error(`[background] ${u.username}: ${e.message}`); } } }
 setInterval(() => { if (marketIsOpen()) forEachUser(async () => { const stocks = await readWatchlist(); if (stocks.length) { await refreshWatchlist(stocks, false); await runAlerts((await computeRows()).rows); } }); }, 15 * 60 * 1000).unref();
@@ -1201,35 +1152,6 @@ async function appHandler(req, res, url) {
         }
         if (op === "refresh") { const syms = (Array.isArray(b.symbols) ? b.symbols : []).map(cleanUsSymbol).filter(Boolean).slice(0, 60); queueUs(syms, true); await usPrices(syms, true); return reply(res, 200, { queued: syms.length }); }
         return reply(res, 404, { message: "Unknown US operation." });
-      } catch (e) { return reply(res, 400, { message: e.message }); }
-    }
-    if (url.pathname.startsWith("/api/swing")) {
-      const op = url.pathname.slice("/api/swing".length).replace(/^\//, "");
-      try {
-        if (req.method === "GET" && !op) return reply(res, 200, await swingView());
-        if (req.method !== "POST") return reply(res, 404, { message: "Unknown swing operation." });
-        const b = await readBody(req), st = await readJson(swingFile(), {}); st.positions ||= []; st.watch ||= []; st.closed ||= [];
-        const find = (list, i) => { const x = st[list].find(y => y.id === i); if (!x) throw new Error("That entry no longer exists."); return x; };
-        if (op === "position") { const prev = b.id ? find("positions", b.id) : null; if (!prev && st.positions.length >= 100) throw new Error("At most 100 swing positions."); const p = sanitizePosition(b, prev); st.positions = prev ? st.positions.map(x => (x.id === p.id ? p : x)) : [...st.positions, p]; }
-        else if (op === "watch") { const prev = b.id ? find("watch", b.id) : null; if (!prev && st.watch.length >= 100) throw new Error("At most 100 swing watchlist entries."); const w = sanitizeWatch(b, prev); st.watch = prev ? st.watch.map(x => (x.id === w.id ? w : x)) : [...st.watch, w]; }
-        else if (op === "delete") { st.positions = st.positions.filter(x => x.id !== b.id); st.watch = st.watch.filter(x => x.id !== b.id); }
-        else if (op === "buy") { const p = find("positions", b.id), q = Number(b.qty), pr = Number(b.price); if (!(q > 0 && Number.isInteger(q) && pr > 0)) throw new Error("Enter whole shares and a price."); st.positions = st.positions.map(x => (x.id === p.id ? applyBuy(x, q, pr) : x)); }
-        else if (op === "sell") { const p = find("positions", b.id), r = applySell(p, Number(b.qty), Number(b.price)); st.positions = r.position ? st.positions.map(x => (x.id === p.id ? r.position : x)) : st.positions.filter(x => x.id !== p.id); st.closed = [r.trade, ...st.closed].slice(0, 500); }
-        else if (op === "promote") { // a swing-watchlist stock was bought: move it to positions
-          const w = find("watch", b.id), p = sanitizePosition({ symbol: w.symbol, exchange: w.exchange, name: w.name, qty: b.qty, avgPrice: b.price, limit: b.limit ?? w.amount, notes: w.notes }); st.watch = st.watch.filter(x => x.id !== w.id); st.positions.push(p);
-        }
-        else if (op === "settings") { const t = parseTargets(b.targets ?? b.targetPct), d = Number(b.dipPct); if (!t) throw new Error("Enter at least T1."); if (!(d > 0 && d <= 90)) throw new Error("Dip must be 1–90%."); st.settings = { targets: t, dipPct: d }; }
-        else if (op === "parse") { const rows = parseSheet(b.text).slice(0, 100); const found = await resolveNames(rows.map(r => r.name)); return reply(res, 200, { rows: rows.map((r, i) => ({ ...r, ...found[i], sheetName: r.name })) }); }
-        else if (op === "import") {
-          for (const r of Array.isArray(b.rows) ? b.rows.slice(0, 100) : []) {
-            if (r.kind === "position") { const ex = st.positions.find(x => x.symbol === String(r.symbol).toUpperCase()); const p = sanitizePosition({ ...r, addBelow: r.addBelow, addAmount: r.addAmount }, ex); st.positions = ex ? st.positions.map(x => (x.id === p.id ? p : x)) : [...st.positions, p]; }
-            else { const ex = st.watch.find(x => x.symbol === String(r.symbol).toUpperCase()); const w = sanitizeWatch({ ...r, buyBelow: r.addBelow ?? r.buyBelow, amount: r.addAmount ?? r.amount }, ex); st.watch = ex ? st.watch.map(x => (x.id === w.id ? w : x)) : [...st.watch, w]; }
-          }
-        }
-        else if (op === "resolve") return reply(res, 200, { results: await resolveNames([String(b.name || "")]) });
-        else return reply(res, 404, { message: "Unknown swing operation." });
-        await writeJson(swingFile(), st);
-        return reply(res, 200, await swingView());
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname.startsWith("/api/networth")) {
@@ -1721,7 +1643,7 @@ const OWNER_ONLY = [
   // The AI advisor spends the owner's Anthropic key; open it to everyone with ALLOW_MEMBER_ADVISOR=1.
   { method: "POST", test: p => p.startsWith("/api/advise") && process.env.ALLOW_MEMBER_ADVISOR !== "1" }
 ];
-const LEGACY_FILES = ["swing.json", "us-list.json", "us-growth.json", "meta.json", "networth.json", "tradebook.json", "watchlist.json", "history.json", "positions.json", "valuation-log.json", "custom-list.json", "theses.json", "kite-holdings.json", "lists.json", "dividend-plan.json", "growth-overrides.json", "funds.json", "alerts.json", "kite-slots.json", "kite-session.json", "broker-sessions.json", "broker-credentials.json", "broker-mcp.json"];
+const LEGACY_FILES = ["us-list.json", "us-growth.json", "meta.json", "networth.json", "tradebook.json", "watchlist.json", "history.json", "positions.json", "valuation-log.json", "custom-list.json", "theses.json", "kite-holdings.json", "lists.json", "dividend-plan.json", "growth-overrides.json", "funds.json", "alerts.json", "kite-slots.json", "kite-session.json", "broker-sessions.json", "broker-credentials.json", "broker-mcp.json"];
 // Before accounts existed everything sat directly in data/. The owner inherits it; files already in the owner's folder win.
 async function migrateLegacyData(owner) {
   const dest = userDir(owner); let moved = [];

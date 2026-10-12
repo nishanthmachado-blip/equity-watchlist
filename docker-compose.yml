@@ -16,7 +16,8 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?Set MONGO_PASSWORD in .env}
     volumes:
       - mongo-data:/data/db
-    # Not published to the host: only the app container can reach the database.
+    ports:
+      - "127.0.0.1:27019:27017"
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 10s

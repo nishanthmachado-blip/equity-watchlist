@@ -1,25 +1,5 @@
 # Equity Watchlist MVP
 
-## v4.2: what changed — Swing targets T1 / T2 / T3
-
-- **Targets column** on Swing trading: the sell price for each level next to every position. Defaults: T1 = +10%, T2 = +20%, T3 = +40% from your average price. Levels already reached are green with ✓, and the next one is underlined. Hover a level to see the profit at that price.
-- **An alert at each level:** 🎯 when T1 is reached, then again at T2 and at T3 (title names the level, its price and the LTP). Falling back below a level does not alert again.
-- **Your own levels:** ⚙ Targets sets T1/T2/T3 for all positions. A single position can have its own (e.g. "8, 15, 30") in its edit box. An older single-target setting carries over as T1.
-
-## v4.1: what changed — Swing trading
-
-A new **⚡ Swing trading** page (side menu) tracks your swing positions at live market prices.
-
-- **Positions:** qty, average price, limit (e.g. 3L) and an "add X below Y" rule. Each row shows LTP, value, P/L and how much limit is left.
-- **🎯 Book profit (green):** a position up 10% or more from your average (change the target in ⚙ Settings, or per position). An alert fires once and repeats only after 24 hours.
-- **💰 Deploy (blue):** the price is at or below your add level. The amount shown is the smaller of your add amount and the limit left. Positions without an add level signal on an 8% dip from average.
-- **Near (amber):** within 2.5% of either level.
-- **Swing watchlist:** stocks you plan to buy, with a "buy below" price and an amount. Deploy alerts work the same way; **Bought** moves a row into positions.
-- **Paste from my sheet:** paste rows straight from Excel/Google Sheets ("Add 2L below 4.7k" is understood). Names are matched to NSE symbols and you can fix any before importing.
-- **Sell / Buy more:** records trades, recalculates the average and keeps closed trades with booked P/L.
-- **Prices:** Zerodha Kite quotes when logged in, else Yahoo, else the last saved price (labelled). Checked every minute while the page is open and every 5 minutes in the background during market hours. Alerts appear under 🔔 and as browser notifications.
-- Data is per user (`swing.json`, or MongoDB when enabled) like everything else.
-
 ## v4.0: what changed — MongoDB storage and Docker
 
 - **Data now lives in MongoDB** when `MONGO_URL` is set, which `docker-compose.yml` does for you. Redeploying, rebuilding or replacing the app no longer resets it. Stored there:
@@ -31,13 +11,33 @@ A new **⚡ Swing trading** page (side menu) tracks your swing positions at live
 - **First start on an empty database imports your existing `data` folder**, so nothing from earlier versions is lost.
 - **Dockerised:**
   - `Dockerfile` (Node 22 Alpine, non-root, health check);
-  - `docker-compose.yml` (app + MongoDB 7 with a persistent volume, database not exposed);
+  - `docker-compose.yml` (app + MongoDB 7 with a persistent volume, database accessible only on this computer at `127.0.0.1:27019`);
   - `docker-compose.aws.yml` (adds Caddy with automatic HTTPS).
 
   Runs the same on Windows (Docker Desktop), a Mac mini and AWS. See **DOCKER.md**.
 - **Backups:** `scripts/backup-mongo.sh` / `.ps1` and `scripts/restore-mongo.sh` (mongodump / mongorestore).
 - **Health and status:** `/healthz` now also checks the database (503 when MongoDB is down); `/api/storage` (owner) shows the storage mode and any failed writes.
 - **Without `MONGO_URL`** the app still runs with JSON files, exactly as before.
+
+### Inspect data with MongoDB Compass
+
+Start the services with `docker compose up -d`. The MongoDB container's internal port `27017` is mapped to host port `27019`, bound to `127.0.0.1` so other devices cannot connect.
+
+In MongoDB Compass, create a connection using:
+
+```text
+mongodb://127.0.0.1:27019/?authSource=admin
+```
+
+Select **Username / Password** authentication. Use `ewadmin` (or your `MONGO_USER`), the `MONGO_PASSWORD` from `.env`, and `admin` as the authentication database. `SETUP_CODE` is for creating the app's first account, not MongoDB authentication.
+
+Open the `equity_watchlist` database (or your `MONGO_DB`) and the `app_data` collection (or your `MONGO_COLLECTION`). Each document represents a stored file: `_id` is its relative path, `owner` identifies its account, `kind` identifies the record type, and `data` (or `text`) contains its contents. To view watchlists, use this Compass filter:
+
+```json
+{ "kind": "watchlist" }
+```
+
+Treat this connection as inspection-only while the app is running: the app caches records in memory and can overwrite direct database edits. Recreating containers preserves the `mongo-data` volume; do not use `docker compose down -v` unless you intend to delete the stored data.
 
 ## v3.4: what changed — INDmoney through its official MCP server
 
@@ -485,3 +485,5 @@ The Angel One and Dhan cards now have **Connection: Broker API | MCP server**. W
 - **Security fix in this version:** every request that changes data must now come from the app's own page (`Origin` check). Previously another website open in your browser could have posted to `localhost:4173`. That mattered more now that a saved server URL receives your tokens.
 - **`.env` fix:** a value made of several quoted parts (a command line such as `"C:\Program Files\Python\python.exe" -m pkg`) is no longer mangled.
 - **Verification status:** `npm test` (93 tests) runs both connections against fake servers. For Dhan, a hosted MCP server with OAuth (PKCE checked, forged state rejected, account headers present). For Angel One, a local stdio server that needs its own login, plus a Kite-style login-link server; in both cases the trading tools stay blocked. The browser flow was also run end to end, including the consent tab and the callback, for both brokers. It was **not** run against Dhan's real MCP server, whose exact URL, login method and tool names are not public in a form this build could read. If its holdings tool has an unusual name or format, the card says which tools it found. Send me that list and the mapping is a one-line change.
+#   e q u i t y - w a t c h l i s t  
+ 

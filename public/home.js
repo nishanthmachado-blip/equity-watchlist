@@ -483,13 +483,13 @@
     } catch {}
   }
   function renderAlerts(a) {
-    $("#alList").innerHTML = a.events.length ? `<ul class="flag-list">${a.events.map(e => `<li class="al-item${e.read ? "" : " unread"}${String(e.type || "").startsWith("swing") ? ` ${esc(e.type)}` : ""}" data-sym="${esc(e.symbol)}" data-id="${e.id}" data-type="${esc(e.type || "")}" tabindex="0"><div class="fcompany">${e.type === "buy-zone" ? "🟢" : "🔄"} ${esc(e.title)}</div><div class="fnote">${esc(e.detail)} · ${new Date(e.at).toLocaleString("en-IN")}</div></li>`).join("")}</ul>` : '<p class="vs-empty">No alerts yet. The first check only records where every stock stands today; alerts appear when something changes after that.</p>';
+    $("#alList").innerHTML = a.events.length ? `<ul class="flag-list">${a.events.map(e => `<li class="al-item${e.read ? "" : " unread"}" data-sym="${esc(e.symbol)}" data-id="${e.id}" tabindex="0"><div class="fcompany">${e.type === "buy-zone" ? "🟢" : "🔄"} ${esc(e.title)}</div><div class="fnote">${esc(e.detail)} · ${new Date(e.at).toLocaleString("en-IN")}</div></li>`).join("")}</ul>` : '<p class="vs-empty">No alerts yet. The first check only records where every stock stands today; alerts appear when something changes after that.</p>';
   }
   window.openAlerts = () => { pollAlerts(true); const ok = "Notification" in window; $("#alNotify").hidden = !ok || Notification.permission === "granted"; };
   $("#bellBtn").onclick = () => setView("alerts");
   $("#alMarkAll").onclick = async () => { await post("/api/alerts/read", { all: true }); pollAlerts(true); };
   $("#alNotify").onclick = async () => { const p = await Notification.requestPermission(); $("#alStatus").textContent = p === "granted" ? "Notifications on while this tab is open." : "Notifications were not allowed."; $("#alNotify").hidden = p === "granted"; };
-  const openAlert = async li => { if (!li) return; await post("/api/alerts/read", { ids: [Number(li.dataset.id)] }); if (li.dataset.type.startsWith("swing")) { setView("swing"); pollAlerts(); return; } await loadValuation(); openStockSheet(li.dataset.sym, { back: "Back to Alerts" }); pollAlerts(); };
+  const openAlert = async li => { if (!li) return; await post("/api/alerts/read", { ids: [Number(li.dataset.id)] }); await loadValuation(); openStockSheet(li.dataset.sym, { back: "Back to Alerts" }); pollAlerts(); };
   $("#alList").addEventListener("click", e => openAlert(e.target.closest("li[data-sym]")));
   $("#alList").addEventListener("keydown", e => { if (e.key === "Enter") openAlert(e.target.closest("li[data-sym]")); });
   pollAlerts(); setInterval(pollAlerts, 60000);

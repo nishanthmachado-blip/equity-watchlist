@@ -1,7 +1,7 @@
-# Equity Watchlist v4.2: Deployment Guide (AWS)
+# Equity Watchlist v4.0: Deployment Guide (AWS)
 
 **Audience:** deployment / infrastructure team
-**App version:** 4.2.0
+**App version:** 4.0.0
 **Owner:** Nishanth
 
 ---

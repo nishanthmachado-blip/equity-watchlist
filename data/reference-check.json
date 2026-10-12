@@ -1,0 +1,185 @@
+{
+  "_note": "Screener.in figures captured manually on 2026-10-01. Used ONLY by the Data check panel to compare against Yahoo; never feeds the valuation.",
+  "asOf": "2026-10-01",
+  "reference": {
+    "HFCL": {
+      "pe": 63.7,
+      "pb": 7.46,
+      "roce": 10.8,
+      "roe": 6.98,
+      "promoter": 28.3,
+      "salesCagr3": 2,
+      "profitCagr3": 1
+    },
+    "STLTECH": {
+      "pe": 208,
+      "pb": 20.6,
+      "roce": 7.65,
+      "roe": 1.24,
+      "promoter": 42.29,
+      "salesCagr3": -12,
+      "profitCagr3": -43
+    },
+    "SENORES": {
+      "pe": 49.2,
+      "pb": 6.66,
+      "roce": 15.1,
+      "roe": 13.4,
+      "promoter": 45.82,
+      "salesCagr3": 162,
+      "profitCagr3": 139
+    },
+    "SKYGOLD": {
+      "pe": 37.5,
+      "pb": 10.5,
+      "roce": 27.0,
+      "roe": 29.2,
+      "promoter": 51.74,
+      "salesCagr3": 76,
+      "profitCagr3": 145
+    },
+    "SENCO": {
+      "pe": 9.11,
+      "pb": 2.07,
+      "roce": 21.2,
+      "roe": 25.6,
+      "promoter": 64.48,
+      "salesCagr3": 27,
+      "profitCagr3": 54
+    },
+    "PNGJL": {
+      "pe": 19.1,
+      "pb": 4.0,
+      "roce": 21.0,
+      "roe": 23.5,
+      "promoter": 76.6,
+      "salesCagr3": 33,
+      "profitCagr3": 77
+    },
+    "DELHIVERY": {
+      "pe": 251,
+      "pb": 3.09,
+      "roce": 1.0,
+      "roe": -0.2,
+      "salesCagr3": 13,
+      "profitCagr3": 26
+    },
+    "AEROFLEX": {
+      "pe": 103,
+      "pb": 15.4,
+      "roce": 18.9,
+      "roe": 14.1,
+      "promoter": 65.5,
+      "salesCagr3": 18,
+      "profitCagr3": 20
+    },
+    "PCJEWELLER": {
+      "pe": 16.2,
+      "pb": 1.35,
+      "roce": 9.6,
+      "roe": 9.96,
+      "promoter": 38.5,
+      "salesCagr3": 11,
+      "profitCagr3": 77
+    },
+    "BLS": {
+      "pe": 12.6,
+      "pb": 3.6,
+      "roce": 29.8,
+      "roe": 32.1,
+      "promoter": 70.4,
+      "salesCagr3": 26,
+      "profitCagr3": 49
+    },
+    "VINCOFE": {
+      "pe": 33.3,
+      "pb": 4.58,
+      "roce": 18.2,
+      "roe": 16.6,
+      "promoter": 34.65,
+      "salesCagr3": 106,
+      "profitCagr3": 165
+    },
+    "RPTECH": {
+      "pe": 19.8,
+      "pb": 3.1,
+      "roce": 17.0,
+      "roe": 14.7,
+      "promoter": 64.04,
+      "salesCagr3": 19,
+      "profitCagr3": 31
+    },
+    "NATCOPHARM": {
+      "pe": 14.1,
+      "pb": 1.75,
+      "roce": 17.4,
+      "roe": 17.1,
+      "promoter": 49.41,
+      "salesCagr3": 15,
+      "profitCagr3": 27
+    },
+    "SHILPAMED": {
+      "pe": 73.2,
+      "pb": 8.03,
+      "roce": 10.9,
+      "roe": 9.0,
+      "promoter": 40.13,
+      "salesCagr3": 14,
+      "profitCagr3": 107
+    },
+    "SUDEEPPHRM": {
+      "pe": 74.2,
+      "pb": 15.3,
+      "roce": 28.2,
+      "roe": 25.2,
+      "promoter": 76.16,
+      "salesCagr3": 14,
+      "profitCagr3": 40
+    },
+    "ANANDRATHI": {
+      "pe": 75.6,
+      "pb": 35.2,
+      "roce": 59.2,
+      "roe": 47.3,
+      "promoter": 41.4,
+      "salesCagr3": 31,
+      "profitCagr3": 33
+    },
+    "GRAVITA": {
+      "pe": 26.6,
+      "pb": 4.26,
+      "roce": 16.2,
+      "roe": 15.5,
+      "promoter": 55.88,
+      "salesCagr3": 15,
+      "profitCagr3": 19
+    },
+    "SAFARI": {
+      "pe": 40.9,
+      "pb": 6.04,
+      "roce": 19.3,
+      "roe": 15.9,
+      "promoter": 44.7,
+      "salesCagr3": 19,
+      "profitCagr3": 10
+    },
+    "SHAILY": {
+      "pe": 78.3,
+      "pb": 19.3,
+      "roce": 29.3,
+      "roe": 26.9,
+      "promoter": 41.09,
+      "salesCagr3": 18,
+      "profitCagr3": 69
+    },
+    "APOLLO": {
+      "pe": 121,
+      "pb": 10.7,
+      "roce": 14.5,
+      "roe": 11.8,
+      "promoter": 50.0,
+      "salesCagr3": 45,
+      "profitCagr3": 76
+    }
+  }
+}
