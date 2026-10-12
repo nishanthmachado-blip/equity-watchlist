@@ -1,7 +1,7 @@
-# Equity Watchlist v4.0: Deployment Guide (AWS)
+# Equity Watchlist v4.4: Deployment Guide (AWS)
 
 **Audience:** deployment / infrastructure team
-**App version:** 4.0.0
+**App version:** 4.4.0
 **Owner:** Nishanth
 
 ---
@@ -34,7 +34,7 @@ From v2.8, **every page and API needs a sign-in**, and each account's data is ke
 | Instance | EC2 `t3.small` / `t4g.small` or a Lightsail 2 GB box is plenty |
 | OS | Any Linux (Amazon Linux 2023 / Ubuntu 22.04+) |
 | Disk | Under 1 GB of data; use an EBS volume if you want it separate from the root disk |
-| Outbound internet | HTTPS (443) to: `www.screener.in`, `query1/query2.finance.yahoo.com`, `fc.yahoo.com`, `www.google.com`, `news.google.com`, `www.nseindia.com`, `mcp.kite.trade`, `api.kite.trade` (company list for search), `nsearchives.nseindia.com`, `apiconnect.angelone.in`, `api.dhan.co`, `auth.dhan.co`, `api.groww.in`, `api.indstocks.com`, `mcp.indmoney.com` (INDmoney MCP), `www.sec.gov`, `data.sec.gov`, `stooq.com` (US stocks tab), `api.anthropic.com` (only if the AI advisor is used) |
+| Outbound internet | HTTPS (443) to: `www.screener.in`, `query1/query2.finance.yahoo.com`, `fc.yahoo.com`, `www.google.com`, `news.google.com`, `www.nseindia.com`, `mcp.kite.trade`, `api.kite.trade` (company list for search), `nsearchives.nseindia.com`, `apiconnect.angelone.in`, `api.dhan.co`, `auth.dhan.co`, `api.groww.in`, `api.indstocks.com`, `mcp.indmoney.com` (INDmoney MCP), `www.sec.gov`, `data.sec.gov`, `stooq.com` (US stocks tab), `api.anthropic.com` (only if the AI advisor is used), `api.telegram.org` (phone alerts, if a user connects a Telegram bot) |
 | Inbound | 443 (and 80 for certificate issuance) from the internet; SSH from admin IPs only |
 | Domain | A DNS name, e.g. `watchlist.example.com` |
 
@@ -246,6 +246,10 @@ Use this option if the team standardises on ALBs.
 | `PRICE_SOURCES` | `kite,yahoo,google` | Price feed order |
 | `KITE_MCP_ENABLED` | on | `0` disables Zerodha Kite MCP |
 | `ANGEL_*`, `DHAN_*`, `GROWW_*`, `INDMONEY_*` | none | The **owner's** broker credentials (optional; other accounts never see these) |
+| `APP_URL` | `PUBLIC_URL` | Link added to Telegram alerts ("Open Equity Watchlist"); leave unset for no link |
+| `TELEGRAM_API` | `https://api.telegram.org` | Telegram Bot API base (only change for a proxy or tests) |
+
+Telegram phone alerts (v4.4): each user connects their own bot from 🔔 Alerts → 📱 Phone alerts. The bot token is stored in that user's `notify.json` (MongoDB document `users/<id>/notify.json`), is never returned in full by the API, and is left out of user backups like broker logins. Alerts are sent by the server, so they arrive with the browser closed; the background swing check runs every 5 minutes during market hours.
 
 ---
 

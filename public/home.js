@@ -305,7 +305,24 @@
     $("#vsRecent").innerHTML = rows.map(r => { const c = classify(r); return `<tr data-sym="${esc(r.symbol)}"><td><div class="company">${esc(r.company)}</div><div class="ticker">${esc(r.symbol)}</div></td><td>${money(r.price)}</td><td>${verdictChip(c)}</td><td>${viewChip(r.view)}</td><td class="range">${r.zoneLow ? `${money(r.zoneLow)} – ${money(r.zoneHigh)}` : "—"}</td><td>${statusChip(r.status)}</td></tr>`; }).join("");
   }
   $("#vsRecent").addEventListener("click", e => { const tr = e.target.closest("tr[data-sym]"); if (tr) showResult(tr.dataset.sym); });
-  window.openHome = async () => { await loadValuation(); renderRecent(); };
+  window.openHome = async () => { loadSwingStrip(); await loadValuation(); renderRecent(); };
+  // Swing signals at a glance on Home (only when you track swing trades)
+  async function loadSwingStrip() {
+    const el = $("#homeSwing"); if (!el) return;
+    try {
+      const x = await get("/api/swing/summary"); if (!x.has) { el.hidden = true; return; }
+      const sgn = v => Number.isFinite(v) ? `${v > 0 ? "+" : v < 0 ? "−" : ""}₹${Math.abs(Math.round(v)).toLocaleString("en-IN")}` : "—";
+      const L = v => v >= 1e5 ? `₹${+(v / 1e5).toFixed(2)} L` : `₹${Math.round(v).toLocaleString("en-IN")}`;
+      const pills = [x.takeProfit ? `<span class="pill tp">🎯 ${x.takeProfit} to book profit</span>` : "", x.deploy ? `<span class="pill dp">💰 ${x.deploy} to deploy${x.deployNow ? ` · ${L(x.deployNow)}` : ""}</span>` : "", x.near ? `<span class="pill near">${x.near} near a level</span>` : "", x.cashShort ? `<span class="pill bad">cash short by ${L(x.cashShort)}</span>` : ""].filter(Boolean);
+      el.innerHTML = `<b class="t">⚡ Swing</b>${pills.join("") || '<span class="pill">No signals right now</span>'}<span>P/L <b class="${x.pnl > 0 ? "buy" : x.pnl < 0 ? "avoid" : ""}">${sgn(x.pnl)}</b>${Number.isFinite(x.pnlPct) ? ` (${x.pnlPct > 0 ? "+" : ""}${x.pnlPct}%)` : ""} on ${x.positions} position${x.positions === 1 ? "" : "s"}</span>${Number.isFinite(x.cash) ? `<span>Free cash <b>${L(x.cash)}</b></span>` : ""}<span class="go">Open ›</span>`;
+      el.title = x.top.map(t => `${t.name}: ${t.note || ""}`).join("\n");
+      el.hidden = false;
+    } catch { el.hidden = true; }
+  }
+  window.loadSwingStrip = loadSwingStrip;
+  $("#homeSwing")?.addEventListener("click", () => setView("swing"));
+  $("#homeSwing")?.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setView("swing"); } });
+  setInterval(() => { if (!$("#homeView").hidden && !document.hidden) loadSwingStrip(); }, 120000);
 
   // ---- Portfolio ---------------------------------------------------------------------------------
   let pf = null, pfFilter = "all", pfTimer = null;
@@ -483,13 +500,40 @@
     } catch {}
   }
   function renderAlerts(a) {
-    $("#alList").innerHTML = a.events.length ? `<ul class="flag-list">${a.events.map(e => `<li class="al-item${e.read ? "" : " unread"}" data-sym="${esc(e.symbol)}" data-id="${e.id}" tabindex="0"><div class="fcompany">${e.type === "buy-zone" ? "🟢" : "🔄"} ${esc(e.title)}</div><div class="fnote">${esc(e.detail)} · ${new Date(e.at).toLocaleString("en-IN")}</div></li>`).join("")}</ul>` : '<p class="vs-empty">No alerts yet. The first check only records where every stock stands today; alerts appear when something changes after that.</p>';
+    $("#alList").innerHTML = a.events.length ? `<ul class="flag-list">${a.events.map(e => `<li class="al-item${e.read ? "" : " unread"}${String(e.type || "").startsWith("swing") ? ` ${esc(e.type)}` : ""}" data-sym="${esc(e.symbol)}" data-id="${e.id}" data-type="${esc(e.type || "")}" tabindex="0"><div class="fcompany">${e.type === "buy-zone" ? "🟢" : "🔄"} ${esc(e.title)}</div><div class="fnote">${esc(e.detail)} · ${new Date(e.at).toLocaleString("en-IN")}</div></li>`).join("")}</ul>` : '<p class="vs-empty">No alerts yet. The first check only records where every stock stands today; alerts appear when something changes after that.</p>';
   }
   window.openAlerts = () => { pollAlerts(true); const ok = "Notification" in window; $("#alNotify").hidden = !ok || Notification.permission === "granted"; };
   $("#bellBtn").onclick = () => setView("alerts");
+  // Phone alerts through the user's own Telegram bot
+  $("#alPhone").onclick = async () => {
+    let st = {}; try { st = await get("/api/notify"); } catch {}
+    const t = st.telegram || {};
+    const state = () => t.connected ? `<p class="tg-state">✅ Connected to <b>@${esc(t.bot || "your bot")}</b> → ${esc(t.chat || "")}. ${t.enabled ? "On" : "Paused"}.${st.lastError ? ` <span class="avoid">Last error: ${esc(st.lastError)}</span>` : st.lastSent ? ` Last sent ${new Date(st.lastSent).toLocaleString("en-IN")}.` : ""}</p>` : "";
+    const out = await window.ui.dialog({
+      title: "Phone alerts on Telegram", icon: "📱", okText: t.connected ? "Save" : "Connect", wide: true,
+      bodyHtml: `${t.connected ? "" : `<ol class="tg-steps"><li>In Telegram, open <b>@BotFather</b>, send <b>/newbot</b> and follow the two questions. It gives you a <b>token</b>.</li><li>Open your new bot (the link BotFather shows) and press <b>Start</b>.</li><li>Paste the token below and press Connect. The app finds your chat and sends a confirmation.</li></ol>`}
+        <div class="nw-form"><label class="ui-field"><span>Bot token${t.connected ? ` (saved: ${esc(t.token)}; paste a new one to change)` : ""}</span><input class="ui-input" name="token" autocomplete="off" spellcheck="false" placeholder="123456789:AA…"></label>
+        <label class="ui-field"><span>Send</span><select class="ui-input" name="scope"><option value="all">All alerts</option><option value="swing"${t.scope === "swing" ? " selected" : ""}>Swing only</option></select></label>
+        ${t.connected ? `<label class="ui-field"><span>Status</span><select class="ui-input" name="enabled"><option value="1">On</option><option value="0"${t.enabled ? "" : " selected"}>Paused</option></select></label>` : ""}</div>
+        ${state()}
+        ${t.connected ? `<div class="toolbar" style="margin:10px 0 0"><button type="button" class="ghost" data-tg="test">Send a test</button><button type="button" class="ghost danger-text" data-tg="disconnect">Disconnect</button><span class="ui-hint" data-tgst></span></div>` : ""}
+        <p class="ui-hint">The token stays on your server, in your account only, and is never shown in full again. Alerts are sent when they happen, even with the app closed (the server checks during market hours). Telegram is free; WhatsApp needs a paid business account, so it is not used.</p>`,
+      onOpen: (box, { setError }) => box.querySelectorAll("[data-tg]").forEach(b => { b.onclick = async () => {
+        setError(""); const st2 = box.querySelector("[data-tgst]"); st2.textContent = "…";
+        try { await post(`/api/notify/${b.dataset.tg}`, {}); st2.textContent = b.dataset.tg === "test" ? "Sent. Check Telegram." : "Disconnected."; if (b.dataset.tg === "disconnect") setTimeout(() => box.closest(".ui-scrim")?.querySelector('[data-ui="cancel"]')?.click(), 600); }
+        catch (e) { setError(e.message); st2.textContent = ""; }
+      }; }),
+      collect: async box => {
+        const token = box.querySelector("[name=token]").value.trim(), scope = box.querySelector("[name=scope]").value;
+        if (!t.connected || token) return post("/api/notify/connect", { token, scope });
+        return post("/api/notify/settings", { scope, enabled: box.querySelector("[name=enabled]").value === "1" });
+      }
+    });
+    if (out?.telegram) window.toast?.(out.telegram.enabled ? `Phone alerts on: @${out.telegram.bot} → ${out.telegram.chat}` : "Phone alerts paused.", { kind: "ok" });
+  };
   $("#alMarkAll").onclick = async () => { await post("/api/alerts/read", { all: true }); pollAlerts(true); };
   $("#alNotify").onclick = async () => { const p = await Notification.requestPermission(); $("#alStatus").textContent = p === "granted" ? "Notifications on while this tab is open." : "Notifications were not allowed."; $("#alNotify").hidden = p === "granted"; };
-  const openAlert = async li => { if (!li) return; await post("/api/alerts/read", { ids: [Number(li.dataset.id)] }); await loadValuation(); openStockSheet(li.dataset.sym, { back: "Back to Alerts" }); pollAlerts(); };
+  const openAlert = async li => { if (!li) return; await post("/api/alerts/read", { ids: [Number(li.dataset.id)] }); if (li.dataset.type.startsWith("swing")) { setView("swing"); pollAlerts(); return; } await loadValuation(); openStockSheet(li.dataset.sym, { back: "Back to Alerts" }); pollAlerts(); };
   $("#alList").addEventListener("click", e => openAlert(e.target.closest("li[data-sym]")));
   $("#alList").addEventListener("keydown", e => { if (e.key === "Enter") openAlert(e.target.closest("li[data-sym]")); });
   pollAlerts(); setInterval(pollAlerts, 60000);

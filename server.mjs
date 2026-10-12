@@ -31,6 +31,9 @@ import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { PROFILES, STYLES, buildModel, assetMix } from "./model.mjs";
+import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows } from "./swing.mjs";
+import { buildXlsx } from "./xlsx.mjs";
+import { validToken, maskToken, botInfo, findChat, sendTelegram, pushAlerts } from "./notify.mjs";
 import { SEED as SCRIP_SEED, parseKiteInstruments, parseNseEquityList, mergeMaster, searchMaster } from "./scripmaster.mjs";
 import { US_POPULAR, cleanUsSymbol, parseSecTickers, searchTickers, seriesFromFacts, usValuation, fetchUsPrices, fetchSecJson, companyFactsUrl, SEC_TICKERS_URL } from "./us.mjs";
 import { LISTS as MARKET_LISTS, parseNseList, rankFromQuotes } from "./market.mjs";
@@ -76,6 +79,7 @@ const kiteMain = perUser(u => createKiteClient({ sessionFile: path.join(userDir(
 const kite = kiteMain.proxy;
 const auth = createAuth({ dir: path.join(DATA_DIR, "auth") });
 const U = Object.freeze({
+  get notifyFile() { return userFile("notify.json"); },
   get dataFile() { return userFile("watchlist.json"); },
   get historyFile() { return userFile("history.json"); },
   get positionsFile() { return userFile("positions.json"); },
@@ -378,7 +382,7 @@ async function runAlerts(rows) {
     const store = await readJson(U.alertsFile, { state: {}, events: [] });
     const { nextState, fresh } = diffAlerts(store.state, rows, { events: store.events });
     if (fresh.length || JSON.stringify(nextState) !== JSON.stringify(store.state)) await writeJson(U.alertsFile, { state: nextState, events: mergeEvents(store.events, fresh) });
-    if (fresh.length) console.log(`[alerts] ${fresh.map(e => e.title).join(" | ")}`);
+    if (fresh.length) { console.log(`[alerts] ${fresh.map(e => e.title).join(" | ")}`); phonePush(fresh); }
   } finally { alertsBusy.delete(me); }
 }
 async function logVerdicts(rows) { const log = await readJson(U.valuationLogFile, {}); if (addSnapshots(log, rows, istDay())) await writeJson(U.valuationLogFile, log); }
@@ -578,7 +582,7 @@ async function syncKiteSlot(kc, slotId, slotLabel, label) {
 }
 
 // ---- Backup / restore: one JSON file with every file in your private folder ----
-const BACKUP_SECRET_FILES = /^(kite-session(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp)\.json$/;
+const BACKUP_SECRET_FILES = /^(kite-session(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp|notify)\.json$/;
 const BACKUP_NAME_RE = /^[a-z0-9][\w-]{0,60}\.json$/i;
 async function makeBackup(includeSecrets) {
   const dir = userDir(), files = {};
@@ -685,6 +689,86 @@ async function yahooSearch(q) {
     const quotes = (await r.json()).quotes || []; ySearchCache.set(k, { at: Date.now(), quotes }); if (ySearchCache.size > 500) ySearchCache.delete(ySearchCache.keys().next().value);
     return { quotes };
   } catch { return { quotes: [], error: "Online search unavailable." }; }
+}
+
+// ---- Swing trading: live prices (Kite quotes → Yahoo → saved prices), positions, swing watchlist, alerts ----
+const swingFile = () => userFile("swing.json");
+const livePriceCache = new Map(); // "EX:SYM" -> { price, prevClose, source, at } (shared: prices are public)
+async function livePrices(items, maxAgeMs = 45e3) {
+  const out = new Map(), need = [];
+  for (const it of items) { const c = livePriceCache.get(`${it.exchange || "NSE"}:${it.symbol}`); if (c && Date.now() - c.at < maxAgeMs) out.set(it.symbol, c); else need.push(it); }
+  if (need.length) {
+    const kc = await anyKiteWithSession().catch(() => null);
+    if (kc) for (const ex of ["NSE", "BSE"]) {
+      const syms = need.filter(i => (i.exchange || "NSE") === ex).map(i => i.symbol); if (!syms.length) continue;
+      try { for (const [k, q] of await kc.quotes(syms, ex)) { const v = { price: q.price, prevClose: q.close ?? null, source: "Kite", at: Date.now() }; out.set(k, v); livePriceCache.set(`${ex}:${k}`, v); } } catch { /* fall through */ }
+    }
+    const rest = need.filter(i => !out.has(i.symbol));
+    if (rest.length) { try { for (const [k, q] of await yahooQuotes(rest.map(i => ({ symbol: i.symbol, exchange: i.exchange || "NSE" })))) if (q.price > 0) { const prev = Number.isFinite(q.pChange) ? q.price / (1 + q.pChange / 100) : null; const v = { price: q.price, prevClose: prev, source: "Yahoo", at: Date.now() }; out.set(k, v); livePriceCache.set(`${rest.find(i => i.symbol === k)?.exchange || "NSE"}:${k}`, v); } } catch { /* fall through */ } }
+    const still = need.filter(i => !out.has(i.symbol));
+    if (still.length) { // last resort: the saved watchlist / holdings price (marked as such)
+      const [stocks, view] = await Promise.all([readWatchlist(), kiteHoldingsView().catch(() => ({ holdings: [] }))]);
+      for (const i of still) { const st = stocks.find(x => symOf(x) === i.symbol), h = view.holdings.find(x => x.symbol === i.symbol); const p = h?.syncPrice ?? st?.price; if (p > 0) out.set(i.symbol, { price: p, prevClose: null, source: h?.syncPrice ? "last broker sync" : "saved price", at: Date.now() }); }
+    }
+  }
+  return out;
+}
+// Alerts to the phone (Telegram), in the background: a slow or failing Telegram never holds up the app.
+function phonePush(fresh) {
+  const user = currentUser();
+  (async () => {
+    const cfg = await readJson(U.notifyFile, {});
+    try { const n = await pushAlerts(cfg, fresh); if (n) await writeJson(U.notifyFile, { ...cfg, lastSent: new Date().toISOString(), lastError: null }); }
+    catch (e) { console.error(`[telegram] ${user?.username}: ${e.message}`); await writeJson(U.notifyFile, { ...cfg, lastError: e.message, lastErrorAt: new Date().toISOString() }); }
+  })().catch(() => {});
+}
+async function swingView({ alerts = true } = {}) {
+  const st = await readJson(swingFile(), {}), positions = st.positions || [], watch = st.watch || [];
+  const prices = await livePrices([...positions, ...watch]);
+  const view = evaluateSwing({ positions, watch, prices, settings: st.settings || {}, cash: st.cash?.balance ?? null });
+  if (alerts && (positions.length || watch.length)) {
+    const store = await readJson(U.alertsFile, { state: {}, events: [] });
+    const { next, fresh } = diffSwingAlerts(st.alertState || {}, view, { events: store.events });
+    if (fresh.length) { await writeJson(U.alertsFile, { ...store, events: mergeEvents(store.events, fresh) }); console.log(`[swing] ${fresh.map(e => e.title).join(" | ")}`); phonePush(fresh); }
+    if (JSON.stringify(next) !== JSON.stringify(st.alertState || {})) await writeJson(swingFile(), { ...st, alertState: next });
+  }
+  const all = st.closed || [], closed = all.slice(0, 100);
+  return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
+}
+// Closed swing trades as an Excel file: one row per FIFO buy lot (short / long term), a yearly tax estimate and the scorecard.
+async function sendSwingExport(res) {
+  const st = await readJson(swingFile(), {}), closed = st.closed || [], tx = swingTaxRows(closed), sc = scorecard(closed);
+  const sumBy = (k, f = () => true) => Math.round(tx.rows.filter(f).reduce((a, r) => a + r[k], 0) * 100) / 100;
+  const sheets = [
+    { name: "Closed trades (FIFO)", columns: [
+        { header: "FY", key: "fy", width: 11 }, { header: "Stock", key: "name", width: 24 }, { header: "Symbol", key: "symbol", width: 13 }, { header: "Qty", key: "qty", type: "int", width: 7 },
+        { header: "Buy date", key: "buyDay", type: "date", width: 13 }, { header: "Buy price", key: "buyPrice", type: "money", width: 12 }, { header: "Sell date", key: "sellDay", type: "date", width: 13 }, { header: "Sell price", key: "sellPrice", type: "money", width: 12 },
+        { header: "Cost", key: "cost", type: "money", width: 14 }, { header: "Sale value", key: "proceeds", type: "money", width: 14 }, { header: "Gain / loss", key: "gain", type: "money", width: 14 }, { header: "Days held", key: "days", type: "int", width: 10 },
+        { header: "Term", key: "term", width: 8 }, { header: "At target", key: "tgt", width: 10 }],
+      rows: tx.rows.map(r => ({ ...r, tgt: r.atTarget ? "Yes" : "" })),
+      totals: { fy: "Total", cost: sumBy("cost"), proceeds: sumBy("proceeds"), gain: sumBy("gain") },
+      notes: [`Each sale is matched to your oldest swing buys first (FIFO). Held more than ${tx.rules.ltMonths} months = LTCG, otherwise STCG.`, "Buy dates come from the dates you entered (Bought on) or recorded buys; positions imported from a sheet use the import date unless you set it.", "Brokerage, STT and other charges are not included. Check against your broker's tax P&L before filing."] },
+    { name: "Tax by year", columns: [
+        { header: "FY", key: "fy", width: 11 }, { header: "STCG gains", key: "stGain", type: "money", width: 14 }, { header: "STCG losses", key: "stLoss", type: "money", width: 14 }, { header: "LTCG gains", key: "ltGain", type: "money", width: 14 }, { header: "LTCG losses", key: "ltLoss", type: "money", width: 14 },
+        { header: "Net STCG", key: "netSt", type: "money", width: 13 }, { header: "Net LTCG", key: "netLt", type: "money", width: 13 }, { header: "LTCG exemption used", key: "exemptUsed", type: "money", width: 20 }, { header: "Estimated tax", key: "tax", type: "money", width: 14 }],
+      rows: tx.years,
+      notes: [`Rates: STCG ${tx.rules.stRate * 100}%, LTCG ${tx.rules.ltRate * 100}% above ₹${tx.rules.ltExemption.toLocaleString("en-IN")} a year (${tx.rules.asOf}); before cess and surcharge.`, "These are your swing trades alone. The LTCG exemption and losses are shared with all your other sales in the year (see the Tax view)."] },
+    { name: "Scorecard", columns: [{ header: "Measure", key: "k", width: 28 }, { header: "Value", key: "v", width: 18 }],
+      rows: [["Closed trades", sc.trades], ["Wins / losses", `${sc.wins} / ${sc.losses}`], ["Win rate %", sc.winRate], ["Average win ₹", sc.avgWin], ["Average loss ₹", sc.avgLoss], ["Average win %", sc.avgWinPct], ["Average loss %", sc.avgLossPct], ["Profit factor", sc.profitFactor], ["Average P/L per trade ₹", sc.expectancy], ["Average days held", sc.avgHoldDays], ["Sold at a target", sc.atTargets], ["Total booked ₹", sc.total], ["Best trade", sc.best ? `${sc.best.name} ₹${sc.best.pnl} (${sc.best.pnlPct}%)` : null], ["Worst trade", sc.worst ? `${sc.worst.name} ₹${sc.worst.pnl} (${sc.worst.pnlPct}%)` : null]].map(([k, v]) => ({ k, v })) }
+  ];
+  const buf = buildXlsx(sheets);
+  res.writeHead(200, { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Length": buf.length, "Cache-Control": "no-store", "Content-Disposition": `attachment; filename="swing-trades-${istDay()}.xlsx"` });
+  return res.end(buf);
+}
+async function resolveNames(names) {
+  const [master, stocks] = await Promise.all([scripMaster(), readWatchlist()]);
+  const norm = x => String(x).toLowerCase().replace(/\b(ltd|limited|the|india|co)\b|[^a-z0-9&]/g, "");
+  return names.map(n => {
+    const tracked = stocks.find(s => norm(s.company) === norm(n) || symOf(s) === String(n).toUpperCase().replace(/\s+/g, ""));
+    if (tracked) return { symbol: symOf(tracked), name: tracked.company, exchange: tracked.exchange || "NSE", how: "your watchlist" };
+    const hit = searchMaster(master.list, n, 3)[0];
+    return hit ? { symbol: hit.symbol, name: hit.name, exchange: hit.exchange, how: "company list" } : { symbol: null, name: n, exchange: "NSE", how: "not found" };
+  });
 }
 
 // ---- Model portfolio (Indian stocks this app has valued) ----
@@ -917,6 +1001,8 @@ async function refreshOne(stock, withNews, kitePrices = new Map()) {
 async function mapLimit(items, limit, worker) { const results = new Array(items.length); let cursor = 0; async function run() { while (cursor < items.length) { const i = cursor++; results[i] = await worker(items[i]); } } await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run)); return results; }
 async function refreshWatchlist(stocks, withNews = true) { console.log(`[refresh] Starting ${stocks.length}-stock refresh${withNews ? " with news" : ""} (sources: ${PRICE_SOURCES.join(" → ")}).`); const kitePrices = await fetchKitePrices(stocks); const refreshed = await mapLimit(stocks, 3, stock => refreshOne(stock, withNews, kitePrices)); await persistWatchlist(refreshed, stocks); if (refreshed.some(s => s.feedStatus === "Price refreshed")) { lastPriceRefreshAt = new Date().toISOString(); await writeJson(userFile("meta.json"), { ...(await readJson(userFile("meta.json"), {})), lastPriceRefresh: lastPriceRefreshAt }); } console.log(`[refresh] Finished: ${refreshed.filter(s => s.feedStatus === "Price refreshed").length}/${stocks.length} prices refreshed.`); return refreshed; }
 function marketIsOpen() { const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts().filter(p => p.type !== "literal").map(p => [p.type, p.value])); const minutes = Number(parts.hour) * 60 + Number(parts.minute); return !["Sat", "Sun"].includes(parts.weekday) && minutes >= 555 && minutes <= 930; }
+// Swing alerts: every 5 minutes during market hours, per account (positions hitting the profit target or add levels).
+setInterval(() => { if (marketIsOpen()) forEachUser(async () => { const st = await readJson(swingFile(), {}); if ((st.positions || []).length || (st.watch || []).length) await swingView(); }); }, 5 * 60 * 1000).unref();
 // Background work runs once per account, each inside that account's own context (its files, its Kite login).
 async function forEachUser(fn) { for (const u of auth.listUsers()) { try { await asUser(u, fn); } catch (e) { console.error(`[background] ${u.username}: ${e.message}`); } } }
 setInterval(() => { if (marketIsOpen()) forEachUser(async () => { const stocks = await readWatchlist(); if (stocks.length) { await refreshWatchlist(stocks, false); await runAlerts((await computeRows()).rows); } }); }, 15 * 60 * 1000).unref();
@@ -1154,6 +1240,61 @@ async function appHandler(req, res, url) {
         return reply(res, 404, { message: "Unknown US operation." });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
+    if (url.pathname.startsWith("/api/swing")) {
+      const op = url.pathname.slice("/api/swing".length).replace(/^\//, "");
+      try {
+        if (req.method === "GET" && !op) return reply(res, 200, await swingView());
+        if (req.method === "GET" && op === "summary") { // for the strip on Home
+          const st = await readJson(swingFile(), {}); if (!(st.positions || []).length && !(st.watch || []).length) return reply(res, 200, { has: false });
+          const v = await swingView(), t = v.totals;
+          return reply(res, 200, { has: true, positions: v.positions.length, watch: v.watch.length, takeProfit: t.takeProfit, deploy: t.deploy, deployNow: t.deployNow, near: [...v.positions, ...v.watch].filter(r => /^near/.test(r.status)).length, pnl: t.pnl, pnlPct: t.pnlPct, cash: t.cash, cashShort: t.cashShort, top: [...v.positions, ...v.watch].filter(r => r.status === "take-profit" || r.status === "deploy").slice(0, 3).map(r => ({ symbol: r.symbol, name: r.name, status: r.status, note: r.note })), marketOpen: v.marketOpen });
+        }
+        if (req.method === "GET" && op === "export.xlsx") return sendSwingExport(res);
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown swing operation." });
+        const b = await readBody(req), st = await readJson(swingFile(), {}); st.positions ||= []; st.watch ||= []; st.closed ||= [];
+        const find = (list, i) => { const x = st[list].find(y => y.id === i); if (!x) throw new Error("That entry no longer exists."); return x; };
+        if (op === "position") { const prev = b.id ? find("positions", b.id) : null; if (!prev && st.positions.length >= 100) throw new Error("At most 100 swing positions."); const p = sanitizePosition(b, prev); st.positions = prev ? st.positions.map(x => (x.id === p.id ? p : x)) : [...st.positions, p]; }
+        else if (op === "watch") { const prev = b.id ? find("watch", b.id) : null; if (!prev && st.watch.length >= 100) throw new Error("At most 100 swing watchlist entries."); const w = sanitizeWatch(b, prev); st.watch = prev ? st.watch.map(x => (x.id === w.id ? w : x)) : [...st.watch, w]; }
+        else if (op === "delete") { st.positions = st.positions.filter(x => x.id !== b.id); st.watch = st.watch.filter(x => x.id !== b.id); }
+        else if (op === "buy") { const p = find("positions", b.id), q = Number(b.qty), pr = Number(b.price); if (!(q > 0 && Number.isInteger(q) && pr > 0)) throw new Error("Enter whole shares and a price."); st.positions = st.positions.map(x => (x.id === p.id ? applyBuy(x, q, pr) : x)); moveCash(st, -q * pr, `Bought ${q} ${p.symbol} @ ₹${pr}`); }
+        else if (op === "sell") {
+          const p = find("positions", b.id), q = Number(b.qty), pr = Number(b.price);
+          const atTarget = pr > 0 && evaluateSwing({ positions: [p], prices: new Map([[p.symbol, { price: pr }]]), settings: st.settings || {} }).positions[0].hitLevel > 0; // sold at or above T1
+          const r = applySell(p, q, pr, undefined, { atTarget }); st.positions = r.position ? st.positions.map(x => (x.id === p.id ? r.position : x)) : st.positions.filter(x => x.id !== p.id); st.closed = [r.trade, ...st.closed].slice(0, 500);
+          moveCash(st, q * pr, `Sold ${q} ${p.symbol} @ ₹${pr}`);
+        }
+        else if (op === "reopen" || op === "delete-trade") { // undo an accidental sale, or just drop the record
+          const t = st.closed.find(x => x.id === b.id); if (!t) throw new Error("That closed trade no longer exists.");
+          if (op === "reopen") { if (!st.positions.some(x => x.symbol === t.symbol) && st.positions.length >= 100) throw new Error("At most 100 swing positions."); st.positions = reopenTrade(st.positions, t); moveCash(st, -t.qty * t.sellPrice, `Undid sale of ${t.qty} ${t.symbol}`); }
+          st.closed = st.closed.filter(x => x.id !== t.id);
+        }
+        else if (op === "promote") { // a swing-watchlist stock was bought: move it to positions
+          const w = find("watch", b.id), p = sanitizePosition({ symbol: w.symbol, exchange: w.exchange, name: w.name, qty: b.qty, avgPrice: b.price, limit: b.limit ?? w.amount, notes: w.notes }); st.watch = st.watch.filter(x => x.id !== w.id); st.positions.push(p); moveCash(st, -p.qty * p.avgPrice, `Bought ${p.qty} ${p.symbol} @ ₹${p.avgPrice}`);
+        }
+        else if (op === "settings") {
+          const t = parseTargets(b.targets ?? b.targetPct), d = Number(b.dipPct), plan = b.bookPlan === undefined ? st.settings?.bookPlan ?? null : parseBookPlan(b.bookPlan);
+          if (!t) throw new Error("Enter at least T1."); if (!(d > 0 && d <= 90)) throw new Error("Dip must be 1–90%.");
+          st.settings = { targets: t, dipPct: d, ...(plan ? { bookPlan: plan } : {}) };
+          if (b.cash !== undefined) { // cash set aside for swing: blank stops tracking it
+            const c = String(b.cash).trim() === "" ? null : parseSwingAmount(b.cash);
+            if (String(b.cash).trim() !== "" && c === null) throw new Error("Cash: enter an amount like 5L or 250000.");
+            if (c === null) st.cash = null;
+            else if (c !== st.cash?.balance) { const at = new Date().toISOString(); st.cash = { balance: c, setAt: at, log: [{ at, amount: null, why: "Set by you", balance: c }, ...(st.cash?.log || [])].slice(0, 60) }; }
+          }
+        }
+        else if (op === "parse") { const rows = parseSheet(b.text).slice(0, 100); const found = await resolveNames(rows.map(r => r.name)); return reply(res, 200, { rows: rows.map((r, i) => ({ ...r, ...found[i], sheetName: r.name })) }); }
+        else if (op === "import") {
+          for (const r of Array.isArray(b.rows) ? b.rows.slice(0, 100) : []) {
+            if (r.kind === "position") { const ex = st.positions.find(x => x.symbol === String(r.symbol).toUpperCase()); const p = sanitizePosition({ ...r, addBelow: r.addBelow, addAmount: r.addAmount }, ex); st.positions = ex ? st.positions.map(x => (x.id === p.id ? p : x)) : [...st.positions, p]; }
+            else { const ex = st.watch.find(x => x.symbol === String(r.symbol).toUpperCase()); const w = sanitizeWatch({ ...r, buyBelow: r.addBelow ?? r.buyBelow, amount: r.addAmount ?? r.amount }, ex); st.watch = ex ? st.watch.map(x => (x.id === w.id ? w : x)) : [...st.watch, w]; }
+          }
+        }
+        else if (op === "resolve") return reply(res, 200, { results: await resolveNames([String(b.name || "")]) });
+        else return reply(res, 404, { message: "Unknown swing operation." });
+        await writeJson(swingFile(), st);
+        return reply(res, 200, await swingView());
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
     if (url.pathname.startsWith("/api/networth")) {
       const op = url.pathname.slice("/api/networth".length).replace(/^\//, "");
       try {
@@ -1337,6 +1478,28 @@ async function appHandler(req, res, url) {
         else return reply(res, 404, { message: "Unknown lists operation." });
         await writeJson(U.listsFile, st);
         return reply(res, 200, { lists: st.lists.map(l => ({ ...l, count: l.symbols.length })), created });
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname.startsWith("/api/notify")) { // Telegram phone alerts (per account)
+      const op = url.pathname.slice("/api/notify".length).replace(/^\//, "");
+      try {
+        const cfg = await readJson(U.notifyFile, {}), t = cfg.telegram || {};
+        const pub = c => { const x = c.telegram || {}; return { telegram: { connected: !!(x.token && x.chatId), enabled: !!x.enabled, token: maskToken(x.token), bot: x.bot || null, chat: x.chatLabel || null, scope: x.scope || "all" }, lastSent: c.lastSent || null, lastError: c.lastError || null, lastErrorAt: c.lastErrorAt || null }; };
+        if (req.method === "GET" && !op) return reply(res, 200, pub(cfg));
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown notify operation." });
+        const b = await readBody(req);
+        if (op === "connect") { // token (new or kept) → bot name → chat that last messaged the bot
+          const token = String(b.token || "").trim() || t.token; if (!validToken(token)) throw new Error("Paste the bot token from @BotFather (it looks like 123456789:AA…).");
+          const bot = await botInfo(token), chat = await findChat(token);
+          cfg.telegram = { token, bot: bot.username, chatId: chat.chatId, chatLabel: chat.label, scope: b.scope === "swing" ? "swing" : t.scope || "all", enabled: true };
+          await sendTelegram(token, chat.chatId, "✅ <b>Equity Watchlist</b> is connected. Your alerts will arrive here.");
+          cfg.lastError = null;
+        } else if (op === "settings") { if (!t.token) throw new Error("Connect a bot first."); cfg.telegram = { ...t, enabled: b.enabled !== false, scope: b.scope === "swing" ? "swing" : "all" }; }
+        else if (op === "test") { if (!t.token || !t.chatId) throw new Error("Connect a bot first."); await sendTelegram(t.token, t.chatId, "🔔 <b>Test alert</b> from Equity Watchlist. Phone alerts are working."); cfg.lastSent = new Date().toISOString(); cfg.lastError = null; }
+        else if (op === "disconnect") delete cfg.telegram;
+        else return reply(res, 404, { message: "Unknown notify operation." });
+        await writeJson(U.notifyFile, cfg, { mode: 0o600 });
+        return reply(res, 200, pub(cfg));
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname === "/api/alerts" && req.method === "GET") {
@@ -1643,7 +1806,7 @@ const OWNER_ONLY = [
   // The AI advisor spends the owner's Anthropic key; open it to everyone with ALLOW_MEMBER_ADVISOR=1.
   { method: "POST", test: p => p.startsWith("/api/advise") && process.env.ALLOW_MEMBER_ADVISOR !== "1" }
 ];
-const LEGACY_FILES = ["us-list.json", "us-growth.json", "meta.json", "networth.json", "tradebook.json", "watchlist.json", "history.json", "positions.json", "valuation-log.json", "custom-list.json", "theses.json", "kite-holdings.json", "lists.json", "dividend-plan.json", "growth-overrides.json", "funds.json", "alerts.json", "kite-slots.json", "kite-session.json", "broker-sessions.json", "broker-credentials.json", "broker-mcp.json"];
+const LEGACY_FILES = ["swing.json", "us-list.json", "us-growth.json", "meta.json", "networth.json", "tradebook.json", "watchlist.json", "history.json", "positions.json", "valuation-log.json", "custom-list.json", "theses.json", "kite-holdings.json", "lists.json", "dividend-plan.json", "growth-overrides.json", "funds.json", "alerts.json", "kite-slots.json", "kite-session.json", "broker-sessions.json", "broker-credentials.json", "broker-mcp.json"];
 // Before accounts existed everything sat directly in data/. The owner inherits it; files already in the owner's folder win.
 async function migrateLegacyData(owner) {
   const dest = userDir(owner); let moved = [];

@@ -514,7 +514,7 @@ function setReportSub(tab){
   if(tab==="advisor")renderAdvisorList();
 }
 function setView(view){
-  const v=["watchlist","reports","valuation","plan","picks","growth","integrations","thesis","portfolio","alerts","invest","dividends","focus","market","funds","networth","tax","model","us","lists"].includes(view)?view:"home";
+  const v=["watchlist","reports","valuation","plan","picks","growth","integrations","thesis","portfolio","alerts","invest","dividends","focus","market","funds","networth","tax","model","us","lists","swing"].includes(view)?view:"home";
   $("#homeView").hidden=v!=="home";
   $("#portfolioView").hidden=v!=="portfolio";
   $("#alertsView").hidden=v!=="alerts";
@@ -525,6 +525,9 @@ function setView(view){
   $("#nwView").hidden=v!=="networth";
   $("#taxView").hidden=v!=="tax";
   $("#modelView").hidden=v!=="model";
+  $("#swingView").hidden=v!=="swing";
+  $("#viewSwing").classList.toggle("active",v==="swing");
+  if(v==="swing")window.openSwing?.();
   $("#listsView").hidden=v!=="lists";
   $("#viewLists").classList.toggle("active",v==="lists");
   if(v==="lists")window.openLists?.();

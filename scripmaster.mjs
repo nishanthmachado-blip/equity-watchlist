@@ -19,7 +19,9 @@ export const SEED = [
   ["CONCOR", "Container Corporation of India"], ["RVNL", "Rail Vikas Nigam"], ["IRCON", "IRCON International"], ["MAZDOCK", "Mazagon Dock Shipbuilders"], ["COCHINSHIP", "Cochin Shipyard"], ["BDL", "Bharat Dynamics"], ["SOLARINDS", "Solar Industries India"], ["PERSISTENT", "Persistent Systems"], ["LTIM", "LTIMindtree"], ["MPHASIS", "Mphasis"],
   ["COFORGE", "Coforge"], ["OFSS", "Oracle Financial Services Software"], ["KPITTECH", "KPIT Technologies"], ["TATAELXSI", "Tata Elxsi"], ["DIXON", "Dixon Technologies (India)"], ["TATACOMM", "Tata Communications"], ["IDEA", "Vodafone Idea"], ["INDUSTOWER", "Indus Towers"], ["UPL", "UPL"], ["PIIND", "PI Industries"],
   ["SRF", "SRF"], ["DEEPAKNTR", "Deepak Nitrite"], ["NAVINFLUOR", "Navin Fluorine International"], ["TATACHEM", "Tata Chemicals"], ["CHAMBLFERT", "Chambal Fertilisers and Chemicals"], ["COROMANDEL", "Coromandel International"], ["ASTRAL", "Astral"], ["SUPREMEIND", "Supreme Industries"], ["KEI", "KEI Industries"], ["VOLTAS", "Voltas"],
-  ["BLUESTARCO", "Blue Star"], ["CROMPTON", "Crompton Greaves Consumer Electricals"], ["PAGEIND", "Page Industries"], ["UNITDSPR", "United Spirits"], ["UBL", "United Breweries"], ["RADICO", "Radico Khaitan"], ["ABFRL", "Aditya Birla Fashion and Retail"], ["ICICISEC", "ICICI Securities"], ["NUVAMA", "Nuvama Wealth Management"], ["WAAREEENER", "Waaree Energies"]
+  ["BLUESTARCO", "Blue Star"], ["CROMPTON", "Crompton Greaves Consumer Electricals"], ["PAGEIND", "Page Industries"], ["UNITDSPR", "United Spirits"], ["UBL", "United Breweries"], ["RADICO", "Radico Khaitan"], ["ABFRL", "Aditya Birla Fashion and Retail"], ["ICICISEC", "ICICI Securities"], ["NUVAMA", "Nuvama Wealth Management"], ["WAAREEENER", "Waaree Energies"],
+  ["NIFTYBEES", "Nippon India ETF Nifty 50 BeES"], ["JUNIORBEES", "Nippon India ETF Nifty Next 50 Junior BeES"], ["BANKBEES", "Nippon India ETF Nifty Bank BeES"], ["GOLDBEES", "Nippon India ETF Gold BeES"], ["SILVERBEES", "Nippon India Silver ETF"],
+  ["CARTRADE", "CarTrade Tech"], ["TIPSMUSIC", "Tips Music"], ["KAYNES", "Kaynes Technology India"], ["JIOFIN", "Jio Financial Services"], ["CAMS", "Computer Age Management Services"]
 ].map(([symbol, name]) => ({ symbol, name, exchange: "NSE" }));
 
 const splitCsv = line => { const out = []; let cur = "", q = false; for (const ch of line) { if (ch === '"') q = !q; else if (ch === "," && !q) { out.push(cur); cur = ""; } else cur += ch; } out.push(cur); return out.map(s => s.trim()); };
@@ -58,10 +60,10 @@ export function mergeMaster(...lists) {
 const words = s => String(s || "").toLowerCase().split(/[^a-z0-9&]+/).filter(Boolean);
 export function searchMaster(master, q, limit = 8) {
   q = String(q || "").trim(); if (!q) return [];
-  const ql = q.toLowerCase(), qu = q.toUpperCase(), qw = words(q), out = [];
+  const ql = q.toLowerCase(), qu = q.toUpperCase(), qc = qu.replace(/[^A-Z0-9&]/g, ""), qw = words(q), out = [];
   for (const x of master) {
     const name = x.name.toLowerCase(); let s = 0;
-    if (x.symbol === qu) s = 100; else if (x.symbol.startsWith(qu)) s = 85 - x.symbol.length / 10;
+    if (x.symbol === qu || (qc.length >= 3 && x.symbol === qc)) s = 100; else if (x.symbol.startsWith(qu) || (qc.length >= 4 && x.symbol.startsWith(qc))) s = 85 - x.symbol.length / 10;
     else if (name.startsWith(ql)) s = 75; else if (qw.length && qw.every(w => words(x.name).some(n => n.startsWith(w)))) s = 65; else if (name.includes(ql)) s = 50;
     if (s) out.push([s + (x.exchange === "NSE" ? 1 : 0), x]);
   }

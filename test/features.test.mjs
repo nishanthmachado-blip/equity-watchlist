@@ -485,3 +485,138 @@ test("search works offline: built-in list finds IOC / ONGC by symbol and name; K
   const nse = parseNseEquityList("SYMBOL,NAME OF COMPANY, SERIES, DATE OF LISTING, PAID UP VALUE, MARKET LOT, ISIN NUMBER, FACE VALUE\nONGC,Oil & Natural Gas Corporation Limited,EQ,19-JUL-1995,10,1,INE213A01029,5");
   assert.deepEqual(nse[0], { symbol: "ONGC", name: "Oil & Natural Gas Corporation Limited", exchange: "NSE", isin: "INE213A01029" });
 });
+
+// ---- v4.1: swing trading ----
+import { parseAmount, parsePrice, parseSheet, sanitizePosition, sanitizeWatch, evaluateSwing, diffSwingAlerts, applyBuy, applySell, reopenTrade, parseTargets, parseBookPlan, planShares, lotsOf, moveCash, scorecard, swingTaxRows } from "../swing.mjs";
+import { buildXlsx } from "../xlsx.mjs";
+import { pushAlerts, findChat, formatAlert, validToken } from "../notify.mjs";
+test("swing: amounts and prices in Indian shorthand", () => {
+  assert.equal(parseAmount("2L"), 200000); assert.equal(parseAmount("10 L"), 1000000); assert.equal(parseAmount("1.5Cr"), 15000000); assert.equal(parseAmount("50k"), 50000); assert.equal(parseAmount("abc"), null);
+  assert.equal(parsePrice("4.7k"), 4700); assert.equal(parsePrice("2,834.5"), 2834.5);
+});
+test("swing: pasting the sheet gives positions with limits and add plans, and watchlist rows", () => {
+  const rows = parseSheet("12-10-2026\tStock\tQTY\tPurchase pirce\tPurchase Value\tLTP\tCurrent Holdings Value\tprofit/Loss\tLIMIT\n\tHero Motocorp\t21\t4936.88\t103674\t4917.5\t103267.5\t\t3L\tAdd 2L below 4.7k\n\t\t\tTotal\t307665\t\t306556.1\t-1109\n\tPB Fintech\t\t\t\t\t\t\t\tAdd 3L below 980\n\tTips Music\t\t\t\t\t\t\t\tAdd 3L below");
+  assert.deepEqual(rows.map(r => [r.name, r.kind, r.qty, r.avgPrice, r.limit, r.addAmount, r.addBelow]), [["Hero Motocorp", "position", 21, 4936.88, 300000, 200000, 4700], ["PB Fintech", "watch", null, null, null, 300000, 980], ["Tips Music", "watch", null, null, null, 300000, null]]);
+});
+test("swing: take-profit at +10%, deploy at the add level within the limit, near signals, alerts once", () => {
+  const hero = sanitizePosition({ symbol: "HEROMOTOCO", name: "Hero Motocorp", qty: 21, avgPrice: 4936.88, limit: "3L", addAmount: "2L", addBelow: "4.7k" });
+  const infy = sanitizePosition({ symbol: "INFY", qty: 100, avgPrice: 1000, limit: "1L", addAmount: "2L", addBelow: 990 });
+  const tcs = sanitizePosition({ symbol: "TCS", qty: 10, avgPrice: 3000 });
+  const pb = sanitizeWatch({ symbol: "POLICYBZR", name: "PB Fintech", buyBelow: 980, amount: "3L" });
+  const prices = new Map([["HEROMOTOCO", { price: 4650, prevClose: 4700 }], ["INFY", { price: 985 }], ["TCS", { price: 3310 }], ["POLICYBZR", { price: 1000 }]]);
+  const v = evaluateSwing({ positions: [hero, infy, tcs], watch: [pb], prices });
+  const by = s => v.positions.find(p => p.symbol === s);
+  assert.equal(by("HEROMOTOCO").status, "deploy"); assert.equal(by("HEROMOTOCO").deployAmount, 196325.52, "2L planned, but only ₹1.96L left in the 3L limit (₹1.04L used)");
+  assert.equal(by("INFY").status, "deploy-limit", "limit of 1L already used");
+  assert.equal(by("TCS").status, "take-profit"); assert.equal(by("TCS").pnl, 3100); assert.equal(by("TCS").pnlPct, 10.33);
+  assert.equal(v.watch[0].status, "near-deploy"); assert.equal(v.watch[0].distance, 2.04);
+  assert.equal(v.totals.takeProfit, 1); assert.equal(v.totals.deploy, 1);
+  const a1 = diffSwingAlerts({}, v); assert.deepEqual(a1.fresh.map(e => e.type).sort(), ["swing-deploy", "swing-profit"]);
+  const a2 = diffSwingAlerts(a1.next, v, { events: a1.fresh }); assert.equal(a2.fresh.length, 0, "no repeat while the signal holds");
+  // buy more / sell
+  const more = applyBuy(tcs, 10, 3200); assert.equal(more.qty, 20); assert.equal(more.avgPrice, 3100);
+  const s = applySell(tcs, 4, 3300); assert.equal(s.position.qty, 6); assert.equal(s.trade.pnl, 1200);
+  assert.throws(() => applySell(tcs, 11, 3300));
+});
+
+test("swing: T1/T2/T3 target prices, a fresh alert at each higher target, custom targets", () => {
+  assert.deepEqual(parseTargets("10, 20, 40"), [10, 20, 40]); assert.deepEqual(parseTargets("15"), [15, 20, 40]); assert.deepEqual(parseTargets(25), [25, 40]);
+  assert.equal(parseTargets(""), null); assert.throws(() => parseTargets("20,10")); assert.throws(() => parseTargets("10,20,30,40"));
+  const p = sanitizePosition({ symbol: "TCS", qty: 10, avgPrice: 3000 });
+  const at = price => evaluateSwing({ positions: [p], prices: new Map([["TCS", { price }]]) });
+  const v0 = at(3050).positions[0];
+  assert.deepEqual(v0.targets.map(t => [t.n, t.pct, t.price, t.hit]), [[1, 10, 3300, false], [2, 20, 3600, false], [3, 40, 4200, false]]);
+  assert.equal(v0.targets[1].profit, 2400, "4 of 10 shares planned at T2 (a third each), ₹600 each"); assert.equal(v0.status, "hold");
+  assert.equal(at(3240).positions[0].status, "near-profit");
+  const v1 = at(3310), v2 = at(3620), v3 = at(4300);
+  assert.equal(v1.positions[0].hitLevel, 1); assert.equal(v1.positions[0].nextTarget.price, 3600); assert.match(v1.positions[0].note, /T1 hit.*Next T2: ₹3,600/);
+  assert.equal(v2.positions[0].hitLevel, 2); assert.equal(v3.positions[0].hitLevel, 3); assert.match(v3.positions[0].note, /All targets hit/);
+  const a1 = diffSwingAlerts({}, v1); assert.equal(a1.fresh.length, 1); assert.match(a1.fresh[0].title, /hit T1 \(\+10%, ₹3300\)/);
+  const a2 = diffSwingAlerts(a1.next, v2, { events: a1.fresh }); assert.equal(a2.fresh.length, 1, "T2 alerts again"); assert.match(a2.fresh[0].title, /T2/);
+  const back = diffSwingAlerts(a2.next, v1, { events: [...a1.fresh, ...a2.fresh] }); assert.equal(back.fresh.length, 0, "falling back to T1 is not a new alert");
+  assert.equal(diffSwingAlerts({ "position:x": "take-profit" }, v1).fresh.length, 1, "state saved before v4.2 still works");
+  const own = sanitizePosition({ symbol: "TCS", qty: 10, avgPrice: 3000, targets: "5/15/30" });
+  assert.deepEqual(own.targets, [5, 15, 30]);
+  const set = evaluateSwing({ positions: [p], prices: new Map(), settings: { targetPct: 12 } });
+  assert.deepEqual(set.settings.targets, [12, 20, 40], "older single-target setting carries over as T1");
+});
+
+test("swing: reopening an accidental sale restores the shares, the average and the plan", () => {
+  const p = sanitizePosition({ symbol: "INFY", name: "Infosys", qty: 100, avgPrice: 1000, limit: "3L", addAmount: "2L", addBelow: 990, targets: "8,16,30" });
+  const part = applySell(p, 40, 1100), all = applySell(p, 100, 1100);
+  const back1 = reopenTrade([part.position], part.trade); assert.equal(back1.length, 1); assert.equal(back1[0].qty, 100); assert.equal(back1[0].avgPrice, 1000);
+  const back2 = reopenTrade([], all.trade)[0];
+  assert.deepEqual([back2.qty, back2.avgPrice, back2.limit, back2.addAmount, back2.addBelow, back2.targets, back2.name], [100, 1000, 300000, 200000, 990, [8, 16, 30], "Infosys"]);
+  const moved = applyBuy(part.position, 10, 1200); const back3 = reopenTrade([moved], part.trade)[0];
+  assert.equal(back3.qty, 110); assert.equal(back3.avgPrice, Math.round((70 * moved.avgPrice + 40 * 1000) / 110 * 100) / 100, "merged with what is held now");
+  assert.equal(reopenTrade([], { symbol: "X", qty: 5, buyAvg: 10 })[0].exchange, "NSE", "older trades without a saved plan still reopen");
+});
+
+test("swing booking plan: shares to sell at each target, 'riding' after booking, next alert at T2", () => {
+  assert.deepEqual(parseBookPlan("33, 33, 34"), [33, 33, 34]); assert.deepEqual(parseBookPlan("50/50"), [50, 50]); assert.equal(parseBookPlan(""), null);
+  assert.throws(() => parseBookPlan("60, 60")); assert.throws(() => parseBookPlan("10,10,10,10"));
+  assert.deepEqual(planShares(21, [33, 33, 34], 3), [7, 14, 21]); assert.deepEqual(planShares(21, [25, 25], 3), [5, 11, 11], "a runner is kept");
+  const p = sanitizePosition({ symbol: "HERO", qty: 21, avgPrice: 1000 });
+  const at = (pos, price) => evaluateSwing({ positions: [pos], prices: new Map([["HERO", { price }]]) }).positions[0];
+  const a = at(p, 1110);
+  assert.equal(a.status, "take-profit"); assert.equal(a.sellNow, 7); assert.deepEqual(a.targets.map(t => t.sellQty), [7, 7, 7]); assert.match(a.note, /sell 7 of 21/);
+  const s1 = applySell(p, 7, 1110, undefined, { atTarget: true }).position;
+  assert.equal(s1.soldAtTargets, 7);
+  const b = at(s1, 1120); assert.equal(b.status, "riding"); assert.equal(b.sellNow, 0); assert.ok(b.targets[0].done); assert.match(b.note, /Next T2: ₹1,200.*sell 7/);
+  const c = at(s1, 1205); assert.equal(c.status, "take-profit"); assert.equal(c.sellNow, 7);
+  const skipped = at(p, 1210); assert.equal(skipped.sellNow, 14, "T1 not booked: catch up at T2");
+  const alerts1 = diffSwingAlerts({}, evaluateSwing({ positions: [s1], prices: new Map([["HERO", { price: 1120 }]]) }));
+  assert.equal(alerts1.fresh.length, 0, "already booked T1: riding is not an alert");
+  const alerts2 = diffSwingAlerts(alerts1.next, evaluateSwing({ positions: [s1], prices: new Map([["HERO", { price: 1205 }]]) }));
+  assert.equal(alerts2.fresh.length, 1); assert.match(alerts2.fresh[0].title, /T2.*sell 7/);
+  const more = applyBuy(s1, 6, 1100); assert.equal(more.soldAtTargets, 0, "buying more starts a new cycle");
+  const own = sanitizePosition({ symbol: "HERO", qty: 20, avgPrice: 1000, bookPlan: "50,50" }); assert.equal(at(own, 1110).sellNow, 10);
+});
+
+test("swing lots: FIFO sale keeps buy dates, reopen puts them back, bought-on date sets the lot", () => {
+  const p = sanitizePosition({ symbol: "INFY", qty: 10, avgPrice: 1000, boughtOn: "2025-01-10" });
+  assert.equal(p.lots[0].at.slice(0, 10), "2025-01-10");
+  assert.throws(() => sanitizePosition({ symbol: "INFY", qty: 10, avgPrice: 1000, boughtOn: "2999-01-01" }));
+  const p2 = applyBuy(p, 10, 1200, "2026-06-01T10:00:00.000Z");
+  assert.deepEqual(lotsOf(p2).map(l => [l.qty, l.price]), [[10, 1000], [10, 1200]]);
+  const s = applySell(p2, 15, 1300, "2026-07-01T10:00:00.000Z");
+  assert.deepEqual(s.trade.lots.map(l => [l.qty, l.price, l.at.slice(0, 10)]), [[10, 1000, "2025-01-10"], [5, 1200, "2026-06-01"]]);
+  assert.deepEqual(lotsOf(s.position).map(l => [l.qty, l.price]), [[5, 1200]]);
+  const back = reopenTrade([s.position], s.trade)[0];
+  assert.deepEqual(lotsOf(back).map(l => [l.qty, l.price]), [[10, 1000], [5, 1200], [5, 1200]]); assert.equal(back.qty, 20);
+  const tx = swingTaxRows([s.trade]);
+  assert.deepEqual(tx.rows.map(r => [r.qty, r.term, r.gain, r.fy]), [[10, "LTCG", 3000, "FY 2026-27"], [5, "STCG", 500, "FY 2026-27"]]);
+  assert.deepEqual([tx.years[0].ltGain, tx.years[0].stGain, tx.years[0].tax], [3000, 500, 100], "LTCG under the ₹1.25L exemption; 20% STCG on ₹500");
+  const same = sanitizePosition({ symbol: "INFY", qty: 20, avgPrice: p2.avgPrice }, p2); assert.equal(same.lots.length, 2, "editing other fields keeps the lots");
+});
+
+test("swing cash pool and scorecard", () => {
+  const st = { cash: { balance: 500000, log: [] } };
+  moveCash(st, -210000, "Bought"); moveCash(st, 120000, "Sold"); assert.equal(st.cash.balance, 410000); assert.equal(st.cash.log.length, 2);
+  const none = {}; moveCash(none, 1000, "x"); assert.equal(none.cash, undefined, "not tracked: nothing happens");
+  const p = sanitizePosition({ symbol: "A", qty: 10, avgPrice: 100, addBelow: 95, addAmount: "1L" });
+  const v = evaluateSwing({ positions: [p], prices: new Map([["A", { price: 90 }]]), cash: 40000 });
+  assert.equal(v.totals.cash, 40000); assert.equal(v.totals.deployNow, 100000); assert.equal(v.totals.cashShort, 60000, "₹1L signal, ₹40k cash");
+  const mk = (pnl, pnlPct, days, atTarget = false) => ({ symbol: "X" + pnl, name: "X", qty: 1, pnl, pnlPct, atTarget, openedAt: new Date(Date.parse("2026-09-01") - days * 864e5).toISOString(), closedAt: "2026-09-01T10:00:00.000Z" });
+  const sc = scorecard([mk(3000, 10, 20, true), mk(1000, 5, 10), mk(-1000, -4, 30)]);
+  assert.deepEqual([sc.trades, sc.wins, sc.losses, sc.winRate, sc.avgWin, sc.avgLoss, sc.profitFactor, sc.avgHoldDays, sc.atTargets, sc.total], [3, 2, 1, 66.67, 2000, -1000, 4, 20, 1, 3000]);
+  assert.equal(sc.best.pnl, 3000); assert.equal(sc.worst.pnl, -1000);
+  assert.equal(scorecard([]).trades, 0);
+});
+
+test("xlsx export is a valid zip with the sheets", () => {
+  const buf = buildXlsx([{ name: "Trades", columns: [{ header: "Stock", key: "s" }, { header: "Gain", key: "g", type: "money" }, { header: "Date", key: "d", type: "date" }], rows: [{ s: "M&M <x>", g: 1234.5, d: "2026-10-01" }], totals: { s: "Total", g: 1234.5 } }, { name: "Two", columns: [{ header: "A", key: "a" }], rows: [] }]);
+  assert.equal(buf.readUInt32LE(0), 0x04034b50); assert.equal(buf.readUInt32LE(buf.length - 22), 0x06054b50); assert.equal(buf.readUInt16LE(buf.length - 12), 7, "7 parts");
+});
+
+test("telegram: finds the chat, formats and sends only wanted alerts", async () => {
+  const calls = [], token = "123456789:AAH" + "x".repeat(32);
+  const fake = async (url, opt) => { calls.push([url.split("/").pop(), JSON.parse(opt.body)]); const m = url.split("/").pop(); return { status: 200, json: async () => (m === "getUpdates" ? { ok: true, result: [{ message: { chat: { id: 42, first_name: "Nishanth" } } }] } : { ok: true, result: {} }) }; };
+  assert.ok(validToken(token)); assert.ok(!validToken("nope"));
+  assert.deepEqual(await findChat(token, fake), { chatId: "42", label: "Nishanth" });
+  const ev = [{ type: "swing-profit", title: "🎯 M&M hit T1 <b>", detail: "Plan: sell 7" }, { type: "buy-zone", title: "TCS in buy zone", detail: "" }];
+  assert.equal(await pushAlerts({ telegram: { token, chatId: "42", enabled: true, scope: "swing" } }, ev, { fetchImpl: fake }), 1);
+  assert.equal(calls.at(-1)[1].chat_id, "42"); assert.match(calls.at(-1)[1].text, /&lt;b&gt;/, "titles are escaped");
+  assert.equal(await pushAlerts({ telegram: { token, chatId: "42", enabled: false } }, ev, { fetchImpl: fake }), 0);
+  assert.match(formatAlert(ev[0], "https://x.example"), /#swing/);
+});
