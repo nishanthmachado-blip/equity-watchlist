@@ -1,5 +1,41 @@
 # Equity Watchlist MVP
 
+## v4.6: what changed — Swing ideas, stop-losses, trend health
+
+- **💡 Swing ideas** (Swing trading page): the app scans daily charts after every market close (and when you press **Scan now**). It covers ~185 liquid NSE stocks plus everything in your watchlists and swing watchlist, and finds four rule-based setups:
+  - **↘↗ Pullback in an uptrend:** 50-DMA above 200-DMA, price dipped back to its 20/50-day average, RSI 38–55.
+  - **🚀 Breakout on volume:** close above the 55-day high on 1.5× average volume, in an uptrend, not more than 8% above the 20-day EMA.
+  - **🪃 Oversold bounce:** still above the 200-day average, RSI ≤ 35, 8%+ off the 20-day high; target is the 20-day average.
+  - **💎 Value stock turning up:** the app's valuation says it is in its buy zone, and the price has just moved back above its 20-day average.
+- **Each idea is a full trade plan:**
+  - entry, stop-loss (at least ½ ATR away, at most 12%), target 1 and 2 (capped at +25% / +40% for a swing horizon), reward:risk (only ideas with at least 1.5:1);
+  - a score out of 100: setup, trend, 3-month strength vs Nifty, volume, reward:risk, valuation, liquidity and volatility;
+  - a suggested size: no more than **Max per trade**, and a stop-out costs at most **Risk per trade** % of your swing cash (both in ⚙).
+- **Acting on an idea:** filter by setup or "only my watchlists". Stocks you already hold are left out, with one idea per stock.
+  - **+ Swing watchlist** adds the stock with its buy level, amount, stop-loss and targets.
+  - **Bought** creates the position directly, with the stop and the targets (as T1/T2 %).
+- **Stop-loss** on swing positions and swing-watchlist stocks: the row turns red with 🛑 when the price reaches it, with an alert (and Telegram if connected) and a "near stop-loss" warning within 2.5%. The stop carries over when a watchlist stock is bought.
+- **Trend health** on each position (under LTP): ▲ Uptrend / ◆ Pausing (under the 20-day average) / ▼ Below 50-DMA / ▼ Below 200-DMA. The hover text and the edit box suggest a trailing stop: 2 ATR under the price or the 20-day low, whichever is higher.
+- The scan pauses for 15 minutes if Yahoo rate-limits and resumes by itself. Chart data is a shared cache (`swing-scan.json`); ideas, positions and sizing stay per account.
+
+## v4.5: what changed — ETFs valued, standalone-only companies fixed, swing ledger
+
+- **ETFs are valued now** (NIFTYBEES, JUNIORBEES, BANKBEES, GOLDBEES, SILVERBEES, LIQUIDBEES and other ETFs, recognised by symbol or name, or by Yahoo marking it an ETF). An ETF has no earnings, so P/E does not apply.
+  - **How it's valued:** the app reads up to 5 years of daily prices and measures the gap between the price and its 200-day average on every day. Today's gap is then ranked against that history.
+  - **Buy zone:** the cheapest 20% of its history. **Fair value:** its median level. **Bull value:** its 80th percentile.
+  - **Verdicts:** ETF: accumulate (cheap vs its trend) / fair, continue SIPs / stretched, go slow on lump sums / expensive vs its trend, wait.
+  - **Also shown:** the 52-week range and distance from the high, 1/3/5-year returns, the premium to iNAV (from NSE), and the tracked index's P/E, P/B and yield (from NSE's index list, e.g. NIFTY 50 for NIFTYBEES).
+  - **Special cases:** liquid and debt ETFs are labelled "for parking cash", with no zone. Gold and silver ETFs carry a hedge note. ETFs with under 200 days of history use the 52-week range and are marked low confidence.
+  - ETF data refreshes daily. ETF cards skip Screener and the Growth lens.
+- **Tips Music, Thangamayil and other companies without subsidiaries now get valued.** Screener's "consolidated" page for them loads but every figure is blank, and the app used to stop there. It now falls back to the standalone page.
+  - "Data sources busy (rate limit)" now appears only when every source really was rate-limited. Otherwise the real error is shown.
+- **Swing ledger (📒):**
+  - **Ledger section:** every buy (date, qty, price, how much is still held or was sold, and when) and every sale (date, price, P/L, average bought price, whether at target), newest first. Filter it by stock to see totals bought, sold, booked and held.
+  - **📒 Buys on each position:** enter the dates and prices you actually bought at; split an imported position into several buys. Quantity and average follow from them, and the FIFO tax export uses these dates.
+  - **Dated trades:** Buy, Sell and "Bought" from the swing watchlist take a trade date (today by default; future dates are refused).
+  - **Excel export:** gains a **Ledger** sheet.
+  - **Fix:** saving a position's edit box no longer merges its separate buys into one. Quantity and average are locked there when a position has several buys; change them in 📒 Buys.
+
 ## v4.4: what changed — Swing: booking plan, scorecard, cash, Telegram, Home strip, Excel
 
 - **Booking plan:** how much of each position to sell at T1, T2 and T3. The default is a third at each (33, 33, 34); you can set your own in ⚙, or per position (e.g. "50, 50", or "25, 25" to keep a runner).

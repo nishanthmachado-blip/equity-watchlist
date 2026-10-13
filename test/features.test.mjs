@@ -487,7 +487,7 @@ test("search works offline: built-in list finds IOC / ONGC by symbol and name; K
 });
 
 // ---- v4.1: swing trading ----
-import { parseAmount, parsePrice, parseSheet, sanitizePosition, sanitizeWatch, evaluateSwing, diffSwingAlerts, applyBuy, applySell, reopenTrade, parseTargets, parseBookPlan, planShares, lotsOf, moveCash, scorecard, swingTaxRows } from "../swing.mjs";
+import { parseAmount, parsePrice, parseSheet, sanitizePosition, sanitizeWatch, evaluateSwing, diffSwingAlerts, applyBuy, applySell, reopenTrade, parseTargets, parseBookPlan, planShares, lotsOf, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger } from "../swing.mjs";
 import { buildXlsx } from "../xlsx.mjs";
 import { pushAlerts, findChat, formatAlert, validToken } from "../notify.mjs";
 test("swing: amounts and prices in Indian shorthand", () => {
@@ -619,4 +619,24 @@ test("telegram: finds the chat, formats and sends only wanted alerts", async () 
   assert.equal(calls.at(-1)[1].chat_id, "42"); assert.match(calls.at(-1)[1].text, /&lt;b&gt;/, "titles are escaped");
   assert.equal(await pushAlerts({ telegram: { token, chatId: "42", enabled: false } }, ev, { fetchImpl: fake }), 0);
   assert.match(formatAlert(ev[0], "https://x.example"), /#swing/);
+});
+
+test("swing ledger: dated buys and sells, edited buys, edits that keep the buys", () => {
+  const now = new Date("2026-10-13T08:00:00.000Z");
+  assert.equal(tradeDate("", now), now.toISOString()); assert.equal(tradeDate("2026-10-13", now), now.toISOString(), "today keeps the time");
+  assert.equal(tradeDate("2025-03-04", now), "2025-03-04T03:45:00.000Z"); assert.throws(() => tradeDate("2026-10-14", now), /future/); assert.throws(() => tradeDate("soon", now));
+  let p = sanitizePosition({ symbol: "HEROMOTOCO", name: "Hero Motocorp", qty: 21, avgPrice: 4936.88 });
+  p = setLots(p, [{ date: "2026-06-02", qty: 10, price: "4800" }, { date: "2025-11-20", qty: 11, price: 5061.2 }], now);
+  assert.deepEqual([p.qty, p.avgPrice, p.openedAt.slice(0, 10), p.lots.map(l => l.at.slice(0, 10))], [21, 4936.82, "2025-11-20", ["2025-11-20", "2026-06-02"]]);
+  assert.throws(() => setLots(p, [{ date: "2026-01-01", qty: 1.5, price: 10 }], now), /Row 1/); assert.throws(() => setLots(p, [], now));
+  const edited = sanitizePosition({ symbol: "HEROMOTOCO", name: "Hero Motocorp", qty: 21, avgPrice: p.avgPrice, notes: "x", boughtOn: "2025-11-20" }, p);
+  assert.equal(edited.lots.length, 2, "saving the edit box (same date) keeps the separate buys");
+  p = applyBuy(p, 5, 4700, "2026-08-10T03:45:00.000Z");
+  const s = applySell(p, 15, 5400, "2026-10-01T03:45:00.000Z");
+  const L = buildLedger([s.position], [s.trade]);
+  assert.deepEqual(L.entries.map(e => [e.type, e.date, e.qty, e.price, e.type === "BUY" ? `${e.held}/${e.sold}` : e.pnl]), [
+    ["SELL", "2026-10-01", 15, 5400, s.trade.pnl], ["BUY", "2026-08-10", 5, 4700, "5/0"], ["BUY", "2026-06-02", 10, 4800, "6/4"], ["BUY", "2025-11-20", 11, 5061.2, "0/11"]]);
+  assert.deepEqual(L.entries.find(e => e.date === "2025-11-20").soldOn, ["2026-10-01"]);
+  const st = L.stocks[0]; assert.deepEqual([st.bought, st.sold, st.held, st.first, st.last], [26, 15, 11, 2025 + "-11-20", "2026-10-01"]);
+  assert.equal(evaluateSwing({ positions: [s.position], prices: new Map() }).positions[0].lotCount, 2);
 });

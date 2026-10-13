@@ -26,7 +26,7 @@ export function parseNseQuote(json) {
   const md = json?.metadata || {}, pi = json?.priceInfo || {};
   return {
     pe: n(md.pdSymbolPe), sectorPe: n(md.pdSectorPe), sector: md.pdSectorInd || null, industry: json?.industryInfo?.basicIndustry || md.industry || null,
-    price: n(pi.lastPrice), high52: n(pi.weekHighLow?.max), low52: n(pi.weekHighLow?.min)
+    price: n(pi.lastPrice), high52: n(pi.weekHighLow?.max), low52: n(pi.weekHighLow?.min), inav: n(pi.iNavValue)
   };
 }
 export async function fetchNseQuote(symbol, fetchImpl = fetch) {

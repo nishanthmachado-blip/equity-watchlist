@@ -1,7 +1,7 @@
-# Equity Watchlist v4.4: Deployment Guide (AWS)
+# Equity Watchlist v4.6: Deployment Guide (AWS)
 
 **Audience:** deployment / infrastructure team
-**App version:** 4.4.0
+**App version:** 4.6.0
 **Owner:** Nishanth
 
 ---
@@ -248,6 +248,8 @@ Use this option if the team standardises on ALBs.
 | `ANGEL_*`, `DHAN_*`, `GROWW_*`, `INDMONEY_*` | none | The **owner's** broker credentials (optional; other accounts never see these) |
 | `APP_URL` | `PUBLIC_URL` | Link added to Telegram alerts ("Open Equity Watchlist"); leave unset for no link |
 | `TELEGRAM_API` | `https://api.telegram.org` | Telegram Bot API base (only change for a proxy or tests) |
+| `SWING_SCAN_SPACING_MS` | `1200` | Pause between chart requests in the daily swing-ideas scan (~185 stocks + watchlists, about 5 minutes after 15:50 IST on weekdays) |
+| `YAHOO_CHART_BASE` | `https://query1.finance.yahoo.com` | Yahoo price-history base used for ETF valuation and trend data (only change for a proxy or tests) |
 
 Telegram phone alerts (v4.4): each user connects their own bot from 🔔 Alerts → 📱 Phone alerts. The bot token is stored in that user's `notify.json` (MongoDB document `users/<id>/notify.json`), is never returned in full by the API, and is left out of user backups like broker logins. Alerts are sent by the server, so they arrive with the browser closed; the background swing check runs every 5 minutes during market hours.
 

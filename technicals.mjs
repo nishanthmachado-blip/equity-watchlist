@@ -51,9 +51,14 @@ export function parseYahooBars(json) {
   if (!r || !q) return [];
   return (r.timestamp || []).map((t, i) => ({ t, c: q.close?.[i], h: q.high?.[i], l: q.low?.[i], v: q.volume?.[i] })).filter(x => fin(x.c));
 }
-export async function fetchBars(symbol, { fetchImpl = fetch, exchange = "NSE" } = {}) {
-  const res = await fetchImpl(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol + (exchange === "BSE" ? ".BO" : ".NS"))}?range=1y&interval=1d`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(12000) });
+const CHART_BASE = () => (process.env.YAHOO_CHART_BASE || "https://query1.finance.yahoo.com").replace(/\/+$/, "");
+// Daily bars plus Yahoo's instrument details (instrumentType "ETF", long name). range: 1y | 2y | 5y | max
+export async function fetchChart(symbol, { fetchImpl = fetch, exchange = "NSE", range = "1y" } = {}) {
+  const res = await fetchImpl(`${CHART_BASE()}/v8/finance/chart/${encodeURIComponent(symbol + (exchange === "BSE" ? ".BO" : ".NS"))}?range=${range}&interval=1d`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15000) });
   if (res.status === 429) { const e = new Error("Yahoo is rate-limiting price-history requests."); e.rateLimited = true; throw e; }
+  if (res.status === 404) throw new Error(`Yahoo has no price history for ${symbol}.`);
   if (!res.ok) throw new Error(`Yahoo HTTP ${res.status}`);
-  return parseYahooBars(await res.json());
+  const json = await res.json(), meta = json?.chart?.result?.[0]?.meta || {};
+  return { bars: parseYahooBars(json), meta: { instrumentType: meta.instrumentType || null, longName: meta.longName || meta.shortName || null, currency: meta.currency || null } };
 }
+export async function fetchBars(symbol, opts = {}) { return (await fetchChart(symbol, opts)).bars; }

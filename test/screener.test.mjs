@@ -66,3 +66,12 @@ test("falls back to standalone page on 404, then 429 starts a cooldown", async (
   await assert.rejects(fetchScreener({ marketSymbol: "BLS" }, async () => { calls++; return {}; }), ScreenerBlocked);
   assert.equal(calls, 0); resetScreener();
 });
+
+test("a blank consolidated page (standalone-only company) falls back to the standalone page", async () => {
+  resetScreener(); const urls = [];
+  const blank = html.replace(/(<span class="number">)[^<]*(<\/span>)/g, "$1$2");
+  const f = async u => { urls.push(u); return { ok: true, status: 200, text: async () => (u.endsWith("consolidated/") ? blank : html) }; };
+  const r = await fetchScreener({ marketSymbol: "TIPSMUSIC" }, f);
+  assert.equal(r.entry.price, 217); assert.match(urls[0], /consolidated\/$/); assert.match(urls[1], /company\/TIPSMUSIC\/$/);
+  resetScreener();
+});

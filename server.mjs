@@ -20,7 +20,7 @@ import { holdingStance } from "./stance.mjs";
 import { classify } from "./classify.mjs";
 import { growthLens } from "./growthlens.mjs";
 import { computeDividends, fetchDividendEvents, dividendsFromAnnual } from "./dividends.mjs";
-import { computeTechnicals, fetchBars } from "./technicals.mjs";
+import { computeTechnicals, fetchBars, fetchChart } from "./technicals.mjs";
 import { peerCompare } from "./peers.mjs";
 import { diffAlerts, mergeEvents } from "./alerts.mjs";
 import { allocate } from "./allocate.mjs";
@@ -31,8 +31,10 @@ import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { PROFILES, STYLES, buildModel, assetMix } from "./model.mjs";
-import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows } from "./swing.mjs";
+import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger } from "./swing.mjs";
 import { buildXlsx } from "./xlsx.mjs";
+import { isEtf, indexFor, parseAllIndices, etfLens } from "./etf.mjs";
+import { snapshot as swingSnapshot, rankIdeas, positionHealth } from "./swingideas.mjs";
 import { validToken, maskToken, botInfo, findChat, sendTelegram, pushAlerts } from "./notify.mjs";
 import { SEED as SCRIP_SEED, parseKiteInstruments, parseNseEquityList, mergeMaster, searchMaster } from "./scripmaster.mjs";
 import { US_POPULAR, cleanUsSymbol, parseSecTickers, searchTickers, seriesFromFacts, usValuation, fetchUsPrices, fetchSecJson, companyFactsUrl, SEC_TICKERS_URL } from "./us.mjs";
@@ -392,24 +394,31 @@ async function logVerdicts(rows) { const log = await readJson(U.valuationLogFile
 // full source fails and NSE answers. Each source has its own cooldown after a 403/429 and is skipped while it is cooling.
 async function runFundamentalsFetch(targets, force = false, source = process.env.FUNDAMENTALS_SOURCE || "auto") {
   const map = await readFundamentals();
-  const fresh = e => e?.asOf && Date.now() - new Date(e.asOf).getTime() < 7 * 864e5;
+  const fresh = e => e?.asOf && Date.now() - new Date(e.asOf).getTime() < (e.profile === "etf" ? 864e5 : 7 * 864e5); // ETFs: daily
   const order = source === "auto" ? ["screener", "yahoo", "nse"] : [source];
   const results = await mapLimit(targets, 1, async stock => {
     const symbol = symOf(stock);
     if (!force && fresh(map[symbol])) return { id: stock.id, company: stock.company, symbol, skipped: "Fetched within the last 7 days" };
     let entry = null, warnings = [], completeness = null, how = null, rateLimited = false, usedNetwork = false;
-    const errors = [];
+    const errors = [], hardErrors = [];
     let nse = null;
-    for (const src of order) {
+    // ETFs have no earnings (and no Screener page): value them on their own price trend instead.
+    const etf = isEtf(symbol, stock.company) || map[symbol]?.profile === "etf";
+    if (etf) {
+      usedNetwork = true;
+      try { entry = await fetchEtfEntry(stock); how = "ETF lens"; completeness = "ETF"; }
+      catch (error) { errors.push(`ETF price history: ${error.message}`); if (error.rateLimited) rateLimited = true; else hardErrors.push("etf"); }
+    }
+    for (const src of etf ? [] : order) {
       if (entry) break;
       if (src === "nse" && stock.exchange === "BSE") { errors.push("NSE: not listed there (BSE stock)"); continue; }
       try {
         if (src === "screener") {
-          if (screenerCooldown()) { errors.push("Screener cooling down"); continue; }
+          if (screenerCooldown()) { errors.push("Screener cooling down"); rateLimited = true; continue; }
           usedNetwork = true; const r = await fetchScreener(stock); entry = r.entry; warnings = [...warnings, ...r.warnings]; how = "Screener"; completeness = "Screener";
           if (r.extra) saveScreenerExtra(symbol, { ids: { companyId: r.extra.companyId, warehouseId: r.extra.warehouseId }, div: { yield: r.extra.dividendYield, annual: r.extra.divAnnual, at: Date.now() }, ...(r.peersTable ? { peers: { table: r.peersTable, at: Date.now() } } : {}) }).catch(() => {});
         } else if (src === "yahoo") {
-          if (yahooCooldown() > Date.now()) { errors.push("Yahoo cooling down"); continue; }
+          if (yahooCooldown() > Date.now()) { errors.push("Yahoo cooling down"); rateLimited = true; continue; }
           usedNetwork = true; const r = await fetchFundamentalsForStock(stock); entry = r.entry; warnings = [...warnings, ...r.warnings]; completeness = r.completeness; how = "Yahoo";
         } else {
           usedNetwork = true; nse = await fetchNseQuote(symbol);
@@ -417,10 +426,16 @@ async function runFundamentalsFetch(targets, force = false, source = process.env
           if (cached && nse) { entry = refreshFromNse(cached, nse); how = "NSE refresh of cached statements"; completeness = "Cached + NSE"; }
           else if (nse) { entry = mergeNse(null, nse, stock); how = "NSE only (low confidence)"; completeness = "NSE-only"; }
         }
-      } catch (error) { errors.push(`${src}: ${error.message}`); if (error.rateLimited) rateLimited = true; }
+      } catch (error) { errors.push(`${src}: ${error.message}`); if (error.rateLimited) rateLimited = true; else hardErrors.push(src); }
     }
+    // Not on Screener: maybe an ETF we did not recognise by name. Yahoo says so in its chart details.
+    if (!entry && !etf && errors.some(e => /no page for/i.test(e)) && yahooCooldown() <= Date.now()) {
+      try { const e2 = await fetchEtfEntry(stock, { requireEtf: true }); if (e2) { entry = e2; how = "ETF lens"; completeness = "ETF"; errors.length = 0; hardErrors.length = 0; } } catch { /* not an ETF */ }
+    }
+    // "Busy, retrying" only when every source that was tried was rate-limited; a real error (no page, bad symbol) is shown.
+    if (hardErrors.length) rateLimited = false;
     // Light NSE supplement for sector P/E when a full source succeeded and NSE is not cooling down.
-    if (entry && stock.exchange !== "BSE" && how !== "NSE only (low confidence)" && !how.startsWith("NSE") && order.includes("nse") && !nseCooldown()) {
+    if (entry && how !== "ETF lens" && stock.exchange !== "BSE" && how !== "NSE only (low confidence)" && !how.startsWith("NSE") && order.includes("nse") && !nseCooldown()) {
       try { nse = await fetchNseQuote(symbol); entry = mergeNse(entry, nse, stock); how += "+NSE"; } catch { /* optional */ }
     }
     if (usedNetwork) await new Promise(r => setTimeout(r, how?.startsWith("Screener") || order[0] === "screener" ? screenerConfig.spacingMs : 1200));
@@ -733,11 +748,13 @@ async function swingView({ alerts = true } = {}) {
     if (JSON.stringify(next) !== JSON.stringify(st.alertState || {})) await writeJson(swingFile(), { ...st, alertState: next });
   }
   const all = st.closed || [], closed = all.slice(0, 100);
-  return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
+  const scan = await readJson(swingScanFile, { snaps: {} });
+  for (const r of view.positions) { const sn = scan.snaps?.[r.symbol]; r.health = sn?.s ? { ...positionHealth(sn.s, r.avgPrice), asOf: sn.at } : null; }
+  return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), ledger: buildLedger(positions, all), cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
 }
 // Closed swing trades as an Excel file: one row per FIFO buy lot (short / long term), a yearly tax estimate and the scorecard.
 async function sendSwingExport(res) {
-  const st = await readJson(swingFile(), {}), closed = st.closed || [], tx = swingTaxRows(closed), sc = scorecard(closed);
+  const st = await readJson(swingFile(), {}), closed = st.closed || [], tx = swingTaxRows(closed), sc = scorecard(closed); // also exported when nothing is closed yet (ledger of buys)
   const sumBy = (k, f = () => true) => Math.round(tx.rows.filter(f).reduce((a, r) => a + r[k], 0) * 100) / 100;
   const sheets = [
     { name: "Closed trades (FIFO)", columns: [
@@ -753,12 +770,92 @@ async function sendSwingExport(res) {
         { header: "Net STCG", key: "netSt", type: "money", width: 13 }, { header: "Net LTCG", key: "netLt", type: "money", width: 13 }, { header: "LTCG exemption used", key: "exemptUsed", type: "money", width: 20 }, { header: "Estimated tax", key: "tax", type: "money", width: 14 }],
       rows: tx.years,
       notes: [`Rates: STCG ${tx.rules.stRate * 100}%, LTCG ${tx.rules.ltRate * 100}% above ₹${tx.rules.ltExemption.toLocaleString("en-IN")} a year (${tx.rules.asOf}); before cess and surcharge.`, "These are your swing trades alone. The LTCG exemption and losses are shared with all your other sales in the year (see the Tax view)."] },
+    { name: "Ledger", columns: [{ header: "Date", key: "date", type: "date", width: 13 }, { header: "Stock", key: "name", width: 24 }, { header: "Symbol", key: "symbol", width: 13 }, { header: "Type", key: "type", width: 7 }, { header: "Qty", key: "qty", type: "int", width: 7 }, { header: "Price", key: "price", type: "money", width: 12 }, { header: "Value", key: "value", type: "money", width: 14 }, { header: "P/L (sells)", key: "pnl", type: "money", width: 13 }, { header: "Details", key: "det", width: 40 }],
+      rows: buildLedger(st.positions || [], closed).entries.map(e => ({ ...e, pnl: e.type === "SELL" ? e.pnl : null, det: e.type === "BUY" ? (e.sold ? `${e.held} held, ${e.sold} sold${e.soldOn.length ? ` (${e.soldOn.join(", ")})` : ""}` : "held") : `bought at ₹${e.buyAvg} avg${e.atTarget ? ", at target" : ""}` })) },
     { name: "Scorecard", columns: [{ header: "Measure", key: "k", width: 28 }, { header: "Value", key: "v", width: 18 }],
       rows: [["Closed trades", sc.trades], ["Wins / losses", `${sc.wins} / ${sc.losses}`], ["Win rate %", sc.winRate], ["Average win ₹", sc.avgWin], ["Average loss ₹", sc.avgLoss], ["Average win %", sc.avgWinPct], ["Average loss %", sc.avgLossPct], ["Profit factor", sc.profitFactor], ["Average P/L per trade ₹", sc.expectancy], ["Average days held", sc.avgHoldDays], ["Sold at a target", sc.atTargets], ["Total booked ₹", sc.total], ["Best trade", sc.best ? `${sc.best.name} ₹${sc.best.pnl} (${sc.best.pnlPct}%)` : null], ["Worst trade", sc.worst ? `${sc.worst.name} ₹${sc.worst.pnl} (${sc.worst.pnlPct}%)` : null]].map(([k, v]) => ({ k, v })) }
   ];
   const buf = buildXlsx(sheets);
   res.writeHead(200, { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Length": buf.length, "Cache-Control": "no-store", "Content-Disposition": `attachment; filename="swing-trades-${istDay()}.xlsx"` });
   return res.end(buf);
+}
+// ETF entry: 5 years of daily prices (Yahoo), the iNAV (NSE quote) and the tracked index's P/E (NSE allIndices, cached 1 h).
+let nseIndices = { at: 0, map: null };
+async function fetchEtfEntry(stock, { requireEtf = false } = {}) {
+  const symbol = symOf(stock), exchange = stock.exchange || "NSE";
+  const { bars, meta } = await fetchChart(symbol, { exchange, range: "5y" });
+  if (requireEtf && meta.instrumentType !== "ETF") return null;
+  const name = stock.company && stock.company.toUpperCase() !== symbol ? stock.company : meta.longName || symbol;
+  let inav = null, indexStats = null; const index = indexFor(symbol, name);
+  if (exchange === "NSE" && !nseCooldown()) {
+    try { inav = (await fetchNseQuote(symbol)).inav; } catch { /* optional */ }
+    if (index) {
+      try { if (!nseIndices.map || Date.now() - nseIndices.at > 3600e3) nseIndices = { at: Date.now(), map: parseAllIndices(await fetchNseJson("/api/allIndices")) }; indexStats = nseIndices.map[index] || null; } catch { /* optional */ }
+    }
+  }
+  return etfLens(bars, { symbol, name, inav, index, indexStats, today: istDay() });
+}
+// ---- Swing ideas: a daily scan of daily charts (shared cache: prices are public), ranked per account ----
+const swingScanFile = path.join(DATA_DIR, "swing-scan.json");
+const scanState = { running: false, done: 0, total: 0, startedAt: null, finishedAt: null, pausedUntil: 0, lastError: null };
+const SEED_STOCKS = SCRIP_SEED.filter(x => x.exchange !== "BSE" && !isEtf(x.symbol, x.name)).map(x => ({ symbol: x.symbol, name: x.name, exchange: "NSE" }));
+async function scanUniverse() {
+  const m = new Map(SEED_STOCKS.map(x => [x.symbol, x]));
+  await forEachUser(async () => {
+    const [stocks, st] = await Promise.all([readWatchlist(), readJson(swingFile(), {})]);
+    for (const x of stocks) { const sym = symOf(x); if (sym && !m.has(sym) && !isEtf(sym, x.company)) m.set(sym, { symbol: sym, name: x.company || sym, exchange: x.exchange || "NSE" }); }
+    for (const x of [...(st.positions || []), ...(st.watch || [])]) if (!m.has(x.symbol)) m.set(x.symbol, { symbol: x.symbol, name: x.name, exchange: x.exchange || "NSE" });
+  });
+  return [...m.values()].slice(0, 600);
+}
+const scanFresh = (e, force) => !force && e?.at && Date.now() - e.at < (e.s ? 18 : 72) * 3600e3; // misses retried after 3 days
+function startSwingScan({ force = false } = {}) {
+  if (scanState.running || scanState.pausedUntil > Date.now()) return false;
+  scanState.running = true; scanState.done = 0; scanState.startedAt = Date.now(); scanState.lastError = null;
+  (async () => {
+    const cache = await readJson(swingScanFile, { snaps: {} }); cache.snaps ||= {};
+    const save = () => writeJson(swingScanFile, cache);
+    try {
+      if (force || !cache.nifty?.at || Date.now() - cache.nifty.at > 18 * 3600e3) {
+        try { const { bars } = await fetchChart("NIFTYBEES", { range: "1y" }); cache.nifty = { at: Date.now(), bars: bars.slice(-260).map(b => ({ c: b.c })) }; } catch (e) { if (e.rateLimited) throw e; }
+      }
+      const due = (await scanUniverse()).filter(x => !scanFresh(cache.snaps[x.symbol], force));
+      scanState.total = due.length;
+      for (const x of due) {
+        try { const { bars } = await fetchChart(x.symbol, { exchange: x.exchange, range: "1y" }); cache.snaps[x.symbol] = { s: swingSnapshot(bars, cache.nifty?.bars), at: Date.now(), name: x.name, exchange: x.exchange }; }
+        catch (e) { if (e.rateLimited) throw e; cache.snaps[x.symbol] = { s: null, at: Date.now(), name: x.name, exchange: x.exchange, error: String(e.message).slice(0, 120) }; }
+        scanState.done++;
+        if (scanState.done % 20 === 0) await save();
+        await new Promise(r => setTimeout(r, Number(process.env.SWING_SCAN_SPACING_MS ?? 1200)));
+      }
+      cache.lastRun = Date.now(); scanState.finishedAt = Date.now();
+    } catch (e) {
+      scanState.lastError = e.rateLimited ? "Yahoo is rate-limiting price history; the scan resumes in 15 minutes." : e.message;
+      if (e.rateLimited) { scanState.pausedUntil = Date.now() + 15 * 60e3; setTimeout(() => startSwingScan(), 15 * 60e3 + 1000).unref(); }
+    } finally { await save().catch(() => {}); scanState.running = false; console.log(`[swing-scan] ${scanState.done}/${scanState.total} charts${scanState.lastError ? ` (${scanState.lastError})` : ""}`); }
+  })();
+  return true;
+}
+// After the close on weekdays, once a day; and whenever someone opens the ideas with a stale scan.
+setInterval(() => {
+  const t = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts().reduce((a, p) => ({ ...a, [p.type]: p.value }), {});
+  const mins = Number(t.hour) * 60 + Number(t.minute);
+  if (!["Sat", "Sun"].includes(t.weekday) && mins >= 950 && mins <= 1320) readJson(swingScanFile, {}).then(c => { if (!c.lastRun || istDay(new Date(c.lastRun)) !== istDay() || new Date(c.lastRun).getTime() < Date.now() - 6 * 3600e3) startSwingScan(); }).catch(() => {});
+}, 15 * 60e3).unref();
+async function swingIdeas() {
+  const [cache, st, stocks, { rows }] = await Promise.all([readJson(swingScanFile, { snaps: {} }), readJson(swingFile(), {}), readWatchlist(), computeRows()]);
+  const snaps = cache.snaps || {};
+  const mine = new Map(SEED_STOCKS.map(x => [x.symbol, { ...x, src: "market" }]));
+  for (const x of stocks) { const sym = symOf(x); if (sym && !isEtf(sym, x.company)) mine.set(sym, { symbol: sym, name: x.company || sym, exchange: x.exchange || "NSE", src: "watchlist" }); }
+  for (const x of st.watch || []) mine.set(x.symbol, { symbol: x.symbol, name: x.name, exchange: x.exchange, src: "swing watchlist" });
+  const bySym = new Map(rows.map(r => [String(r.symbol).toUpperCase(), r]));
+  const items = [...mine.values()].map(x => { const r = bySym.get(x.symbol), v = r?.verdict; return { ...x, snap: snaps[x.symbol]?.s || null, verdict: v ? { key: v.key, label: v.label, inZone: v.inZone, fairBase: r.fairValue?.base ?? null, fairBull: r.fairValue?.bull ?? null } : null }; });
+  const scanned = items.filter(i => i.snap).length, stale = items.filter(i => !scanFresh(snaps[i.symbol])).length;
+  if (stale > items.length * 0.2 && !scanState.running) startSwingScan();
+  const sizing = { capital: st.cash?.balance ?? null, riskPct: st.settings?.riskPct ?? 1, perTrade: st.settings?.perTrade ?? 200000 };
+  const ideas = rankIdeas(items, { held: new Set((st.positions || []).map(p => p.symbol)), watching: new Set((st.watch || []).map(w => w.symbol)), sizing, limit: 40 })
+    .map(i => ({ ...i, source: mine.get(i.symbol)?.src || "market", asOf: snaps[i.symbol]?.at || null }));
+  return { ideas, sizing, scan: { running: scanState.running, done: scanState.done, total: scanState.total, scanned, universe: items.length, lastRun: cache.lastRun || null, error: scanState.lastError, pausedUntil: scanState.pausedUntil > Date.now() ? scanState.pausedUntil : null } };
 }
 async function resolveNames(names) {
   const [master, stocks] = await Promise.all([scripMaster(), readWatchlist()]);
@@ -1250,31 +1347,39 @@ async function appHandler(req, res, url) {
           return reply(res, 200, { has: true, positions: v.positions.length, watch: v.watch.length, takeProfit: t.takeProfit, deploy: t.deploy, deployNow: t.deployNow, near: [...v.positions, ...v.watch].filter(r => /^near/.test(r.status)).length, pnl: t.pnl, pnlPct: t.pnlPct, cash: t.cash, cashShort: t.cashShort, top: [...v.positions, ...v.watch].filter(r => r.status === "take-profit" || r.status === "deploy").slice(0, 3).map(r => ({ symbol: r.symbol, name: r.name, status: r.status, note: r.note })), marketOpen: v.marketOpen });
         }
         if (req.method === "GET" && op === "export.xlsx") return sendSwingExport(res);
+        if (op === "ideas" || op === "ideas/scan") {
+          if (op === "ideas/scan" && req.method === "POST") { startSwingScan({ force: true }); }
+          return reply(res, 200, await swingIdeas());
+        }
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown swing operation." });
         const b = await readBody(req), st = await readJson(swingFile(), {}); st.positions ||= []; st.watch ||= []; st.closed ||= [];
         const find = (list, i) => { const x = st[list].find(y => y.id === i); if (!x) throw new Error("That entry no longer exists."); return x; };
         if (op === "position") { const prev = b.id ? find("positions", b.id) : null; if (!prev && st.positions.length >= 100) throw new Error("At most 100 swing positions."); const p = sanitizePosition(b, prev); st.positions = prev ? st.positions.map(x => (x.id === p.id ? p : x)) : [...st.positions, p]; }
         else if (op === "watch") { const prev = b.id ? find("watch", b.id) : null; if (!prev && st.watch.length >= 100) throw new Error("At most 100 swing watchlist entries."); const w = sanitizeWatch(b, prev); st.watch = prev ? st.watch.map(x => (x.id === w.id ? w : x)) : [...st.watch, w]; }
         else if (op === "delete") { st.positions = st.positions.filter(x => x.id !== b.id); st.watch = st.watch.filter(x => x.id !== b.id); }
-        else if (op === "buy") { const p = find("positions", b.id), q = Number(b.qty), pr = Number(b.price); if (!(q > 0 && Number.isInteger(q) && pr > 0)) throw new Error("Enter whole shares and a price."); st.positions = st.positions.map(x => (x.id === p.id ? applyBuy(x, q, pr) : x)); moveCash(st, -q * pr, `Bought ${q} ${p.symbol} @ ₹${pr}`); }
+        else if (op === "buy") { const p = find("positions", b.id), q = Number(b.qty), pr = Number(b.price); if (!(q > 0 && Number.isInteger(q) && pr > 0)) throw new Error("Enter whole shares and a price."); const at = tradeDate(b.date); st.positions = st.positions.map(x => (x.id === p.id ? applyBuy(x, q, pr, at) : x)); moveCash(st, -q * pr, `Bought ${q} ${p.symbol} @ ₹${pr} on ${at.slice(0, 10)}`); }
         else if (op === "sell") {
           const p = find("positions", b.id), q = Number(b.qty), pr = Number(b.price);
           const atTarget = pr > 0 && evaluateSwing({ positions: [p], prices: new Map([[p.symbol, { price: pr }]]), settings: st.settings || {} }).positions[0].hitLevel > 0; // sold at or above T1
-          const r = applySell(p, q, pr, undefined, { atTarget }); st.positions = r.position ? st.positions.map(x => (x.id === p.id ? r.position : x)) : st.positions.filter(x => x.id !== p.id); st.closed = [r.trade, ...st.closed].slice(0, 500);
-          moveCash(st, q * pr, `Sold ${q} ${p.symbol} @ ₹${pr}`);
+          const at = tradeDate(b.date), r = applySell(p, q, pr, at, { atTarget }); st.positions = r.position ? st.positions.map(x => (x.id === p.id ? r.position : x)) : st.positions.filter(x => x.id !== p.id); st.closed = [r.trade, ...st.closed].slice(0, 500);
+          moveCash(st, q * pr, `Sold ${q} ${p.symbol} @ ₹${pr} on ${at.slice(0, 10)}`);
         }
         else if (op === "reopen" || op === "delete-trade") { // undo an accidental sale, or just drop the record
           const t = st.closed.find(x => x.id === b.id); if (!t) throw new Error("That closed trade no longer exists.");
           if (op === "reopen") { if (!st.positions.some(x => x.symbol === t.symbol) && st.positions.length >= 100) throw new Error("At most 100 swing positions."); st.positions = reopenTrade(st.positions, t); moveCash(st, -t.qty * t.sellPrice, `Undid sale of ${t.qty} ${t.symbol}`); }
           st.closed = st.closed.filter(x => x.id !== t.id);
         }
+        else if (op === "lots") { const p = find("positions", b.id); st.positions = st.positions.map(x => (x.id === p.id ? setLots(x, b.lots) : x)); }
         else if (op === "promote") { // a swing-watchlist stock was bought: move it to positions
-          const w = find("watch", b.id), p = sanitizePosition({ symbol: w.symbol, exchange: w.exchange, name: w.name, qty: b.qty, avgPrice: b.price, limit: b.limit ?? w.amount, notes: w.notes }); st.watch = st.watch.filter(x => x.id !== w.id); st.positions.push(p); moveCash(st, -p.qty * p.avgPrice, `Bought ${p.qty} ${p.symbol} @ ₹${p.avgPrice}`);
+          const w = find("watch", b.id), bp = Number(b.price), ideaT = w.idea && bp > 0 ? [w.idea.t1, w.idea.t2].filter(t => t > bp * 1.005).map(t => Math.round((t / bp - 1) * 1000) / 10) : [];
+          const p = sanitizePosition({ symbol: w.symbol, exchange: w.exchange, name: w.name, qty: b.qty, avgPrice: b.price, limit: b.limit ?? w.amount, notes: [w.notes, w.idea && !String(w.notes || "").includes(w.idea.label) ? `From swing idea: ${w.idea.label}` : ""].filter(Boolean).join(" · ") || null, boughtOn: b.date || undefined, stopLoss: w.stopLoss ?? null, targets: ideaT.length ? ideaT.join(",") : undefined }); st.watch = st.watch.filter(x => x.id !== w.id); st.positions.push(p); moveCash(st, -p.qty * p.avgPrice, `Bought ${p.qty} ${p.symbol} @ ₹${p.avgPrice}`);
         }
         else if (op === "settings") {
           const t = parseTargets(b.targets ?? b.targetPct), d = Number(b.dipPct), plan = b.bookPlan === undefined ? st.settings?.bookPlan ?? null : parseBookPlan(b.bookPlan);
           if (!t) throw new Error("Enter at least T1."); if (!(d > 0 && d <= 90)) throw new Error("Dip must be 1–90%.");
-          st.settings = { targets: t, dipPct: d, ...(plan ? { bookPlan: plan } : {}) };
+          const riskPct = b.riskPct === undefined || b.riskPct === "" ? st.settings?.riskPct ?? 1 : Number(b.riskPct), perTrade = b.perTrade === undefined || b.perTrade === "" ? st.settings?.perTrade ?? 200000 : parseSwingAmount(b.perTrade);
+          if (!(riskPct > 0 && riskPct <= 10)) throw new Error("Risk per trade: 0.1–10% of your swing cash."); if (!(perTrade > 0)) throw new Error("Max per trade: enter an amount like 2L.");
+          st.settings = { targets: t, dipPct: d, riskPct, perTrade, ...(plan ? { bookPlan: plan } : {}) };
           if (b.cash !== undefined) { // cash set aside for swing: blank stops tracking it
             const c = String(b.cash).trim() === "" ? null : parseSwingAmount(b.cash);
             if (String(b.cash).trim() !== "" && c === null) throw new Error("Cash: enter an amount like 5L or 250000.");
@@ -1533,7 +1638,8 @@ async function appHandler(req, res, url) {
       let sx = (await readJson(screenerExtraFile, {}))[symbol] || {};
       const fresh = (part, ms) => sx[part]?.at && Date.now() - sx[part].at < ms;
       const want = [...(fresh("peers", 7 * 864e5) ? [] : ["peers"]), ...(fresh("swing", 6 * 3600e3) ? [] : ["chart"])];
-      if (want.length || !sx.div) {
+      const etfCard = isEtf(symbol, stock.company) || (await readFundamentals())[symbol]?.profile === "etf"; // no Screener page for ETFs
+      if (!etfCard && (want.length || !sx.div)) {
         try {
           const x = await fetchScreenerExtras(stock, { ids: sx.ids || null, want });
           const patch = { ids: x.ids };
@@ -1551,7 +1657,8 @@ async function appHandler(req, res, url) {
       }
       const { rows } = await computeRows(), row = rows.find(r => String(r.symbol).toUpperCase() === symbol);
       let dividend = row?.dividend || (sx.div?.annual?.length ? dividendsFromAnnual(sx.div.annual, { price: row?.price ?? null, profitCagr3: row?.profitCagr3 ?? null, dividendYield: sx.div.yield }) : null);
-      if (!dividend) errors.dividend = sx.div ? "Screener shows no dividend history for this company." : `Dividend data unavailable right now${errors.screener ? ` (${errors.screener})` : ""}.`;
+      if (!dividend && etfCard) errors.dividend = "ETF: most Indian ETFs reinvest dividends inside the fund, so there is no dividend history to show.";
+      else if (!dividend) errors.dividend = sx.div ? "Screener shows no dividend history for this company." : `Dividend data unavailable right now${errors.screener ? ` (${errors.screener})` : ""}.`;
       // Mark which Screener peers you track / hold, with the app's verdict
       const bySym = new Map(rows.map(r => [String(r.symbol).toUpperCase(), r]));
       const screenerPeers = sx.peers?.table ? { ...sx.peers.table, at: sx.peers.at, rows: sx.peers.table.rows.map(p => { const r = p.symbol && bySym.get(p.symbol); return { ...p, self: p.symbol === symbol, tracked: !!r, verdict: r?.verdict?.label || null, verdictCls: r?.verdict?.cls || null }; }) } : null;

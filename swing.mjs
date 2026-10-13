@@ -68,18 +68,20 @@ export function sanitizePosition(b = {}, prev = null) {
   if (!(avgPrice > 0)) throw new Error("Enter your average buy price.");
   const limit = parseAmount(b.limit), addAmount = parseAmount(b.addAmount), addBelow = parsePrice(b.addBelow), targets = parseTargets(b.targets ?? b.targetPct);
   const bookPlan = b.bookPlan === undefined ? prev?.bookPlan ?? null : parseBookPlan(b.bookPlan);
+  const stopLoss = b.stopLoss === undefined ? prev?.stopLoss ?? null : parsePrice(b.stopLoss);
   let openedAt = prev?.openedAt || new Date().toISOString();
-  if (b.boughtOn) { const d = String(b.boughtOn).slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || Number.isNaN(Date.parse(d)) || d > new Date().toISOString().slice(0, 10)) throw new Error("Bought-on date must be a past date."); openedAt = `${d}T09:15:00.000Z`; }
+  if (b.boughtOn && String(b.boughtOn).slice(0, 10) !== String(prev?.openedAt || "").slice(0, 10)) openedAt = tradeDate(b.boughtOn); // only a changed date
   // keep the buy lots when nothing that shapes them changed; otherwise one lot at the (new) average and date
   const same = prev && prev.qty === qty && r2(prev.avgPrice) === r2(avgPrice) && prev.openedAt === openedAt;
   const lots = same ? lotsOf(prev) : [{ qty, price: r2(avgPrice), at: openedAt }];
-  return { id: prev?.id || id(), symbol, exchange: b.exchange === "BSE" ? "BSE" : "NSE", name: txt(b.name, 80) || prev?.name || symbol, qty, avgPrice: r2(avgPrice), limit, addAmount, addBelow, targets, bookPlan, soldAtTargets: same ? prev.soldAtTargets || 0 : 0, lots, notes: txt(b.notes, 200) || null, openedAt, updatedAt: new Date().toISOString() };
+  return { id: prev?.id || id(), symbol, exchange: b.exchange === "BSE" ? "BSE" : "NSE", name: txt(b.name, 80) || prev?.name || symbol, qty, avgPrice: r2(avgPrice), limit, addAmount, addBelow, targets, bookPlan, stopLoss, soldAtTargets: same ? prev.soldAtTargets || 0 : 0, lots, notes: txt(b.notes, 200) || null, openedAt, updatedAt: new Date().toISOString() };
 }
 export function sanitizeWatch(b = {}, prev = null) {
   const symbol = txt(b.symbol, 20).toUpperCase();
   if (!/^[A-Z0-9&-]{1,20}$/.test(symbol)) throw new Error("Pick the stock (NSE symbol).");
-  const buyBelow = parsePrice(b.buyBelow), amount = parseAmount(b.amount);
-  return { id: prev?.id || id(), symbol, exchange: b.exchange === "BSE" ? "BSE" : "NSE", name: txt(b.name, 80) || prev?.name || symbol, buyBelow, amount, notes: txt(b.notes, 200) || null, addedAt: prev?.addedAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const buyBelow = parsePrice(b.buyBelow), amount = parseAmount(b.amount), stopLoss = b.stopLoss === undefined ? prev?.stopLoss ?? null : parsePrice(b.stopLoss);
+  const idea = b.idea === undefined ? prev?.idea ?? null : (b.idea && typeof b.idea === "object" ? { setup: txt(b.idea.setup, 20), label: txt(b.idea.label, 60), t1: parsePrice(b.idea.t1), t2: parsePrice(b.idea.t2), at: new Date().toISOString() } : null);
+  return { id: prev?.id || id(), symbol, exchange: b.exchange === "BSE" ? "BSE" : "NSE", name: txt(b.name, 80) || prev?.name || symbol, buyBelow, amount, stopLoss, idea, notes: txt(b.notes, 200) || null, addedAt: prev?.addedAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
 }
 // Buy more: new average price. Sell: smaller position plus a closed-trade record.
 // Buying more starts a new booking cycle (targets move with the new average).
@@ -147,14 +149,17 @@ export function evaluateSwing({ positions = [], watch = [], prices = new Map(), 
     let status = "hold", note = null;
     const atAdd = p.addBelow && price !== null && price <= p.addBelow, dipped = !p.addBelow && pnlPct !== null && pnlPct <= -S.dipPct;
     const rs = v => `₹${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+    const stopHit = p.stopLoss && price !== null && price <= p.stopLoss, nearStop = p.stopLoss && price !== null && !stopHit && price <= p.stopLoss * (1 + S.nearPct / 100);
     const nextTxt = next ? `Next T${next.n}: ${rs(next.price)} (+${next.pct}%)${next.sellQty ? `, sell ${next.sellQty}` : ""}.` : "All targets hit.";
-    if (hit && sellNow > 0) { status = "take-profit"; note = `T${hit.n} hit (+${hit.pct}% = ${rs(hit.price)}). Plan: sell ${sellNow} of ${p.qty} shares now (about ₹${Math.round(sellNow * (price - p.avgPrice)).toLocaleString("en-IN")} profit). ${nextTxt}`; }
+    if (stopHit) { status = "stop-hit"; note = `At or below your stop-loss ₹${p.stopLoss}: ${p.stopLoss >= p.avgPrice ? "sell to lock in the gain" : `exit to cap the loss (about ₹${Math.round(Math.abs(pnl)).toLocaleString("en-IN")})`}, or move the stop if your plan changed.`; }
+    else if (hit && sellNow > 0) { status = "take-profit"; note = `T${hit.n} hit (+${hit.pct}% = ${rs(hit.price)}). Plan: sell ${sellNow} of ${p.qty} shares now (about ₹${Math.round(sellNow * (price - p.avgPrice)).toLocaleString("en-IN")} profit). ${nextTxt}`; }
     else if (atAdd || dipped) { status = room === 0 ? "deploy-limit" : "deploy"; note = room === 0 ? `At your add level, but the ₹${(p.limit / 1e5).toFixed(1)}L limit is used up.` : `${atAdd ? `At or below your add level ₹${p.addBelow}` : `Down ${Math.abs(r2(pnlPct))}%`}: deploy${deployAmt ? ` up to ₹${Math.round(deployAmt).toLocaleString("en-IN")}` : ""}.`; }
     else if (next && pnlPct !== null && pnlPct >= next.pct - S.nearPct) { status = "near-profit"; note = `${r2(next.pct - pnlPct)}% away from T${next.n} ${rs(next.price)}${next.sellQty ? `: plan to sell ${next.sellQty}` : ""}.`; }
+    else if (nearStop) { status = "near-stop"; note = `${r2((price / p.stopLoss - 1) * 100)}% above your stop-loss ₹${p.stopLoss}.`; }
     else if (hit) { status = "riding"; note = `Booked as planned up to T${hit.n}. ${next ? nextTxt : `Holding ${p.qty} share${p.qty === 1 ? "" : "s"} as a runner.`}`; }
     else if (p.addBelow && price !== null && price <= p.addBelow * (1 + S.nearPct / 100)) { status = "near-deploy"; note = `${r2((price / p.addBelow - 1) * 100)}% above your add level ₹${p.addBelow}.`; }
     return { ...p, kind: "position", price, prevClose: q.prevClose ?? null, dayPct: fin(q.prevClose) && price !== null ? r2((price / q.prevClose - 1) * 100) : null, priceSource: q.source || null, priceAt: q.at || null,
-      invested: r2(invested), value: r2(value), pnl: r2(pnl), pnlPct: r2(pnlPct), targets, hitLevel, nextTarget: next, sellNow, bookPlan: plan, ownPlan: !!p.bookPlan, soldAtTargets: sold, ownTargets: !!(p.targets || p.targetPct), target: targets[0].pct, targetPrice: targets[0].price, room: r2(room), deployAmount: r2(deployAmt), distanceToAdd: p.addBelow && price !== null ? r2((price / p.addBelow - 1) * 100) : null, status, note };
+      invested: r2(invested), value: r2(value), pnl: r2(pnl), pnlPct: r2(pnlPct), lots: lotsOf(p), lotCount: lotsOf(p).length, targets, hitLevel, nextTarget: next, sellNow, bookPlan: plan, ownPlan: !!p.bookPlan, soldAtTargets: sold, ownTargets: !!(p.targets || p.targetPct), target: targets[0].pct, targetPrice: targets[0].price, room: r2(room), deployAmount: r2(deployAmt), distanceToAdd: p.addBelow && price !== null ? r2((price / p.addBelow - 1) * 100) : null, status, note };
   });
   const wrows = watch.map(w => {
     const q = prices.get(w.symbol) || {}, price = fin(q.price) ? q.price : null;
@@ -169,7 +174,7 @@ export function evaluateSwing({ positions = [], watch = [], prices = new Map(), 
   const priced = rows.filter(r => r.price !== null);
   return {
     settings: S, positions: rows, watch: wrows,
-    totals: { cash: fin(cash) ? r2(cash) : null, cashShort: fin(cash) && deployNow > cash ? Math.round(deployNow - cash) : 0, riding: rows.filter(r => r.status === "riding").length, invested: sum(rows, "invested"), value: priced.length === rows.length ? sum(rows, "value") : null, pnl: sum(priced, "pnl"), pnlPct: sum(priced, "invested") ? r2(sum(priced, "pnl") / sum(priced, "invested") * 100) : null, takeProfit: rows.filter(r => r.status === "take-profit").length, deploy: rows.filter(r => r.status === "deploy").length + wrows.filter(w => w.status === "deploy").length, deployNow: Math.round(deployNow), unpriced: rows.length + wrows.length - priced.length - wrows.filter(w => w.price !== null).length }
+    totals: { cash: fin(cash) ? r2(cash) : null, cashShort: fin(cash) && deployNow > cash ? Math.round(deployNow - cash) : 0, riding: rows.filter(r => r.status === "riding").length, invested: sum(rows, "invested"), value: priced.length === rows.length ? sum(rows, "value") : null, pnl: sum(priced, "pnl"), pnlPct: sum(priced, "invested") ? r2(sum(priced, "pnl") / sum(priced, "invested") * 100) : null, takeProfit: rows.filter(r => r.status === "take-profit").length, stopHit: rows.filter(r => r.status === "stop-hit").length, deploy: rows.filter(r => r.status === "deploy").length + wrows.filter(w => w.status === "deploy").length, deployNow: Math.round(deployNow), unpriced: rows.length + wrows.length - priced.length - wrows.filter(w => w.price !== null).length }
   };
 }
 
@@ -183,6 +188,7 @@ export function diffSwingAlerts(prev = {}, view, { now = Date.now(), events = []
     if (r.price === null || prev[key] === state) continue;
     const prevLevel = /^(take-profit|riding)(?::(\d))?$/.test(prev[key] || "") ? Number(prev[key].split(":")[1] || 1) : 0;
     if (r.status === "take-profit" && r.hitLevel > prevLevel && !recent(`${key}:tp${r.hitLevel}`)) { const t = r.targets[r.hitLevel - 1]; fresh.push({ type: "swing-profit", swingKey: `${key}:tp${r.hitLevel}`, symbol: r.symbol, company: r.name, price: r.price, at: new Date(now).toISOString(), read: false, title: `🎯 ${r.name} hit T${t.n} (+${t.pct}%, ₹${t.price}): now ₹${r.price}, sell ${r.sellNow}?`, detail: r.note }); }
+    if (r.status === "stop-hit" && !recent(`${key}:sl`)) fresh.push({ type: "swing-stop", swingKey: `${key}:sl`, symbol: r.symbol, company: r.name, price: r.price, at: new Date(now).toISOString(), read: false, title: `🛑 ${r.name} hit your stop-loss ₹${r.stopLoss}: now ₹${r.price}`, detail: r.note });
     if (r.status === "deploy" && !recent(`${key}:dp`)) fresh.push({ type: "swing-deploy", swingKey: `${key}:dp`, symbol: r.symbol, company: r.name, price: r.price, at: new Date(now).toISOString(), read: false, title: `💰 ${r.name} at ₹${r.price}: time to deploy`, detail: r.note });
   }
   return { next, fresh };
@@ -233,4 +239,54 @@ export function swingTaxRows(closed = []) {
   for (const r of rows) { const y = years[r.fy] ||= { fy: r.fy, stGain: 0, stLoss: 0, ltGain: 0, ltLoss: 0 }; if (r.term === "STCG") r.gain >= 0 ? (y.stGain += r.gain) : (y.stLoss -= r.gain); else r.gain >= 0 ? (y.ltGain += r.gain) : (y.ltLoss -= r.gain); }
   const fys = Object.values(years).sort((a, b) => a.fy.localeCompare(b.fy)).map(y => ({ ...y, stGain: r2(y.stGain), stLoss: r2(y.stLoss), ltGain: r2(y.ltGain), ltLoss: r2(y.ltLoss), ...taxFor(y) }));
   return { rows, years: fys, rules: TAX_RULES };
+}
+
+// A trade date from a form ("2026-10-01"), not in the future; time set to market open IST so it sorts within the day.
+export function tradeDate(v, now = new Date()) {
+  if (v === undefined || v === null || v === "") return now.toISOString();
+  const d = String(v).slice(0, 10), today = new Date(now.getTime() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || Number.isNaN(Date.parse(d))) throw new Error("Enter the trade date as a date.");
+  if (d > today) throw new Error("The trade date cannot be in the future.");
+  if (d < "1995-01-01") throw new Error("That trade date is too old.");
+  return d === today ? now.toISOString() : `${d}T03:45:00.000Z`;
+}
+
+// Replace a position's buy lots (the dates and prices you actually bought at). Quantity and average follow from the lots.
+export function setLots(p, rows, now = new Date()) {
+  if (!Array.isArray(rows) || !rows.length) throw new Error("Add at least one buy (date, quantity, price).");
+  if (rows.length > 200) throw new Error("At most 200 buys per position.");
+  const lots = rows.map((r, i) => {
+    const qty = Number(r.qty), price = parsePrice(r.price);
+    if (!(qty > 0) || !Number.isInteger(qty)) throw new Error(`Row ${i + 1}: quantity must be a whole number.`);
+    if (!(price > 0)) throw new Error(`Row ${i + 1}: enter the buy price.`);
+    let at; try { at = tradeDate(r.date || "", now); } catch (e) { throw new Error(`Row ${i + 1}: ${e.message}`); }
+    return { qty, price: r2(price), at };
+  }).sort(byAt);
+  const qty = lots.reduce((a, l) => a + l.qty, 0), avgPrice = r2(lots.reduce((a, l) => a + l.qty * l.price, 0) / qty);
+  return { ...p, lots, qty, avgPrice, openedAt: lots[0].at, soldAtTargets: Math.min(p.soldAtTargets || 0, qty), updatedAt: now.toISOString() };
+}
+
+// Ledger: every buy (by date and price, with how much of it is still held or was sold) and every sale, newest first.
+export function buildLedger(positions = [], closed = []) {
+  const buys = new Map(), out = [];
+  const add = (sym, name, l, held, sold, soldOn) => {
+    const day = String(l.at || "").slice(0, 10), k = `${sym}|${day}|${l.price}`;
+    const b = buys.get(k) || { type: "BUY", date: day, at: l.at, symbol: sym, name, qty: 0, price: l.price, held: 0, sold: 0, soldOn: [] };
+    b.qty += l.qty; b.held += held; b.sold += sold; if (soldOn) b.soldOn.push(soldOn); buys.set(k, b);
+  };
+  for (const p of positions) for (const l of lotsOf(p)) add(p.symbol, p.name, l, l.qty, 0, null);
+  for (const t of closed) {
+    const lots = Array.isArray(t.lots) && t.lots.length ? t.lots : [{ qty: t.qty, price: t.buyAvg, at: t.openedAt || t.closedAt }];
+    for (const l of lots) add(t.symbol, t.name, l, 0, l.qty, String(t.closedAt).slice(0, 10));
+    out.push({ type: "SELL", date: String(t.closedAt).slice(0, 10), at: t.closedAt, symbol: t.symbol, name: t.name, qty: t.qty, price: t.sellPrice, value: r2(t.qty * t.sellPrice), buyAvg: t.buyAvg, pnl: t.pnl, pnlPct: t.pnlPct, atTarget: !!t.atTarget, tradeId: t.id });
+  }
+  for (const b of buys.values()) out.push({ ...b, value: r2(b.qty * b.price), soldOn: [...new Set(b.soldOn)].sort() });
+  out.sort((a, b) => String(b.at).localeCompare(String(a.at)) || (a.type === "SELL" ? -1 : 1));
+  const stocks = {};
+  for (const e of out) {
+    const s = stocks[e.symbol] ||= { symbol: e.symbol, name: e.name, bought: 0, boughtValue: 0, sold: 0, soldValue: 0, held: 0, realised: 0, first: e.date, last: e.date };
+    if (e.type === "BUY") { s.bought += e.qty; s.boughtValue = r2(s.boughtValue + e.value); s.held += e.held; } else { s.sold += e.qty; s.soldValue = r2(s.soldValue + e.value); s.realised = r2(s.realised + (e.pnl || 0)); }
+    if (e.date < s.first) s.first = e.date; if (e.date > s.last) s.last = e.date;
+  }
+  return { entries: out, stocks: Object.values(stocks).sort((a, b) => a.name.localeCompare(b.name)) };
 }

@@ -1,3 +1,4 @@
+import { classifyEtf } from "./etf.mjs";
 // Verdict classification shared by the server (alerts, allocator, portfolio health). Pure functions, no I/O.
 // The browser's Growth picks screen uses the same gates (public/app.js growthScore); keep the two in step.
 export const DIV_MIN_YIELD = 2; // % trailing yield needed for the "Dividend" tag (and the dividend must be rated Safe)
@@ -34,6 +35,7 @@ export function growthScore(r) {
 
 // r = a row from valuation.computeValuation (optionally with r.dividend from dividends.mjs).
 export function classify(r) {
+  if (r?.profile === "etf") return classifyEtf(r);
   if (!r || !r.view || r.view === "No fundamentals") return { key: "none", label: "Not valued yet", cls: "v-none", tags: [] };
   if (!fin(r.ratio)) return { key: "none", label: "Can't value yet", cls: "v-none", tags: [] };
   // A floored zone means the value is below the 52-week low: "wait for a reset", not an entry.

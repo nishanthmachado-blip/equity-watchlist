@@ -1,3 +1,4 @@
+import { etfValuation } from "./etf.mjs";
 // Rule-based valuation view + buy zones. Pure functions, no I/O.
 // Every threshold lives in MODEL so it is easy to review and tweak. This is a transparent
 // heuristic, NOT a forecast or advice: output is only as good as the fundamentals fed in.
@@ -54,6 +55,7 @@ export function computeValuation(stock, f, now = Date.now()) {
   { const mc = num(f.marketCap); if (mc !== null && price && capPrice) { out.marketCap = Math.round(mc * price / capPrice); out.cap = capClass(out.marketCap); } }
   if (out.stale) out.reasons.push(`Fundamentals are ${age} days old; refresh before relying on this.`);
   if (!price || !capPrice) return { ...out, view: "Unassessable", status: "Needs price", reasons: [...out.reasons, "No price."] };
+  if (out.profile === "etf") return etfValuation(out, f, price, MODEL);
 
   const profile = out.profile;
   const scale = price / capPrice; // re-scale multiples to the live price (EPS/book value held at capture)
@@ -140,9 +142,9 @@ export function computeAll(stocks, fundamentals, now = Date.now()) {
 }
 
 // ---- Fundamentals input -------------------------------------------------------------
-export const FIELDS = ["symbol", "companyName", "priceDate", "sector", "industry", "profile", "high52", "low52", "price", "pe", "pb", "roce", "roe", "promoter", "promoterChange3y", "salesCagr3", "profitCagr3", "borrowings", "reserves", "sectorPe", "cfoToProfit3", "fcfNegative", "debtorDays", "inventoryDays", "niLatest", "niAvg4", "marketCap", "thin", "nseRefreshedAt", "sectorPeSource", "asOf", "source", "flags"];
-const NUMERIC = new Set(["high52", "low52", "price", "pe", "pb", "roce", "roe", "promoter", "promoterChange3y", "salesCagr3", "profitCagr3", "borrowings", "reserves", "sectorPe", "cfoToProfit3", "fcfNegative", "debtorDays", "inventoryDays", "niLatest", "niAvg4", "marketCap", "thin"]);
-export const PROFILES = ["default", "financial", "cyclical"];
+export const FIELDS = ["symbol", "companyName", "priceDate", "sector", "industry", "profile", "high52", "low52", "price", "pe", "pb", "roce", "roe", "promoter", "promoterChange3y", "salesCagr3", "profitCagr3", "borrowings", "reserves", "sectorPe", "cfoToProfit3", "fcfNegative", "debtorDays", "inventoryDays", "niLatest", "niAvg4", "marketCap", "thin", "nseRefreshedAt", "sectorPeSource", "asOf", "source", "flags", "etfType", "etfDevQ", "indexName", "dma50", "dma200", "devNow", "devPctile", "devDays", "cagr1", "cagr3", "cagr5", "histYears", "inav", "premium", "indexPe", "indexPb", "indexDy"];
+const NUMERIC = new Set(["high52", "low52", "price", "pe", "pb", "roce", "roe", "promoter", "promoterChange3y", "salesCagr3", "profitCagr3", "borrowings", "reserves", "sectorPe", "cfoToProfit3", "fcfNegative", "debtorDays", "inventoryDays", "niLatest", "niAvg4", "marketCap", "thin", "dma50", "dma200", "devNow", "devPctile", "devDays", "cagr1", "cagr3", "cagr5", "histYears", "inav", "premium", "indexPe", "indexPb", "indexDy"]);
+export const PROFILES = ["default", "financial", "cyclical", "etf"];
 
 export function sanitizeEntry(e) {
   const symbol = String(e.symbol || "").trim().toUpperCase();

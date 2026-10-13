@@ -149,7 +149,7 @@
         <button type="button" class="ghost" id="swPaste">📋 Paste from my sheet</button>
         <button type="button" class="ghost" id="swRefresh">⟳ Refresh prices</button>
         <button type="button" class="ghost" id="swSettings">⚙ Targets <b id="swTargetLbl">10 / 20 / 40%</b></button>
-        <button type="button" class="ghost" id="swExport" title="Closed trades with FIFO buy dates, STCG / LTCG and a yearly tax estimate">⬇ Excel (tax)</button>
+        <button type="button" class="ghost" id="swExport" title="Ledger of buys and sells, closed trades with FIFO buy dates, STCG / LTCG and a yearly tax estimate">⬇ Excel (tax)</button>
         <span id="swStatus" class="hint" role="status"></span>
       </section>
       <div class="sw-legend"><span class="sw-dot tp"></span>Reached T1 / T2 / T3: plan to book profit <span class="sw-dot dp"></span>At or below your add level: deploy cash <span class="sw-dot near"></span>Getting close <span class="sw-dot rd"></span>Booked as planned, holding for the next target</div>
@@ -157,7 +157,16 @@
       <section class="table-wrap"><table class="sw-table"><thead><tr><th>Stock</th><th class="num">Qty</th><th class="num">Avg price</th><th class="num">LTP</th><th class="num">Invested</th><th class="num">Value now</th><th class="num">P/L</th><th>Targets (sell price)</th><th>Limit used</th><th>Add plan</th><th>Signal</th><th></th></tr></thead><tbody id="swRows"></tbody></table></section>
       <div class="nw-head" style="margin-top:24px"><h3>Swing watchlist: stocks to deploy into</h3><span class="hint" id="swWatchNote"></span></div>
       <section class="table-wrap"><table class="sw-table sw-watch"><thead><tr><th>Stock</th><th class="num">LTP</th><th class="num">Buy below</th><th class="num">Distance</th><th class="num">Amount</th><th>Signal</th><th></th></tr></thead><tbody id="swWatchRows"></tbody></table></section>
+      <section class="report-card sw-ideas" id="swIdeasBox">
+        <div class="nw-head"><h3>💡 Swing ideas <span class="hint">new setups from daily charts</span></h3><span class="hint" id="swIdeasStatus"></span></div>
+        <div class="toolbar sw-ideas-tools"><label class="hint">Setup <select class="ui-input" id="swIdeasSetup"><option value="">All setups</option><option value="pullback">↘↗ Pullback in an uptrend</option><option value="breakout">🚀 Breakout on volume</option><option value="bounce">🪃 Oversold bounce</option><option value="value">💎 Value stock turning up</option></select></label>
+          <label class="hint">From <select class="ui-input" id="swIdeasSrc"><option value="">Market + my lists</option><option value="mine">Only my watchlists</option></select></label>
+          <button type="button" class="ghost" id="swIdeasScan">⟳ Scan now</button></div>
+        <div id="swIdeas" class="sw-ideas-grid"></div>
+        <p class="vs-fine">Rule-based setups from daily prices: <b>pullback</b> (uptrend that dipped to its 20/50-day average, RSI 38–55), <b>breakout</b> (close above the 55-day high on 1.5× volume, not stretched), <b>oversold bounce</b> (above the 200-day average, RSI ≤ 35) and <b>value turning up</b> (the app's buy zone + price back above its 20-day average). Score adds trend, strength vs Nifty, risk:reward, valuation and liquidity. Size = no more than your max per trade, and a stop-out costs at most your risk % of swing cash. A screen to find candidates, not advice: check the chart and news before you buy, and always use the stop.</p>
+      </section>
       <section class="report-card sw-scorecard" id="swScore" hidden><div class="nw-head"><h3>Swing scorecard</h3><span class="hint">from your closed trades</span></div><div id="swScoreBody"></div></section>
+      <details class="report-card sw-closed sw-ledgerbox" id="swLedgerBox" open><summary><b>📒 Ledger: every buy and sell, by date</b> <span class="hint" id="swLedgerSum"></span></summary><div id="swLedgerBody"></div></details>
       <details class="report-card sw-closed" id="swClosedBox"><summary><b>Closed trades</b> <span class="hint" id="swClosedSum"></span></summary><div class="table-wrap"><table class="sw-table sw-closed-t"><thead><tr><th>Stock</th><th class="num">Qty</th><th class="num">Bought at</th><th class="num">Sold at</th><th class="num">P/L</th><th>Closed</th><th></th></tr></thead><tbody id="swClosedRows"></tbody></table></div></details>
       <p class="vs-fine">Prices: Zerodha Kite live quotes when you are logged in, else Yahoo (may be delayed), else the last saved price (shown as such). Checked every minute while this page is open and every 5 minutes in the background during market hours; signals also appear under 🔔 Alerts and as browser notifications if you allowed them.</p>
     </section>

@@ -209,7 +209,8 @@
     const tiles = assessable ? `
       <div class="vs-tile"><span>Fair value (bear · base · bull)</span><strong>${fv ? `${money(fv.bear)} · ${money(fv.base)} · ${money(fv.bull)}` : "—"}</strong>${up}</div>
       <div class="vs-tile"><span>Buy zone</span><strong>${r.zoneLow ? `${money(r.zoneLow)} – ${money(r.zoneHigh)}${r.floored ? " ⚑" : ""}` : "—"}</strong><small>${statusChip(r.status)} ${Number.isFinite(r.gapToZone) ? `${r.gapToZone > 0 ? "+" : ""}${Math.round(r.gapToZone * 100)}% vs top of zone` : ""}</small></div>
-      <div class="vs-tile"><span>${esc(r.basis || "Multiple")} vs fair</span><strong>${fmt(r.multiple)} vs ${fmt(r.fairMultiple)}</strong><small>${viewChip(r.view)}</small>${gaugeHtml(r.ratio)}</div>
+      ${r.etf ? `<div class="vs-tile"><span>vs its 200-day average</span><strong>${Number.isFinite(r.etf.devNow) ? `${r.etf.devNow > 0 ? "+" : ""}${fmt(r.etf.devNow)}%` : "—"}</strong><small>${viewChip(r.view)} ${Number.isFinite(r.etf.pctile) ? `${Math.round(r.etf.pctile)}th percentile of its history` : ""}</small>${gaugeHtml(r.ratio)}</div>`
+        : `<div class="vs-tile"><span>${esc(r.basis || "Multiple")} vs fair</span><strong>${fmt(r.multiple)} vs ${fmt(r.fairMultiple)}</strong><small>${viewChip(r.view)}</small>${gaugeHtml(r.ratio)}</div>`}
       <div class="vs-tile"><span>52-week range</span>${rangeBar(r.low, r.high, r.price) || "<strong>—</strong>"}</div>` : "";
     const tags = c.tags.length ? c.tags.map(t => `<span class="chip v-none">${esc(t)}</span>`).join(" ") : "";
     const reasons = (r.reasons || []).map(x => `<li>${esc(x)}</li>`).join("");
@@ -223,14 +224,14 @@
       <div class="vs-cols">
         <div><h3>Why this verdict</h3><ul>${reasons || "<li>No details available.</li>"}${gnotes}</ul>${r.flags ? `<p class="hint"><em>${esc(r.flags)}</em></p>` : ""}</div>
         <div><h3>Key numbers</h3>
-          ${row("P/E", fmt(r.pe))}${row("Sector P/E", Number.isFinite(r.sectorPe) ? `${fmt(r.sectorPe)} <small class="hint">${esc(r.sectorPeSource || "")}</small>` : Number.isFinite(r.sectorPeEst) ? `~${fmt(r.sectorPeEst)} <small class="hint">median of ${r.sectorPeEstN} tracked</small>` : "—")}${row("P/B", fmt(r.pb, 2))}
+          ${r.etf ? etfRowsHtml(r, row) : `${row("P/E", fmt(r.pe))}${row("Sector P/E", Number.isFinite(r.sectorPe) ? `${fmt(r.sectorPe)} <small class="hint">${esc(r.sectorPeSource || "")}</small>` : Number.isFinite(r.sectorPeEst) ? `~${fmt(r.sectorPeEst)} <small class="hint">median of ${r.sectorPeEstN} tracked</small>` : "—")}${row("P/B", fmt(r.pb, 2))}
           ${row(fin ? "ROE" : "ROCE", pc(fin ? r.roe : r.roce))}${row("3-yr sales CAGR", pc(r.salesCagr3))}${row("3-yr profit CAGR", pc(r.profitCagr3))}
           ${row("Borrowings / reserves", `${fmt(r.borrowings, 0)} / ${fmt(r.reserves, 0)} Cr`)}${row("Promoter holding", pc(r.promoter))}
-          ${row("Source · data age", `${esc(r.source || "—")} · ${r.ageDays === null || r.ageDays === undefined ? "—" : r.ageDays + "d"}${r.stale ? " ⚠ stale" : ""}`)}</div>
+          ${row("Source · data age", `${esc(r.source || "—")} · ${r.ageDays === null || r.ageDays === undefined ? "—" : r.ageDays + "d"}${r.stale ? " ⚠ stale" : ""}`)}`}</div>
       </div>
       <div id="vsExtras" class="vs-extras"><p class="hint">Loading dividend, trend and peer data…</p></div>
       <div class="toolbar" style="margin:16px 0 0"><button type="button" class="ghost" id="vsListBtn"></button><button type="button" class="ghost" id="vsRefetch">Refresh data</button><button type="button" class="ghost" id="vsOpenTable">Open in Valuation table</button></div>
-      <p class="vs-fine">Value = priced at or under ~1.15× the model's fair multiple. Growth = passes all growth, return-on-capital, balance-sheet and cash-flow gates. Buy = price within the model's buy zone. A rule-based screen from public data (Screener / Yahoo / NSE), not a forecast or investment advice; check the reasons and the data age.</p>
+      <p class="vs-fine">${r.etf ? "ETFs have no earnings: the zone is where the price has been cheapest against its own 200-day average over the past years (bottom 20%), and fair value is its typical (median) level. Not a forecast or investment advice." : ""}${r.etf ? "" : `Value = priced at or under ~1.15× the model's fair multiple. Growth = passes all growth, return-on-capital, balance-sheet and cash-flow gates. Buy = price within the model's buy zone. A rule-based screen from public data (Screener / Yahoo / NSE), not a forecast or investment advice; check the reasons and the data age.`}</p>
     </article>`;
     loadExtras(r.symbol);
     renderGrowthLens(r);
@@ -445,7 +446,8 @@
       // Peers: Screener's own peer table first, then the comparison with stocks you track
       const sp = x.screenerPeers, pr = x.peers;
       let peerHtml = "";
-      if (sp?.rows?.length) {
+      if (rowFor(symbol)?.etf) peerHtml = `<h3>Compare</h3><p class="hint">For an ETF, compare its expense ratio and tracking error with other ETFs on the same index (shown on the AMC's factsheet and on NSE). Prefer the one with the lower cost and higher trading volume.</p>`;
+      else if (sp?.rows?.length) {
         const heads = sp.headers.map(h => h.replace(/\s*Rs\.?\s*/g, " ₹ ").replace(/\s+/g, " ").trim());
         peerHtml = `<h3>Peer comparison <span class="hint">(as on Screener)</span></h3><p class="xp">Companies in the same industry, with Screener's own columns. Your stock is highlighted; the last row is the industry median.</p>
           <div class="table-wrap"><table class="peer-table"><thead><tr>${heads.map(h => `<th>${esc(h)}</th>`).join("")}<th>In this app</th></tr></thead><tbody>
@@ -500,7 +502,7 @@
     } catch {}
   }
   function renderAlerts(a) {
-    $("#alList").innerHTML = a.events.length ? `<ul class="flag-list">${a.events.map(e => `<li class="al-item${e.read ? "" : " unread"}${String(e.type || "").startsWith("swing") ? ` ${esc(e.type)}` : ""}" data-sym="${esc(e.symbol)}" data-id="${e.id}" data-type="${esc(e.type || "")}" tabindex="0"><div class="fcompany">${e.type === "buy-zone" ? "🟢" : "🔄"} ${esc(e.title)}</div><div class="fnote">${esc(e.detail)} · ${new Date(e.at).toLocaleString("en-IN")}</div></li>`).join("")}</ul>` : '<p class="vs-empty">No alerts yet. The first check only records where every stock stands today; alerts appear when something changes after that.</p>';
+    $("#alList").innerHTML = a.events.length ? `<ul class="flag-list">${a.events.map(e => `<li class="al-item${e.read ? "" : " unread"}${String(e.type || "").startsWith("swing") ? ` ${esc(e.type)}` : ""}" data-sym="${esc(e.symbol)}" data-id="${e.id}" data-type="${esc(e.type || "")}" tabindex="0"><div class="fcompany">${e.type === "buy-zone" ? "🟢 " : String(e.type || "").startsWith("swing") ? "" : "🔄 "}${esc(e.title)}</div><div class="fnote">${esc(e.detail)} · ${new Date(e.at).toLocaleString("en-IN")}</div></li>`).join("")}</ul>` : '<p class="vs-empty">No alerts yet. The first check only records where every stock stands today; alerts appear when something changes after that.</p>';
   }
   window.openAlerts = () => { pollAlerts(true); const ok = "Notification" in window; $("#alNotify").hidden = !ok || Notification.permission === "granted"; };
   $("#bellBtn").onclick = () => setView("alerts");
@@ -972,6 +974,7 @@
   function renderGrowthLens(r) {
     const box = $("#glPanel"); if (!box) return;
     const gl = r.growthLens;
+    box.hidden = !!r.etf; if (r.etf) return; // ETFs: no earnings to grow
     if (!gl) { box.innerHTML = `<h3>Growth lens</h3><p class="hint">Needs a positive P/E and growth history; not available for this stock.</p>`; return; }
     const o = { growth: gl.growth, years: gl.years, exitPE: gl.exitPE, required: gl.required };
     box.innerHTML = `<div class="gl-head"><div><h3>Growth lens <span class="hint">what the price is worth if the growth continues</span></h3>

@@ -212,6 +212,8 @@ export function parsePeersPe(html) {
   return { sectorPe: round(vals.length % 2 ? vals[m] : (vals[m - 1] + vals[m]) / 2, 1), count: vals.length };
 }
 
+// A company page with real numbers (the consolidated view of a standalone-only company has the labels but no values).
+export function hasFigures(html) { const top = parseTopRatios(html); return (top["Current Price"]?.[0] ?? 0) > 0; }
 export async function fetchScreener(stock, fetchImpl = fetch) {
   const sym = (stock.marketSymbol || stock.ticker || "").toUpperCase();
   if (!/^[A-Z0-9&-]+$/.test(sym)) throw new Error("bad symbol");
@@ -226,11 +228,16 @@ export async function fetchScreener(stock, fetchImpl = fetch) {
     return r;
   };
   const base = `https://www.screener.in/company/${encodeURIComponent(sym)}/`;
-  let r = await get(base + "consolidated/");
-  if (r.status === 404) r = await get(base);
+  let r = await get(base + "consolidated/"), html = null;
+  if (r.ok) {
+    html = await r.text();
+    // Companies without subsidiaries (e.g. Tips Music, Thangamayil): the consolidated page loads but every figure is
+    // blank. Use the standalone page then.
+    if (!hasFigures(html)) { await new Promise(res => setTimeout(res, 600)); r = await get(base); html = null; }
+  } else if (r.status === 404) r = await get(base);
   if (r.status === 404) throw new Error(`Screener has no page for ${sym}. Check the NSE symbol.`);
   if (!r.ok) throw new Error(`Screener HTTP ${r.status}`);
-  const html = await r.text();
+  html ??= await r.text();
   const out = parseScreener(html, stock);
   const wid = parseWarehouseId(html);
   if (wid) {
@@ -259,9 +266,10 @@ export async function fetchScreenerExtras(stock, { ids = null, want = ["peers", 
   const out = { ids: ids || null, extra: null, peersTable: null, bars: null };
   if (!out.ids?.companyId || !out.ids?.warehouseId) {
     const base = `https://www.screener.in/company/${encodeURIComponent(sym)}/`;
-    let r = await get(base + "consolidated/"); if (r.status === 404) r = await get(base);
+    let r = await get(base + "consolidated/"), html = r.ok ? await r.text() : null;
+    if (r.status === 404 || (html !== null && !hasFigures(html))) { r = await get(base); html = null; }
     if (!r.ok) throw new Error(`Screener HTTP ${r.status}`);
-    const html = await r.text(); out.extra = parseScreenerExtra(html);
+    html ??= await r.text(); out.extra = parseScreenerExtra(html);
     out.ids = { companyId: out.extra.companyId, warehouseId: out.extra.warehouseId };
   }
   const pause = () => new Promise(res => setTimeout(res, 700));
