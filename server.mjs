@@ -7,12 +7,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchFundamentalsForStock, yahooCooldown, yahooQuotes } from "./fundamentals-yahoo.mjs";
 import { MODEL, computeAll, computeValuation, sanitizeEntry, parseCsv, FIELDS } from "./valuation.mjs";
-import { fetchScreener, screenerCooldown, screenerConfig, fetchScreenerExtras, searchScreener } from "./screener.mjs";
+import { fetchScreener, screenerCooldown, screenerConfig, fetchScreenerExtras, searchScreener, resetScreener, fetchScreenerPrice } from "./screener.mjs";
 import { readXlsx, parseDelimited, extractHoldings, fundSummary } from "./funds.mjs";
-import { fetchNseQuote, mergeNse, refreshFromNse, nseCooldown, fetchNseJson } from "./nse.mjs";
+import { fetchNseQuote, mergeNse, refreshFromNse, nseCooldown, fetchNseJson, resetNse, lastNseStatus } from "./nse.mjs";
 import { LADDERS, DEFAULT_SETTINGS, sanitizeBuy, positionRow, stress, exposure } from "./plan.mjs";
 import { addSnapshots, performance, compare } from "./tracker.mjs";
-import { fetchGoogleQuote, googleCooldown, googleConfig } from "./googlefinance.mjs";
+import { fetchGoogleQuote, googleCooldown, googleConfig, resetGoogle } from "./googlefinance.mjs";
 import { kite as kiteDefaults, READ_ONLY_TOOLS, createKiteClient } from "./kite-mcp.mjs";
 import { createBrokerClients, BROKER_NAMES, READ_ONLY_ROUTES, cleanSymbol, makeHolding } from "./brokers.mjs";
 import { createBrokerMcp, MCP_BROKERS } from "./broker-mcp.mjs";
@@ -31,7 +31,7 @@ import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { PROFILES, STYLES, buildModel, assetMix } from "./model.mjs";
-import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger } from "./swing.mjs";
+import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
 import { buildXlsx } from "./xlsx.mjs";
 import { isEtf, indexFor, parseAllIndices, etfLens } from "./etf.mjs";
 import { snapshot as swingSnapshot, rankIdeas, positionHealth } from "./swingideas.mjs";
@@ -41,6 +41,24 @@ import { US_POPULAR, cleanUsSymbol, parseSecTickers, searchTickers, seriesFromFa
 import { LISTS as MARKET_LISTS, parseNseList, rankFromQuotes } from "./market.mjs";
 import { ensureLists, createList, renameList, deleteList, setMembers, prune, DEFAULT_ID } from "./lists.mjs";
 import { METRICS, OPS, PRESETS, sanitizeThesis, evaluateThesis, trackBreaks } from "./thesis.mjs";
+
+// ---- Debug log: the last 1500 console lines kept in memory (owner can read them at /api/debug/log) ----
+const DEBUG_LOG = [];
+for (const level of ["log", "warn", "error"]) {
+  const orig = console[level].bind(console);
+  console[level] = (...a) => {
+    try { DEBUG_LOG.push(`${new Date().toISOString().slice(11, 23)} ${level === "log" ? "   " : level === "warn" ? "WRN" : "ERR"} ${a.map(x => (typeof x === "string" ? x : x instanceof Error ? x.message : JSON.stringify(x))).join(" ").slice(0, 600)}`); if (DEBUG_LOG.length > 1500) DEBUG_LOG.splice(0, DEBUG_LOG.length - 1500); } catch { /* never break logging */ }
+    orig(...a);
+  };
+}
+// One request at a time per site, spaced out: NSE and Screener block bursts (a refresh asks for many stocks at once).
+const paceChains = new Map();
+function paced(site, gapMs, fn) {
+  const prev = paceChains.get(site) || Promise.resolve();
+  const run = prev.catch(() => {}).then(async () => { try { return await fn(); } finally { await new Promise(r => setTimeout(r, gapMs)); } });
+  paceChains.set(site, run.catch(() => {}));
+  return run;
+}
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(root, "data"));
@@ -104,7 +122,9 @@ const referenceFile = path.join(DATA_DIR, "reference-check.json");
 
 // Price sources, tried in this order until one returns a price. "kite" is skipped until you log in to Kite (and when
 // KITE_MCP_ENABLED=0). Override with e.g. PRICE_SOURCES=google,yahoo. Unknown names are ignored.
-const PRICE_SOURCES = (process.env.PRICE_SOURCES || "kite,yahoo,google").split(",").map(s => s.trim().toLowerCase()).filter(s => ["kite", "yahoo", "google"].includes(s));
+// Kite is no longer a default price source: its quotes go stale when the MCP connection drops. Add it back with PRICE_SOURCES=nse,kite,… if wanted.
+const PRICE_SOURCES = (process.env.PRICE_SOURCES || "nse,yahoo,screener,google").split(",").map(s => s.trim().toLowerCase()).filter(s => ["kite", "nse", "yahoo", "screener", "google"].includes(s));
+const KITE_PRICES = PRICE_SOURCES.includes("kite");
 const RANGE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // re-read the 52-week range from Yahoo/Google at most daily when the price came from Kite
 const port = Number(process.env.PORT || 4173);
 // Angel One / Dhan through an MCP server (broker-mcp.mjs). The OAuth redirect comes back to this server.
@@ -263,19 +283,19 @@ async function marketList(list, source = "auto") {
     }
   }
   if (!rows) {
-    // Your own stocks (watchlist + holdings): Kite quotes when a Zerodha login is live (works on most connections), else Yahoo,
+    // Your own stocks (watchlist + holdings): Yahoo quotes (Kite only if PRICE_SOURCES includes it),
     // else the saved watchlist prices. 52-week range = saved range widened by today's high / low.
     const [stocks, view] = await Promise.all([readWatchlist(), kiteHoldingsView()]);
     const items = new Map(stocks.filter(st => symOf(st)).map(st => [symOf(st), { symbol: symOf(st), exchange: st.exchange || "NSE", name: st.company, high52: st.high, low52: st.low }]));
     for (const h of view.holdings) if (!items.has(h.symbol)) items.set(h.symbol, { symbol: h.symbol, exchange: "NSE", name: h.company || h.symbol });
-    const kc = await anyKiteWithSession(), errs = [];
+    const kc = KITE_PRICES ? await anyKiteWithSession() : null, errs = [];
     if (kc && list !== "volgainers") {
       try {
         const qs = await kc.quotes([...items.values()].filter(i => i.exchange !== "BSE").map(i => i.symbol));
         const merged = [...qs.values()].map(q => { const i = items.get(q.symbol) || {}; return { ...q, name: i.name, high52: Math.max(i.high52 || 0, q.high || 0) || null, low52: i.low52 && q.low ? Math.min(i.low52, q.low) : i.low52 || null }; });
         if (merged.length) { rows = rankFromQuotes(list, merged); used = "kite"; }
       } catch (e) { errs.push(`Kite quotes failed (${String(e.message).slice(0, 100)})`); }
-    } else if (!kc) errs.push("Kite is not logged in");
+    } else if (!kc && KITE_PRICES) errs.push("Kite is not logged in");
     if (!rows) {
       try { const qs = await yahooQuotes([...items.values()]); rows = rankFromQuotes(list, [...qs.values()]); used = "yahoo"; }
       catch (e) {
@@ -677,7 +697,7 @@ let scripMem = null, scripLoading = null;
 async function scripMaster() {
   if (scripMem && Date.now() - scripMem.fetchedAt < 7 * 864e5) return scripMem;
   const saved = await readJson(scripFile, null);
-  if (saved?.list?.length > 500) { scripMem = saved; if (Date.now() - saved.fetchedAt > 7 * 864e5) refreshScripMaster(); return saved; }
+  if (saved?.list?.length > 500) { scripMem = saved; if (Date.now() - saved.fetchedAt > 7 * 864e5 || (/Zerodha/.test(saved.source || "") && !saved.list.some(x => x.token))) refreshScripMaster(); return saved; } // older lists lack Kite instrument tokens
   refreshScripMaster();
   return scripMem || { fetchedAt: 0, source: "built-in list", list: SCRIP_SEED };
 }
@@ -709,37 +729,65 @@ async function yahooSearch(q) {
 // ---- Swing trading: live prices (Kite quotes → Yahoo → saved prices), positions, swing watchlist, alerts ----
 const swingFile = () => userFile("swing.json");
 const livePriceCache = new Map(); // "EX:SYM" -> { price, prevClose, source, at } (shared: prices are public)
-async function livePrices(items, maxAgeMs = 45e3) {
+// Live prices for the Swing page: NSE (the exchange's own quote) → Yahoo (batch, then live chart price) → Screener →
+// the last saved price (marked). Kite only when PRICE_SOURCES includes it. maxAgeMs 0 = always fetch (Refresh).
+const livePending = new Map(); // "EX:SYM" -> promise of a fetch already under way (no duplicate requests)
+async function fetchLiveQuote(i) {
+  const ex = i.exchange || "NSE", key = `${ex}:${i.symbol}`;
+  if (livePending.has(key)) return livePending.get(key);
+  const run = (async () => {
+    const tries = [];
+    if (PRICE_SOURCES.includes("nse") && ex === "NSE" && !nseCooldown()) tries.push(async () => { const q = await paced("nse", 350, () => fetchNseQuote(i.symbol)); return q.price > 0 ? { price: q.price, prevClose: q.prevClose ?? null, source: "NSE", asOf: q.asOf || null } : null; });
+    if (PRICE_SOURCES.includes("yahoo")) tries.push(async () => { const q = await yahooQuote(i.symbol, ex); return { price: q.price, prevClose: q.prevClose ?? null, source: "Yahoo", asOf: q.asOf }; });
+    if (PRICE_SOURCES.includes("google")) tries.push(async () => { if (googleCooldown()) return null; const q = await paced("google", 500, () => fetchGoogleQuote(i.symbol, { exchange: ex === "BSE" ? "BOM" : googleConfig.exchange })); return { price: q.price, prevClose: q.prevClose ?? null, source: "Google", asOf: q.asOf }; });
+    if (PRICE_SOURCES.includes("screener") && ex === "NSE") tries.push(async () => { if (screenerCooldown()) return null; const q = await paced("screener", 1200, () => fetchScreenerPrice({ symbol: i.symbol })); return { price: q.price, prevClose: null, source: "Screener", asOf: null }; });
+    const errs = []; let best = null;
+    for (const t of tries) {
+      try { const v = await t(); if (!v) continue; best = pickFresher(best, v); if (isFresh(best)) break; } catch (e) { errs.push(errText(e).slice(0, 80)); }
+    }
+    if (best) { best.at = Date.now(); livePriceCache.set(key, best); }
+    console.log(`[live] ${i.symbol}: ${best ? `${best.source} ₹${best.price}${best.asOf ? ` @ ${new Date(best.asOf).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}` : ""}` : "no price"}${errs.length ? ` (failed: ${errs.join(" | ")})` : ""}`);
+    return best;
+  })().finally(() => livePending.delete(key));
+  livePending.set(key, run);
+  return run;
+}
+// Live prices for the Swing page. NSE first (the exchange's own quote); otherwise the freshest of Yahoo / Google by their
+// market timestamps, then Screener. Waits at most budgetMs: whatever is still loading finishes in the background (so the
+// next check has it) and the saved price stands in, marked, meanwhile. maxAgeMs 0 = ignore the cache (Refresh).
+async function livePrices(items, maxAgeMs = 45e3, { budgetMs = 8000 } = {}) {
   const out = new Map(), need = [];
   for (const it of items) { const c = livePriceCache.get(`${it.exchange || "NSE"}:${it.symbol}`); if (c && Date.now() - c.at < maxAgeMs) out.set(it.symbol, c); else need.push(it); }
+  let pending = 0;
   if (need.length) {
-    const kc = await anyKiteWithSession().catch(() => null);
-    if (kc) for (const ex of ["NSE", "BSE"]) {
-      const syms = need.filter(i => (i.exchange || "NSE") === ex).map(i => i.symbol); if (!syms.length) continue;
-      try { for (const [k, q] of await kc.quotes(syms, ex)) { const v = { price: q.price, prevClose: q.close ?? null, source: "Kite", at: Date.now() }; out.set(k, v); livePriceCache.set(`${ex}:${k}`, v); } } catch { /* fall through */ }
-    }
-    const rest = need.filter(i => !out.has(i.symbol));
-    if (rest.length) { try { for (const [k, q] of await yahooQuotes(rest.map(i => ({ symbol: i.symbol, exchange: i.exchange || "NSE" })))) if (q.price > 0) { const prev = Number.isFinite(q.pChange) ? q.price / (1 + q.pChange / 100) : null; const v = { price: q.price, prevClose: prev, source: "Yahoo", at: Date.now() }; out.set(k, v); livePriceCache.set(`${rest.find(i => i.symbol === k)?.exchange || "NSE"}:${k}`, v); } } catch { /* fall through */ } }
-    const still = need.filter(i => !out.has(i.symbol));
-    if (still.length) { // last resort: the saved watchlist / holdings price (marked as such)
+    if (KITE_PRICES) { const kc = await anyKiteWithSession().catch(() => null); if (kc) { try { for (const [k, q] of await kc.quotes(need.filter(i => (i.exchange || "NSE") === "NSE").map(i => i.symbol))) if (q.price > 0) { const v = { price: q.price, prevClose: q.close ?? null, source: "Kite", at: Date.now() }; out.set(k, v); livePriceCache.set(`NSE:${k}`, v); } } catch { /* next */ } } }
+    const jobs = need.filter(i => !out.has(i.symbol)).map(i => fetchLiveQuote(i).then(v => { if (v) out.set(i.symbol, v); }).catch(() => {}));
+    await Promise.race([Promise.all(jobs), new Promise(r => setTimeout(r, budgetMs))]);
+    const still = need.filter(i => !out.has(i.symbol)); pending = still.filter(i => livePending.has(`${i.exchange || "NSE"}:${i.symbol}`)).length;
+    if (still.length) { // meanwhile: the saved watchlist / holdings price, marked with its time
       const [stocks, view] = await Promise.all([readWatchlist(), kiteHoldingsView().catch(() => ({ holdings: [] }))]);
-      for (const i of still) { const st = stocks.find(x => symOf(x) === i.symbol), h = view.holdings.find(x => x.symbol === i.symbol); const p = h?.syncPrice ?? st?.price; if (p > 0) out.set(i.symbol, { price: p, prevClose: null, source: h?.syncPrice ? "last broker sync" : "saved price", at: Date.now() }); }
+      for (const i of still) { const st = stocks.find(x => symOf(x) === i.symbol), h = view.holdings.find(x => x.symbol === i.symbol); const p = st?.price ?? h?.syncPrice; if (p > 0) out.set(i.symbol, { price: p, prevClose: null, source: st?.price ? `saved price${st.priceAt ? ` (${new Date(st.priceAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })})` : ""}` : "last broker sync", at: Date.now(), stale: true }); }
     }
   }
+  out.pending = pending;
   return out;
 }
-// Alerts to the phone (Telegram), in the background: a slow or failing Telegram never holds up the app.
-function phonePush(fresh) {
-  const user = currentUser();
-  (async () => {
-    const cfg = await readJson(U.notifyFile, {});
-    try { const n = await pushAlerts(cfg, fresh); if (n) await writeJson(U.notifyFile, { ...cfg, lastSent: new Date().toISOString(), lastError: null }); }
-    catch (e) { console.error(`[telegram] ${user?.username}: ${e.message}`); await writeJson(U.notifyFile, { ...cfg, lastError: e.message, lastErrorAt: new Date().toISOString() }); }
-  })().catch(() => {});
+// A quote is "fresh" when its market timestamp is within 3 minutes (or the market is closed); NSE counts as fresh.
+function isFresh(q) { if (!q) return false; if (q.source === "NSE") return true; if (!marketIsOpen()) return !!q.asOf || q.source !== "Screener"; return !!q.asOf && Date.now() - Date.parse(q.asOf) < 3 * 60e3; }
+function pickFresher(a, b) { if (!a) return b; const ta = Date.parse(a.asOf || "") || 0, tb = Date.parse(b.asOf || "") || 0; return tb > ta ? b : a; }
+// Booked profit after charges and tax, per financial year (the ₹1.25L LTCG exemption applies once per year).
+function realisedAfterTax(closed, charges) {
+  const tx = swingTaxRows(closed); let ch = 0;
+  for (const t of closed) { const e = sellTaxEstimate({ lots: Array.isArray(t.lots) && t.lots.length ? t.lots : [{ qty: t.qty, price: t.buyAvg, at: t.openedAt || t.closedAt }], sellPrice: t.sellPrice, sellDate: t.closedAt, ltExemptLeft: 0, charges }); if (e) ch += e.charges.total; }
+  const tax = tx.years.reduce((s, y) => s + y.tax, 0) * (1 + (charges.cessPct ?? 4) / 100), gross = closed.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
+  return { gross: Math.round(gross), charges: Math.round(ch), tax: Math.round(tax), net: Math.round(gross - ch - tax) };
 }
-async function swingView({ alerts = true } = {}) {
-  const st = await readJson(swingFile(), {}), positions = st.positions || [], watch = st.watch || [];
-  const prices = await livePrices([...positions, ...watch]);
+async function swingView({ alerts = true, fresh = false } = {}) {
+  const st = await readJson(swingFile(), {}), watch = st.watch || [];
+  const dd = dedupePositions(st.positions || []), positions = dd.list; // older versions could hold one stock twice: merge them
+  if (dd.merged.length) { st.positions = positions; await writeJson(swingFile(), st); console.log(`[swing] merged duplicate positions: ${dd.merged.join(", ")}`); }
+  const prices = await livePrices([...positions, ...watch], fresh ? 0 : 45e3);
+  const pricePending = prices.pending || 0;
   const view = evaluateSwing({ positions, watch, prices, settings: st.settings || {}, cash: st.cash?.balance ?? null });
   if (alerts && (positions.length || watch.length)) {
     const store = await readJson(U.alertsFile, { state: {}, events: [] });
@@ -749,8 +797,15 @@ async function swingView({ alerts = true } = {}) {
   }
   const all = st.closed || [], closed = all.slice(0, 100);
   const scan = await readJson(swingScanFile, { snaps: {} });
-  for (const r of view.positions) { const sn = scan.snaps?.[r.symbol]; r.health = sn?.s ? { ...positionHealth(sn.s, r.avgPrice), asOf: sn.at } : null; }
-  return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), ledger: buildLedger(positions, all), cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
+  for (const r of view.positions) { const sn = scan.snaps?.[r.symbol]; r.health = sn?.s ? { ...positionHealth(sn.s, r.avgPrice), asOf: sn.at } : null; const q = prices.get(r.symbol); r.priceAsOf = q?.asOf || null; r.priceStale = !!q?.stale; }
+  // If sold now: charges, STT and tax on the whole position, and on the booking plan's "sell now" quantity
+  const charges = { ...CHARGE_DEFAULTS, ...(st.settings?.charges || {}) }, exemptLeft = ltExemptionLeft(st.closed || [], st.settings?.ltUsedElsewhere || 0);
+  for (const r of view.positions) if (r.price > 0) {
+    const p = positions.find(x => x.id === r.id) || r;
+    r.ifSold = sellTaxEstimate({ lots: lotsForSale(p, r.qty), sellPrice: r.price, exchange: r.exchange, ltExemptLeft: exemptLeft, charges });
+    if (r.sellNow > 0 && r.sellNow < r.qty) r.ifSellNow = sellTaxEstimate({ lots: lotsForSale(p, r.sellNow), sellPrice: r.price, exchange: r.exchange, ltExemptLeft: exemptLeft, charges });
+  }
+  return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), ledger: buildLedger(positions, all), taxInfo: { exemptLeft, charges, ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0 }, realisedNet: realisedAfterTax(all, charges), pricePending, cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
 }
 // Closed swing trades as an Excel file: one row per FIFO buy lot (short / long term), a yearly tax estimate and the scorecard.
 async function sendSwingExport(res) {
@@ -800,39 +855,82 @@ const swingScanFile = path.join(DATA_DIR, "swing-scan.json");
 const scanState = { running: false, done: 0, total: 0, startedAt: null, finishedAt: null, pausedUntil: 0, lastError: null };
 const SEED_STOCKS = SCRIP_SEED.filter(x => x.exchange !== "BSE" && !isEtf(x.symbol, x.name)).map(x => ({ symbol: x.symbol, name: x.name, exchange: "NSE" }));
 async function scanUniverse() {
-  const m = new Map(SEED_STOCKS.map(x => [x.symbol, x]));
+  const mine = new Map(), kiteUsers = [];
   await forEachUser(async () => {
     const [stocks, st] = await Promise.all([readWatchlist(), readJson(swingFile(), {})]);
-    for (const x of stocks) { const sym = symOf(x); if (sym && !m.has(sym) && !isEtf(sym, x.company)) m.set(sym, { symbol: sym, name: x.company || sym, exchange: x.exchange || "NSE" }); }
-    for (const x of [...(st.positions || []), ...(st.watch || [])]) if (!m.has(x.symbol)) m.set(x.symbol, { symbol: x.symbol, name: x.name, exchange: x.exchange || "NSE" });
+    for (const x of [...(st.positions || []), ...(st.watch || [])]) if (!mine.has(x.symbol)) mine.set(x.symbol, { symbol: x.symbol, name: x.name, exchange: x.exchange || "NSE" });
+    for (const x of stocks) { const sym = symOf(x); if (sym && !mine.has(sym) && !isEtf(sym, x.company)) mine.set(sym, { symbol: sym, name: x.company || sym, exchange: x.exchange || "NSE" }); }
+    if (!kiteUsers.length && await anyKiteWithSession().catch(() => null)) kiteUsers.push(currentUser());
   });
-  return [...m.values()].slice(0, 600);
+  for (const x of SEED_STOCKS) if (!mine.has(x.symbol)) mine.set(x.symbol, x); // your own lists first, then the market list
+  return { list: [...mine.values()].slice(0, 600), kiteUser: kiteUsers[0] || null };
 }
-const scanFresh = (e, force) => !force && e?.at && Date.now() - e.at < (e.s ? 18 : 72) * 3600e3; // misses retried after 3 days
+const scanFresh = (e, force) => !!(e?.at && Date.now() - e.at < (e.s ? (force ? 6 : 18) : force ? 0 : 6) * 3600e3); // misses retried after 6 h (or on Scan now)
+// Daily bars from whichever source answers: Yahoo, then Screener's price chart, then Kite (a logged-in account) to fill gaps. A source that rate-limits is rested for 15 minutes while the others carry on.
+const barSources = { yahoo: 0, kite: 0 }; // cool-down until (ms); Screener keeps its own
+function barsCooling() { return { kite: barSources.kite > Date.now(), yahoo: barSources.yahoo > Date.now(), screener: !!screenerCooldown() }; }
+async function dailyBars(x, { kiteUser, tokens, sx }) {
+  const errs = [], cool = barsCooling();
+  const token = tokens.get(`${x.exchange || "NSE"}:${x.symbol}`);
+  if (!cool.yahoo) {
+    try { const { bars } = await fetchChart(x.symbol, { exchange: x.exchange, range: "1y" }); if (bars.length >= 60) return { bars, source: "Yahoo" }; errs.push("Yahoo: too little history"); }
+    catch (e) { errs.push(`Yahoo: ${e.message}`); if (e.rateLimited) barSources.yahoo = Date.now() + 15 * 60e3; }
+  }
+  if (!screenerCooldown() && x.exchange !== "BSE") {
+    try {
+      const ids = sx[x.symbol]?.ids?.companyId ? sx[x.symbol].ids : null;
+      const r = await fetchScreenerExtras({ marketSymbol: x.symbol, exchange: x.exchange }, { ids, want: ["chart"] });
+      if (r.ids?.companyId && !ids) saveScreenerExtra(x.symbol, { ids: r.ids }).catch(() => {});
+      if (r.bars?.length >= 60) return { bars: r.bars, source: "Screener" };
+      errs.push("Screener: no chart");
+    } catch (e) { errs.push(`Screener: ${e.message}`); }
+  }
+  // Kite last: its feed can lag when the connection is unstable, so it only fills gaps
+  if (kiteUser && token && !cool.kite) {
+    try { const b = await asUser(kiteUser, async () => { const kc = await anyKiteWithSession(); if (!kc) throw Object.assign(new Error("Kite login expired"), { off: true }); return kc.historical(token); }); if (b.length >= 60) return { bars: b, source: "Kite" }; errs.push("Kite: too little history"); }
+    catch (e) { errs.push(`Kite: ${e.message}`); if (e.off || e.loginRequired || /historical|permission|not (enabled|allowed|subscribed)|Unrecognised/i.test(e.message)) barSources.kite = Date.now() + 6 * 3600e3; else if (/rate|429|too many/i.test(e.message)) barSources.kite = Date.now() + 5 * 60e3; }
+  }
+  const c = barsCooling();
+  const err = new Error(errs.join("; ") || "No price-history source available right now");
+  err.allCooling = (c.yahoo || barSources.yahoo > Date.now()) && !!screenerCooldown() && (!kiteUser || !token || c.kite);
+  throw err;
+}
 function startSwingScan({ force = false } = {}) {
+  if (force && !scanState.running) { scanState.pausedUntil = 0; barSources.kite = 0; barSources.yahoo = 0; resetScreener(); } // Scan now: try again (e.g. right after a Kite login)
   if (scanState.running || scanState.pausedUntil > Date.now()) return false;
-  scanState.running = true; scanState.done = 0; scanState.startedAt = Date.now(); scanState.lastError = null;
+  scanState.running = true; scanState.done = 0; scanState.startedAt = Date.now(); scanState.lastError = null; scanState.sources = {};
   (async () => {
     const cache = await readJson(swingScanFile, { snaps: {} }); cache.snaps ||= {};
     const save = () => writeJson(swingScanFile, cache);
+    const spacing = { Kite: 400, Yahoo: 1200, Screener: 2500 }, gap = Number(process.env.SWING_SCAN_SPACING_MS);
     try {
+      const { list, kiteUser } = await scanUniverse();
+      const master = await scripMaster(), tokens = new Map(master.list.filter(m => m.token).map(m => [`${m.exchange}:${m.symbol}`, m.token]));
+      const sx = await readJson(screenerExtraFile, {});
+      scanState.kite = !!kiteUser && tokens.size > 0;
       if (force || !cache.nifty?.at || Date.now() - cache.nifty.at > 18 * 3600e3) {
-        try { const { bars } = await fetchChart("NIFTYBEES", { range: "1y" }); cache.nifty = { at: Date.now(), bars: bars.slice(-260).map(b => ({ c: b.c })) }; } catch (e) { if (e.rateLimited) throw e; }
+        try { const r = await dailyBars({ symbol: "NIFTYBEES", exchange: "NSE" }, { kiteUser, tokens, sx: {} }); cache.nifty = { at: Date.now(), source: r.source, bars: r.bars.slice(-260).map(b => ({ c: b.c })) }; } catch { /* strength vs Nifty is optional */ }
       }
-      const due = (await scanUniverse()).filter(x => !scanFresh(cache.snaps[x.symbol], force));
+      const due = list.filter(x => !scanFresh(cache.snaps[x.symbol], force));
       scanState.total = due.length;
       for (const x of due) {
-        try { const { bars } = await fetchChart(x.symbol, { exchange: x.exchange, range: "1y" }); cache.snaps[x.symbol] = { s: swingSnapshot(bars, cache.nifty?.bars), at: Date.now(), name: x.name, exchange: x.exchange }; }
-        catch (e) { if (e.rateLimited) throw e; cache.snaps[x.symbol] = { s: null, at: Date.now(), name: x.name, exchange: x.exchange, error: String(e.message).slice(0, 120) }; }
+        let src = null;
+        try { const r = await dailyBars(x, { kiteUser, tokens, sx }); src = r.source; cache.snaps[x.symbol] = { s: swingSnapshot(r.bars, cache.nifty?.bars), at: Date.now(), name: x.name, exchange: x.exchange, source: r.source }; scanState.sources[r.source] = (scanState.sources[r.source] || 0) + 1; }
+        catch (e) {
+          if (e.allCooling) { const c = [barSources.yahoo, screenerCooldown(), kiteUser ? barSources.kite : 0].filter(t => t > Date.now()); const until = c.length ? Math.min(...c) : Date.now() + 15 * 60e3; throw Object.assign(new Error("all-cooling"), { until }); }
+          cache.snaps[x.symbol] = { s: null, at: Date.now(), name: x.name, exchange: x.exchange, error: String(e.message).slice(0, 160) };
+        }
         scanState.done++;
-        if (scanState.done % 20 === 0) await save();
-        await new Promise(r => setTimeout(r, Number(process.env.SWING_SCAN_SPACING_MS ?? 1200)));
+        if (scanState.done % 15 === 0) await save();
+        await new Promise(r => setTimeout(r, Number.isFinite(gap) ? gap : spacing[src] || 1200));
       }
       cache.lastRun = Date.now(); scanState.finishedAt = Date.now();
     } catch (e) {
-      scanState.lastError = e.rateLimited ? "Yahoo is rate-limiting price history; the scan resumes in 15 minutes." : e.message;
-      if (e.rateLimited) { scanState.pausedUntil = Date.now() + 15 * 60e3; setTimeout(() => startSwingScan(), 15 * 60e3 + 1000).unref(); }
-    } finally { await save().catch(() => {}); scanState.running = false; console.log(`[swing-scan] ${scanState.done}/${scanState.total} charts${scanState.lastError ? ` (${scanState.lastError})` : ""}`); }
+      if (e.until) {
+        scanState.pausedUntil = e.until; scanState.lastError = `Price sources are busy (Yahoo / Screener rate limits)${scanState.kite ? "" : "; logging in to Zerodha in the app lets the scan fill gaps from Kite"}. Resumes at ${new Date(e.until).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}.`;
+        setTimeout(() => { scanState.pausedUntil = 0; startSwingScan(); }, Math.max(60e3, e.until - Date.now() + 2000)).unref();
+      } else scanState.lastError = e.message;
+    } finally { await save().catch(() => {}); scanState.running = false; console.log(`[swing-scan] ${scanState.done}/${scanState.total} charts ${JSON.stringify(scanState.sources)}${scanState.lastError ? ` (${scanState.lastError})` : ""}`); }
   })();
   return true;
 }
@@ -855,7 +953,8 @@ async function swingIdeas() {
   const sizing = { capital: st.cash?.balance ?? null, riskPct: st.settings?.riskPct ?? 1, perTrade: st.settings?.perTrade ?? 200000 };
   const ideas = rankIdeas(items, { held: new Set((st.positions || []).map(p => p.symbol)), watching: new Set((st.watch || []).map(w => w.symbol)), sizing, limit: 40 })
     .map(i => ({ ...i, source: mine.get(i.symbol)?.src || "market", asOf: snaps[i.symbol]?.at || null }));
-  return { ideas, sizing, scan: { running: scanState.running, done: scanState.done, total: scanState.total, scanned, universe: items.length, lastRun: cache.lastRun || null, error: scanState.lastError, pausedUntil: scanState.pausedUntil > Date.now() ? scanState.pausedUntil : null } };
+  const failed = items.filter(i => !snaps[i.symbol]?.s && snaps[i.symbol]?.error).length;
+  return { ideas, sizing, scan: { running: scanState.running, done: scanState.done, total: scanState.total, scanned, failed, universe: items.length, lastRun: cache.lastRun || null, error: scanState.lastError, pausedUntil: scanState.pausedUntil > Date.now() ? scanState.pausedUntil : null, sources: scanState.sources || {}, kite: !!scanState.kite } };
 }
 async function resolveNames(names) {
   const [master, stocks] = await Promise.all([scripMaster(), readWatchlist()]);
@@ -1020,20 +1119,36 @@ async function recordChanges(previous, next) {
   if (touched) await writeHistory(history);
   return history;
 }
+// The page sends back its own copy of the watchlist (edits, refresh). If it was open for a while, its prices are older than
+// the ones the server fetched since: keep, per stock, whichever price is newer (priceAt), so a stale tab never undoes a refresh.
+// "fetch failed" hides the reason; Node keeps it in e.cause (ENOTFOUND = DNS, ECONNREFUSED, ETIMEDOUT, certificate errors…).
+const errText = e => { const c = e?.cause; const why = c ? (c.code || c.message || "").toString() : ""; return `${e?.message || e}${why && !String(e?.message).includes(why) ? ` (${why}${c?.hostname ? ` ${c.hostname}` : ""})` : ""}`; };
+const PRICE_FIELDS = ["price", "low", "high", "rangeUpdated", "priceAt", "priceSource", "feedStatus", "updated"];
+const priceTime = s => { const t = Date.parse(s?.priceAt || ""); return Number.isFinite(t) ? t : 0; };
+function keepNewerPrices(incoming, stored) {
+  const byId = new Map(stored.map(s => [s.id, s])), bySym = new Map(stored.map(s => [symOf(s), s]));
+  let kept = 0;
+  const out = incoming.map(s => {
+    const old = byId.get(s.id) || (symOf(s) && bySym.get(symOf(s)));
+    if (!old || priceTime(old) <= priceTime(s)) return s;
+    kept++; const next = { ...s }; for (const k of PRICE_FIELDS) if (old[k] !== undefined) next[k] = old[k];
+    return next;
+  });
+  if (kept) console.log(`[watchlist] kept ${kept} newer server price(s) over an older copy sent by the page`);
+  return out;
+}
 async function persistWatchlist(nextStocks, previousStocks) {
   const previous = previousStocks || await readWatchlist();
   await recordChanges(previous, nextStocks);
   await writeWatchlist(nextStocks);
 }
 
+// Yahoo: the live price field of the chart endpoint (regularMarketPrice), not the last daily bar, which can lag.
 async function yahooQuote(marketSymbol, exchange = "NSE") {
-  const symbol = encodeURIComponent(`${marketSymbol}.${exchange === "BSE" ? "BO" : "NS"}`);
-  const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=1y&interval=1d`, { headers: { "User-Agent": "EquityWatchlist/0.1 research@localhost" } });
-  if (!response.ok) throw new Error(`price feed HTTP ${response.status}`);
-  const json = await response.json();
-  const closes = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close?.filter(Number.isFinite) || [];
-  if (!closes.length) throw new Error("no price observations returned");
-  return { price: Number(closes.at(-1).toFixed(2)), low: Number(Math.min(...closes).toFixed(2)), high: Number(Math.max(...closes).toFixed(2)), source: "Yahoo Finance market feed" };
+  const { bars, meta } = await fetchChart(marketSymbol, { exchange, range: "5d" });
+  const price = meta.price > 0 ? meta.price : bars.at(-1)?.c;
+  if (!(price > 0)) throw new Error("no price returned");
+  return { price: Number(price.toFixed(2)), prevClose: meta.prevClose > 0 ? meta.prevClose : null, low: meta.low52 > 0 ? meta.low52 : null, high: meta.high52 > 0 ? meta.high52 : null, asOf: meta.time ? new Date(meta.time * 1000).toISOString() : null, source: "Yahoo Finance" };
 }
 // Google Finance is scraped, so guard against it resolving the wrong instrument: a price >40% away from the last
 // stored close is rejected and the next source is tried (a genuine split or crash can be fixed with a manual refresh).
@@ -1044,21 +1159,30 @@ function plausible(stock, quote) {
 }
 // Returns a quote from the first working source in PRICE_SOURCES. `kitePrices` holds LTPs already fetched in one batch call.
 async function getQuote(stock, kitePrices) {
-  const sym = String(stock.marketSymbol).toUpperCase(), errors = [];
-  let quote = null;
+  const sym = String(stock.marketSymbol).toUpperCase(), errors = [], trail = [];
+  let quote = null, best = null;
   for (const src of PRICE_SOURCES) {
+    const t0 = Date.now();
     try {
-      if (src === "kite") { const p = kitePrices.get(sym); if (!p) continue; quote = { price: Number(p.toFixed(2)), source: "Kite MCP (Zerodha LTP)" }; }
+      if (src === "kite") { const p = kitePrices.get(sym); if (!p) { trail.push("kite: no LTP"); continue; } quote = { price: Number(p.toFixed(2)), source: "Kite MCP (Zerodha LTP)" }; }
+      else if (src === "nse") { if (stock.exchange === "BSE") { trail.push("nse: BSE stock, skipped"); continue; } if (nseCooldown()) { trail.push(`nse: cooling down until ${new Date(nseCooldown()).toLocaleTimeString("en-IN")} (${lastNseStatus || "blocked"})`); errors.push("nse: cooling down"); continue; } const q = await paced("nse", 350, () => fetchNseQuote(sym)); if (!(q.price > 0)) throw new Error("answered without a price"); quote = { price: q.price, low: q.low52 || null, high: q.high52 || null, asOf: q.asOf || null, source: "NSE" }; plausible(stock, quote); }
       else if (src === "yahoo") quote = await yahooQuote(stock.marketSymbol, stock.exchange);
-      else { quote = await fetchGoogleQuote(sym, { exchange: googleExchange(stock) }); plausible(stock, quote); }
-    } catch (e) { quote = null; errors.push(`${src}: ${e.message}`); }
-    if (quote) break;
+      else if (src === "screener") { if (stock.exchange === "BSE") { trail.push("screener: BSE stock, skipped"); continue; } if (screenerCooldown()) { trail.push(`screener: cooling down until ${new Date(screenerCooldown()).toLocaleTimeString("en-IN")}`); errors.push("screener: cooling down"); continue; } quote = await paced("screener", 1200, () => fetchScreenerPrice(stock)); plausible(stock, quote); }
+      else { if (googleCooldown()) { trail.push("google: cooling down"); errors.push("google: cooling down"); continue; } quote = await paced("google", 500, () => fetchGoogleQuote(sym, { exchange: googleExchange(stock) })); plausible(stock, quote); }
+      trail.push(`${src}: ✓ ₹${quote.price}${quote.asOf ? ` @ ${new Date(quote.asOf).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}` : ""} (${Date.now() - t0} ms)`);
+    } catch (e) { quote = null; errors.push(`${src}: ${errText(e)}`); trail.push(`${src}: ✗ ${errText(e).slice(0, 160)} (${Date.now() - t0} ms)`); }
+    // NSE is the exchange's own price: done. Other sites can lag (Yahoo's NSE feed is often ~15 min behind, Screener has no
+    // time stamp), so while the market is open keep asking the next source and use the most recent quote.
+    if (quote) { best = pickFresher(best, quote); quote = null; if (isFresh({ ...best, source: best.source === "NSE" ? "NSE" : best.source })) break; }
   }
+  quote = best;
+  if (quote && quote.source !== "NSE" && marketIsOpen() && !(quote.asOf && Date.now() - Date.parse(quote.asOf) < 3 * 60e3)) trail.push(`using ${quote.source} (${quote.asOf ? `${Math.round((Date.now() - Date.parse(quote.asOf)) / 60e3)} min old` : "no time stamp"})`);
+  console.log(`[price] ${sym}: ${trail.join(" → ") || "no sources configured"}`);
   if (!quote) throw new Error(errors.join(" | ") || "no price source available (check PRICE_SOURCES)");
   // Kite's LTP has no 52-week range. Borrow it from Yahoo/Google when the stored range is missing or older than a day.
   if (!(quote.low > 0 && quote.high > 0)) {
     const stale = !(stock.low > 0 && stock.high > 0) || Date.now() - new Date(stock.rangeUpdated || 0).getTime() > RANGE_MAX_AGE_MS;
-    if (stale) for (const src of PRICE_SOURCES.filter(s => s !== "kite")) {
+    if (stale) for (const src of PRICE_SOURCES.filter(s => s === "yahoo" || s === "google")) {
       try { const r = src === "yahoo" ? await yahooQuote(stock.marketSymbol, stock.exchange) : await fetchGoogleQuote(sym, { exchange: googleExchange(stock) }); if (r.low > 0 && r.high > 0) { quote.low = r.low; quote.high = r.high; quote.rangeSource = r.source; break; } } catch { /* range is optional */ }
     }
   }
@@ -1081,7 +1205,7 @@ async function refreshOne(stock, withNews, kitePrices = new Map()) {
     const hasRange = quote.low > 0 && quote.high > 0;
     // Keep the stored range when the source did not supply one, but never let the price sit outside it.
     const low = hasRange ? quote.low : (stock.low > 0 ? Math.min(stock.low, quote.price) : quote.price), high = hasRange ? quote.high : (stock.high > 0 ? Math.max(stock.high, quote.price) : quote.price);
-    const values = { ...stock, price: quote.price, low, high, ...(hasRange ? { rangeUpdated: new Date().toISOString() } : {}), updated: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }), priceSource: quote.source, feedStatus: "Price refreshed" };
+    const values = { ...stock, price: quote.price, low, high, ...(hasRange ? { rangeUpdated: new Date().toISOString() } : {}), updated: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }), priceAt: quote.asOf || new Date().toISOString(), priceSource: quote.source, feedStatus: "Price refreshed" };
     const newsAge = Date.now() - new Date(stock.newsUpdated || 0).getTime();
     if (withNews && newsAge > 6 * 60 * 60 * 1000) {
       try {
@@ -1096,13 +1220,95 @@ async function refreshOne(stock, withNews, kitePrices = new Map()) {
   } catch (error) { console.error(`[refresh] ${stock.company}: ${error.message}`); return { ...stock, feedStatus: `Refresh failed: ${error.message}` }; }
 }
 async function mapLimit(items, limit, worker) { const results = new Array(items.length); let cursor = 0; async function run() { while (cursor < items.length) { const i = cursor++; results[i] = await worker(items[i]); } } await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run)); return results; }
-async function refreshWatchlist(stocks, withNews = true) { console.log(`[refresh] Starting ${stocks.length}-stock refresh${withNews ? " with news" : ""} (sources: ${PRICE_SOURCES.join(" → ")}).`); const kitePrices = await fetchKitePrices(stocks); const refreshed = await mapLimit(stocks, 3, stock => refreshOne(stock, withNews, kitePrices)); await persistWatchlist(refreshed, stocks); if (refreshed.some(s => s.feedStatus === "Price refreshed")) { lastPriceRefreshAt = new Date().toISOString(); await writeJson(userFile("meta.json"), { ...(await readJson(userFile("meta.json"), {})), lastPriceRefresh: lastPriceRefreshAt }); } console.log(`[refresh] Finished: ${refreshed.filter(s => s.feedStatus === "Price refreshed").length}/${stocks.length} prices refreshed.`); return refreshed; }
-function marketIsOpen() { const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts().filter(p => p.type !== "literal").map(p => [p.type, p.value])); const minutes = Number(parts.hour) * 60 + Number(parts.minute); return !["Sat", "Sun"].includes(parts.weekday) && minutes >= 555 && minutes <= 930; }
+async function refreshWatchlist(stocks, withNews = true) { console.log(`[refresh] Starting ${stocks.length}-stock refresh${withNews ? " with news" : ""} (sources: ${PRICE_SOURCES.join(" → ")}).`); const kitePrices = await fetchKitePrices(stocks); const refreshed = await mapLimit(stocks, 3, stock => refreshOne(stock, withNews, kitePrices)); await persistWatchlist(refreshed, stocks); if (refreshed.some(s => s.feedStatus === "Price refreshed")) { lastPriceRefreshAt = new Date().toISOString(); await writeJson(userFile("meta.json"), { ...(await readJson(userFile("meta.json"), {})), lastPriceRefresh: lastPriceRefreshAt }); } const bySrc = {}; for (const r of refreshed) if (r.feedStatus === "Price refreshed") bySrc[r.priceSource] = (bySrc[r.priceSource] || 0) + 1; console.log(`[refresh] Finished: ${refreshed.filter(s => s.feedStatus === "Price refreshed").length}/${stocks.length} prices refreshed ${JSON.stringify(bySrc)}; ${refreshed.filter(s => String(s.feedStatus).startsWith("Refresh failed")).length} failed.`); return refreshed; }
+function marketIsOpen() { if (process.env.MARKET_ALWAYS_OPEN === "1") return true; // testing only
+  return marketIsOpenNow(); }
+function marketIsOpenNow() { const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts().filter(p => p.type !== "literal").map(p => [p.type, p.value])); const minutes = Number(parts.hour) * 60 + Number(parts.minute); return !["Sat", "Sun"].includes(parts.weekday) && minutes >= 555 && minutes <= 930; }
 // Swing alerts: every 5 minutes during market hours, per account (positions hitting the profit target or add levels).
 setInterval(() => { if (marketIsOpen()) forEachUser(async () => { const st = await readJson(swingFile(), {}); if ((st.positions || []).length || (st.watch || []).length) await swingView(); }); }, 5 * 60 * 1000).unref();
 // Background work runs once per account, each inside that account's own context (its files, its Kite login).
 async function forEachUser(fn) { for (const u of auth.listUsers()) { try { await asUser(u, fn); } catch (e) { console.error(`[background] ${u.username}: ${e.message}`); } } }
-setInterval(() => { if (marketIsOpen()) forEachUser(async () => { const stocks = await readWatchlist(); if (stocks.length) { await refreshWatchlist(stocks, false); await runAlerts((await computeRows()).rows); } }); }, 15 * 60 * 1000).unref();
+// ---- Live prices for every account, every PRICE_REFRESH_SECONDS (default 60) while the market is open ----
+// Each stock is fetched once for all accounts: NSE one by one (paced), then Yahoo in batches of 40, then Yahoo's chart,
+// Google and Screener for what is left, inside a time budget. A run that takes longer simply delays the next one.
+const PRICE_REFRESH_SEC = Math.max(30, Number(process.env.PRICE_REFRESH_SECONDS) || 60);
+const priceState = { running: false, lastRun: null, lastDurationMs: null, lastCount: 0, lastFailed: 0, bySource: {}, lastError: null };
+const quoteCache = new Map(); // "EX:SYM" -> { price, low, high, prevClose, asOf, source, at }
+let priceRun = null;
+async function fetchQuotesFast(items, budgetMs) {
+  const out = new Map(), key = i => `${i.exchange}:${i.symbol}`, deadline = Date.now() + budgetMs;
+  const left = () => items.filter(i => !out.has(key(i)));
+  const fresh = q => q && (q.source === "NSE" || (q.asOf && Date.now() - Date.parse(q.asOf) < 3 * 60e3) || !marketIsOpen());
+  const ok = (i, q) => { if (!(q?.price > 0)) return false; if (i.last > 0 && Math.abs(q.price / i.last - 1) > 0.4) return false; return true; }; // a quote 40% off the last price = wrong instrument
+  if (PRICE_SOURCES.includes("nse")) for (const i of left().filter(x => x.exchange === "NSE")) {
+    if (nseCooldown() || Date.now() > deadline) break;
+    try { const q = await paced("nse", 300, () => fetchNseQuote(i.symbol)); const v = { price: q.price, low: q.low52 || null, high: q.high52 || null, prevClose: q.prevClose ?? null, asOf: q.asOf || new Date().toISOString(), source: "NSE" }; if (ok(i, v)) out.set(key(i), v); } catch { /* next source */ }
+  }
+  if (PRICE_SOURCES.includes("yahoo") && left().length && !(yahooCooldown() > Date.now())) {
+    try { const qs = await yahooQuotes(left().map(i => ({ symbol: i.symbol, exchange: i.exchange }))); for (const i of left()) { const q = qs.get(i.symbol); const v = q && { price: q.price, low: q.low52 ?? null, high: q.high52 ?? null, prevClose: Number.isFinite(q.pChange) && q.price ? Number((q.price / (1 + q.pChange / 100)).toFixed(2)) : null, asOf: q.time || null, source: "Yahoo Finance" }; if (ok(i, v)) out.set(key(i), v); } } catch { /* next source */ }
+  }
+  // Still missing, or only a delayed quote while the market is open: the per-stock sources, newest quote wins.
+  for (const i of items.filter(x => !fresh(out.get(key(x))))) {
+    if (Date.now() > deadline) break;
+    const tries = [];
+    if (PRICE_SOURCES.includes("yahoo") && !out.has(key(i))) tries.push(async () => { const q = await yahooQuote(i.symbol, i.exchange); return { ...q, source: "Yahoo Finance" }; });
+    if (PRICE_SOURCES.includes("google") && !googleCooldown()) tries.push(async () => { const q = await paced("google", 500, () => fetchGoogleQuote(i.symbol, { exchange: i.exchange === "BSE" ? "BOM" : googleConfig.exchange })); return { price: q.price, low: q.low, high: q.high, prevClose: q.prevClose ?? null, asOf: q.asOf, source: "Google Finance" }; });
+    if (PRICE_SOURCES.includes("screener") && i.exchange === "NSE" && !out.has(key(i)) && !screenerCooldown()) tries.push(async () => { const q = await paced("screener", 1200, () => fetchScreenerPrice({ symbol: i.symbol })); return { ...q, asOf: null }; });
+    for (const t of tries) { if (Date.now() > deadline) break; try { const v = await t(); if (ok(i, v)) out.set(key(i), pickFresher(out.get(key(i)), v)); if (fresh(out.get(key(i)))) break; } catch { /* next */ } }
+  }
+  return out;
+}
+async function refreshAllPrices({ user = null, force = false } = {}) {
+  if (priceRun) { await priceRun.catch(() => {}); if (!force) return priceState; }
+  priceRun = (async () => {
+    const t0 = Date.now(); priceState.running = true; priceState.lastError = null;
+    try {
+      // Everything to price: watchlists + swing positions and swing watchlists, of one account or all
+      const items = new Map(), accounts = [];
+      const collect = async () => {
+        const [stocks, st] = await Promise.all([readWatchlist(), readJson(swingFile(), {})]);
+        accounts.push(currentUser());
+        for (const x of stocks) { const sym = symOf(x); if (sym) items.set(`${x.exchange || "NSE"}:${sym}`, { symbol: sym, exchange: x.exchange || "NSE", last: x.price }); }
+        for (const x of [...(st.positions || []), ...(st.watch || [])]) { const k = `${x.exchange || "NSE"}:${x.symbol}`; if (!items.has(k)) items.set(k, { symbol: x.symbol, exchange: x.exchange || "NSE" }); }
+      };
+      if (user) await asUser(user, collect); else await forEachUser(collect);
+      const all = [...items.values()], need = all.filter(i => force || !(quoteCache.get(`${i.exchange}:${i.symbol}`)?.at > Date.now() - 45e3));
+      const got = await fetchQuotesFast(need, Math.max(20e3, PRICE_REFRESH_SEC * 800));
+      for (const [k, q] of got) { quoteCache.set(k, { ...q, at: Date.now() }); livePriceCache.set(k, { price: q.price, prevClose: q.prevClose ?? null, source: q.source.replace(" Finance", ""), asOf: q.asOf, at: Date.now() }); }
+      // Write each account's watchlist (only stocks that got a newer quote) and check its alerts
+      const bySource = {}; let failed = 0;
+      for (const u of accounts) await asUser(u, async () => {
+        const stocks = await readWatchlist(); let changed = false;
+        const next = stocks.map(x => {
+          const sym = symOf(x), q = sym && quoteCache.get(`${x.exchange || "NSE"}:${sym}`);
+          if (!q || q.at < t0 - 45e3) { if (sym && need.some(i => i.symbol === sym)) failed++; return x; }
+          if (Date.parse(x.priceAt || "") >= q.at) return x;
+          changed = true; bySource[q.source] = (bySource[q.source] || 0) + 1;
+          const hasRange = q.low > 0 && q.high > 0;
+          return { ...x, price: q.price, ...(hasRange ? { low: q.low, high: q.high, rangeUpdated: new Date().toISOString() } : { low: x.low > 0 ? Math.min(x.low, q.price) : q.price, high: x.high > 0 ? Math.max(x.high, q.price) : q.price }), priceAt: q.asOf && Date.parse(q.asOf) <= Date.now() + 60e3 ? q.asOf : new Date(q.at).toISOString(), priceSource: q.source, feedStatus: "Price refreshed", updated: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) };
+        });
+        if (changed) { await persistWatchlist(next, stocks); await runAlerts((await computeRows()).rows).catch(() => {}); }
+      });
+      Object.assign(priceState, { lastRun: new Date().toISOString(), lastDurationMs: Date.now() - t0, lastCount: got.size, lastFailed: Math.max(0, need.length - got.size), bySource });
+      if (got.size) lastPriceRefreshAt = priceState.lastRun;
+      if (need.length) console.log(`[prices] ${got.size}/${need.length} quotes in ${((Date.now() - t0) / 1000).toFixed(1)} s ${JSON.stringify(bySource)}${need.length - got.size ? `; ${need.length - got.size} without a price` : ""}${user ? ` (asked by ${user.username})` : ""}`);
+    } catch (e) { priceState.lastError = e.message; console.error(`[prices] ${e.message}`); }
+    finally { priceState.running = false; }
+    return priceState;
+  })();
+  try { return await priceRun; } finally { priceRun = null; }
+}
+setInterval(() => { if (marketIsOpen() && !priceRun) refreshAllPrices().catch(() => {}); }, PRICE_REFRESH_SEC * 1000).unref();
+// After the close (15:40–17:00 IST, weekdays), once a day: the official closing price, which is only published after 15:30.
+// Without it the last automatic price of the day would be the one from 15:15–15:30.
+let lastCloseRefreshDay = null;
+setInterval(() => {
+  const t = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts().reduce((a, p) => ({ ...a, [p.type]: p.value }), {});
+  const mins = Number(t.hour) * 60 + Number(t.minute), day = istDay();
+  if (["Sat", "Sun"].includes(t.weekday) || mins < 940 || mins > 1020 || lastCloseRefreshDay === day) return;
+  lastCloseRefreshDay = day; console.log("[refresh] Closing-price refresh for every account.");
+  forEachUser(async () => { const stocks = await readWatchlist(); if (stocks.length) { await refreshWatchlist(stocks, false); await runAlerts((await computeRows()).rows); } });
+}, 5 * 60 * 1000).unref();
 
 // Daily (after 19:00 IST) refresh of stale or missing fundamentals, a few at a time. Disable with AUTO_FUNDAMENTALS=0.
 let lastAutoDay = null;
@@ -1126,18 +1332,40 @@ if (process.env.AUTO_FUNDAMENTALS !== "0" && !process.env.NODE_TEST_CONTEXT) set
 
 async function appHandler(req, res, url) {
   try {
-    if (url.pathname === "/api/health") return reply(res, 200, { ok: true, lastPriceRefreshAt, marketOpen: marketIsOpen(), provider: `${PRICE_SOURCES.join(" → ")} price feeds + Google News RSS`, priceSources: PRICE_SOURCES, kiteEnabled: kite.config.enabled, scheduledRefresh: "Every 15 minutes during NSE cash-market hours", yahooCooldownUntil: yahooCooldown() || null, googleCooldownUntil: googleCooldown() || null });
+    if (url.pathname === "/api/health") return reply(res, 200, { ok: true, lastPriceRefreshAt, marketOpen: marketIsOpen(), provider: `${PRICE_SOURCES.join(" → ")} price feeds + Google News RSS`, priceSources: PRICE_SOURCES, kiteEnabled: kite.config.enabled, scheduledRefresh: `Every ${PRICE_REFRESH_SEC} seconds during NSE cash-market hours, plus once after the close`, yahooCooldownUntil: yahooCooldown() || null, googleCooldownUntil: googleCooldown() || null, nseCooldownUntil: nseCooldown() || null });
+    if (url.pathname === "/api/prices/status" && req.method === "GET") {
+      const stocks = await readWatchlist(), latest = stocks.reduce((m, x) => Math.max(m, Date.parse(x.priceAt || "") || 0), 0);
+      return reply(res, 200, { ...priceState, intervalSec: PRICE_REFRESH_SEC, marketOpen: marketIsOpen(), myLatestPriceAt: latest ? new Date(latest).toISOString() : null });
+    }
+    if (url.pathname === "/api/prices/refresh" && req.method === "POST") {
+      const st = await refreshAllPrices({ user: currentUser(), force: true });
+      const stocks = await readWatchlist(), latest = stocks.reduce((m, x) => Math.max(m, Date.parse(x.priceAt || "") || 0), 0);
+      return reply(res, 200, { ...st, intervalSec: PRICE_REFRESH_SEC, marketOpen: marketIsOpen(), myLatestPriceAt: latest ? new Date(latest).toISOString() : null, failedStocks: stocks.filter(x => symOf(x) && !(Date.parse(x.priceAt || "") > Date.now() - 5 * 60e3)).slice(0, 8).map(x => symOf(x)) });
+    }
     if (url.pathname === "/api/price-compare" && req.method === "GET") {
-      // Side-by-side quote from every configured source for one symbol: the quickest way to see which feeds work from your network.
+      // Every source for one symbol, one at a time, ignoring cool-downs: shows exactly what each site answers from this machine.
       const symbol = (url.searchParams.get("symbol") || "").trim().toUpperCase();
       if (!/^[A-Z0-9&-]{1,20}$/.test(symbol)) return reply(res, 400, { message: "Pass ?symbol=NSE_SYMBOL, for example ?symbol=RELIANCE." });
-      const attempt = async fn => { try { return await fn(); } catch (e) { return { error: e.message }; } };
       const ex = url.searchParams.get("exchange") === "BSE" ? "BSE" : "NSE";
-      const out = { symbol, yahoo: await attempt(() => yahooQuote(symbol, ex)), google: await attempt(() => fetchGoogleQuote(symbol, { exchange: ex === "BSE" ? "BOM" : googleConfig.exchange })) };
-      out.kite = !kite.config.enabled ? { error: "disabled (KITE_MCP_ENABLED=0 in .env)" } : await attempt(async () => { const p = (await kite.ltp([symbol])).get(symbol); if (!p) throw new Error("no LTP returned"); return { price: p, source: "Kite MCP (Zerodha LTP)" }; });
-      const prices = ["yahoo", "google", "kite"].map(k => out[k].price).filter(Number.isFinite);
+      const timed = async fn => { const t0 = Date.now(); try { const r = await fn(); return { ...r, ms: Date.now() - t0 }; } catch (e) { return { error: errText(e), ms: Date.now() - t0, rateLimited: !!e.rateLimited }; } };
+      resetNse(); resetScreener(); resetGoogle();
+      const out = { symbol, exchange: ex, at: new Date().toISOString(), order: PRICE_SOURCES, proxy: process.env.HTTPS_PROXY || process.env.https_proxy || null, sources: {} };
+      out.sources.nse = ex === "BSE" ? { error: "BSE stock" } : await timed(async () => { const q = await fetchNseQuote(symbol); return { price: q.price, high: q.high52, low: q.low52, source: "NSE" }; });
+      out.sources.yahoo = await timed(() => yahooQuote(symbol, ex));
+      out.sources.screener = ex === "BSE" ? { error: "BSE stock" } : await timed(() => fetchScreenerPrice({ marketSymbol: symbol }));
+      out.sources.google = await timed(() => fetchGoogleQuote(symbol, { exchange: ex === "BSE" ? "BOM" : googleConfig.exchange }));
+      out.sources.kite = !KITE_PRICES ? { skipped: "not used for prices (add kite to PRICE_SOURCES to use it)" } : await timed(async () => { const kc = await anyKiteWithSession(); if (!kc) throw new Error("not logged in"); const p = (await kc.ltp([symbol])).get(symbol); if (!p) throw new Error("no LTP returned"); return { price: p, source: "Kite" }; });
+      const prices = Object.values(out.sources).map(x => x.price).filter(Number.isFinite);
       out.maxSpreadPct = prices.length > 1 ? Number(((Math.max(...prices) / Math.min(...prices) - 1) * 100).toFixed(2)) : null;
+      out.working = Object.entries(out.sources).filter(([, v]) => Number.isFinite(v.price)).map(([k]) => k);
+      console.log(`[price-test] ${symbol}: ${Object.entries(out.sources).map(([k, v]) => `${k} ${Number.isFinite(v.price) ? `✓ ₹${v.price}` : v.skipped ? "–" : `✗ ${String(v.error).slice(0, 80)}`} (${v.ms ?? 0} ms)`).join(" | ")}`);
       return reply(res, 200, out);
+    }
+    if (url.pathname === "/api/debug/log" && req.method === "GET") {
+      if (currentUser()?.role !== "owner") return reply(res, 403, { message: "Owner only (the log covers every account)." });
+      const f = String(url.searchParams.get("filter") || "").toLowerCase(), n = Math.min(1500, Number(url.searchParams.get("lines")) || 400);
+      const lines = DEBUG_LOG.filter(l => !f || l.toLowerCase().includes(f)).slice(-n);
+      return reply(res, 200, { lines, total: DEBUG_LOG.length, priceSources: PRICE_SOURCES, node: process.version, marketOpen: marketIsOpen() });
     }
     if (url.pathname === "/api/thesis" && req.method === "GET") return reply(res, 200, await thesisView());
     if (url.pathname === "/api/thesis/save" && req.method === "POST") {
@@ -1340,21 +1568,37 @@ async function appHandler(req, res, url) {
     if (url.pathname.startsWith("/api/swing")) {
       const op = url.pathname.slice("/api/swing".length).replace(/^\//, "");
       try {
-        if (req.method === "GET" && !op) return reply(res, 200, await swingView());
+        if (req.method === "GET" && !op) return reply(res, 200, await swingView({ fresh: url.searchParams.get("fresh") === "1" }));
         if (req.method === "GET" && op === "summary") { // for the strip on Home
           const st = await readJson(swingFile(), {}); if (!(st.positions || []).length && !(st.watch || []).length) return reply(res, 200, { has: false });
           const v = await swingView(), t = v.totals;
           return reply(res, 200, { has: true, positions: v.positions.length, watch: v.watch.length, takeProfit: t.takeProfit, deploy: t.deploy, deployNow: t.deployNow, near: [...v.positions, ...v.watch].filter(r => /^near/.test(r.status)).length, pnl: t.pnl, pnlPct: t.pnlPct, cash: t.cash, cashShort: t.cashShort, top: [...v.positions, ...v.watch].filter(r => r.status === "take-profit" || r.status === "deploy").slice(0, 3).map(r => ({ symbol: r.symbol, name: r.name, status: r.status, note: r.note })), marketOpen: v.marketOpen });
         }
         if (req.method === "GET" && op === "export.xlsx") return sendSwingExport(res);
+        if (req.method === "POST" && op === "tax") { // sell preview / calculator: { id, qty, price, date } or { buyPrice, boughtOn, qty, price, date }
+          const b = await readBody(req), st = await readJson(swingFile(), {}), qty = Number(b.qty), price = Number(b.price);
+          if (!(qty > 0 && price > 0)) return reply(res, 400, { message: "Enter quantity and price." });
+          const p = b.id ? (st.positions || []).find(x => x.id === b.id) : null;
+          if (b.id && !p) return reply(res, 404, { message: "That position no longer exists." });
+          const lots = p ? lotsForSale(p, Math.min(qty, p.qty)) : [{ qty, price: Number(b.buyPrice), at: b.boughtOn ? tradeDate(b.boughtOn) : new Date().toISOString() }];
+          if (!(lots[0]?.price > 0)) return reply(res, 400, { message: "Enter the buy price." });
+          const charges = { ...CHARGE_DEFAULTS, ...(st.settings?.charges || {}) };
+          return reply(res, 200, sellTaxEstimate({ lots, sellPrice: price, sellDate: b.date ? tradeDate(b.date) : new Date().toISOString(), exchange: p?.exchange || "NSE", ltExemptLeft: b.ltExemptLeft !== undefined ? Number(b.ltExemptLeft) : ltExemptionLeft(st.closed || [], st.settings?.ltUsedElsewhere || 0), charges }));
+        }
         if (op === "ideas" || op === "ideas/scan") {
           if (op === "ideas/scan" && req.method === "POST") { startSwingScan({ force: true }); }
           return reply(res, 200, await swingIdeas());
         }
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown swing operation." });
         const b = await readBody(req), st = await readJson(swingFile(), {}); st.positions ||= []; st.watch ||= []; st.closed ||= [];
+        let notice = null; st.positions = dedupePositions(st.positions).list;
         const find = (list, i) => { const x = st[list].find(y => y.id === i); if (!x) throw new Error("That entry no longer exists."); return x; };
-        if (op === "position") { const prev = b.id ? find("positions", b.id) : null; if (!prev && st.positions.length >= 100) throw new Error("At most 100 swing positions."); const p = sanitizePosition(b, prev); st.positions = prev ? st.positions.map(x => (x.id === p.id ? p : x)) : [...st.positions, p]; }
+        if (op === "position") {
+          const prev = b.id ? find("positions", b.id) : null, p = sanitizePosition(b, prev);
+          const held = !prev && st.positions.find(x => x.symbol === p.symbol && (x.exchange || "NSE") === p.exchange);
+          if (held) { const m = mergePositions(held, p); st.positions = st.positions.map(x => (x.id === held.id ? m : x)); notice = `${p.name}: added to your existing position. Now ${m.qty} shares at an average of ₹${m.avgPrice.toLocaleString("en-IN")}.`; }
+          else { if (!prev && st.positions.length >= 100) throw new Error("At most 100 swing positions."); st.positions = prev ? st.positions.map(x => (x.id === p.id ? p : x)) : [...st.positions, p]; }
+        }
         else if (op === "watch") { const prev = b.id ? find("watch", b.id) : null; if (!prev && st.watch.length >= 100) throw new Error("At most 100 swing watchlist entries."); const w = sanitizeWatch(b, prev); st.watch = prev ? st.watch.map(x => (x.id === w.id ? w : x)) : [...st.watch, w]; }
         else if (op === "delete") { st.positions = st.positions.filter(x => x.id !== b.id); st.watch = st.watch.filter(x => x.id !== b.id); }
         else if (op === "buy") { const p = find("positions", b.id), q = Number(b.qty), pr = Number(b.price); if (!(q > 0 && Number.isInteger(q) && pr > 0)) throw new Error("Enter whole shares and a price."); const at = tradeDate(b.date); st.positions = st.positions.map(x => (x.id === p.id ? applyBuy(x, q, pr, at) : x)); moveCash(st, -q * pr, `Bought ${q} ${p.symbol} @ ₹${pr} on ${at.slice(0, 10)}`); }
@@ -1372,14 +1616,20 @@ async function appHandler(req, res, url) {
         else if (op === "lots") { const p = find("positions", b.id); st.positions = st.positions.map(x => (x.id === p.id ? setLots(x, b.lots) : x)); }
         else if (op === "promote") { // a swing-watchlist stock was bought: move it to positions
           const w = find("watch", b.id), bp = Number(b.price), ideaT = w.idea && bp > 0 ? [w.idea.t1, w.idea.t2].filter(t => t > bp * 1.005).map(t => Math.round((t / bp - 1) * 1000) / 10) : [];
-          const p = sanitizePosition({ symbol: w.symbol, exchange: w.exchange, name: w.name, qty: b.qty, avgPrice: b.price, limit: b.limit ?? w.amount, notes: [w.notes, w.idea && !String(w.notes || "").includes(w.idea.label) ? `From swing idea: ${w.idea.label}` : ""].filter(Boolean).join(" · ") || null, boughtOn: b.date || undefined, stopLoss: w.stopLoss ?? null, targets: ideaT.length ? ideaT.join(",") : undefined }); st.watch = st.watch.filter(x => x.id !== w.id); st.positions.push(p); moveCash(st, -p.qty * p.avgPrice, `Bought ${p.qty} ${p.symbol} @ ₹${p.avgPrice}`);
+          const p = sanitizePosition({ symbol: w.symbol, exchange: w.exchange, name: w.name, qty: b.qty, avgPrice: b.price, limit: b.limit ?? w.amount, notes: [w.notes, w.idea && !String(w.notes || "").includes(w.idea.label) ? `From swing idea: ${w.idea.label}` : ""].filter(Boolean).join(" · ") || null, boughtOn: b.date || undefined, stopLoss: w.stopLoss ?? null, targets: ideaT.length ? ideaT.join(",") : undefined }); st.watch = st.watch.filter(x => x.id !== w.id);
+          const held = st.positions.find(x => x.symbol === p.symbol && (x.exchange || "NSE") === p.exchange);
+          if (held) { const m = mergePositions(held, p); st.positions = st.positions.map(x => (x.id === held.id ? m : x)); notice = `${p.name}: added to your existing position. Now ${m.qty} shares at an average of ₹${m.avgPrice.toLocaleString("en-IN")}.`; } else st.positions.push(p);
+          moveCash(st, -p.qty * p.avgPrice, `Bought ${p.qty} ${p.symbol} @ ₹${p.avgPrice}`);
         }
         else if (op === "settings") {
           const t = parseTargets(b.targets ?? b.targetPct), d = Number(b.dipPct), plan = b.bookPlan === undefined ? st.settings?.bookPlan ?? null : parseBookPlan(b.bookPlan);
           if (!t) throw new Error("Enter at least T1."); if (!(d > 0 && d <= 90)) throw new Error("Dip must be 1–90%.");
           const riskPct = b.riskPct === undefined || b.riskPct === "" ? st.settings?.riskPct ?? 1 : Number(b.riskPct), perTrade = b.perTrade === undefined || b.perTrade === "" ? st.settings?.perTrade ?? 200000 : parseSwingAmount(b.perTrade);
           if (!(riskPct > 0 && riskPct <= 10)) throw new Error("Risk per trade: 0.1–10% of your swing cash."); if (!(perTrade > 0)) throw new Error("Max per trade: enter an amount like 2L.");
-          st.settings = { targets: t, dipPct: d, riskPct, perTrade, ...(plan ? { bookPlan: plan } : {}) };
+          const chg = { ...(st.settings?.charges || {}) };
+          for (const [k, lim] of [["dpPerSale", 100], ["txnPctNse", 0.1], ["sttPct", 1], ["cessPct", 10]]) if (b[k] !== undefined && b[k] !== "") { const v = Number(b[k]); if (!(v >= 0 && v <= lim)) throw new Error(`${k}: 0–${lim}`); chg[k] = v; }
+          const ltUsed = b.ltUsedElsewhere === undefined || b.ltUsedElsewhere === "" ? st.settings?.ltUsedElsewhere || 0 : parseSwingAmount(b.ltUsedElsewhere);
+          st.settings = { targets: t, dipPct: d, riskPct, perTrade, charges: chg, ltUsedElsewhere: ltUsed || 0, ...(plan ? { bookPlan: plan } : {}) };
           if (b.cash !== undefined) { // cash set aside for swing: blank stops tracking it
             const c = String(b.cash).trim() === "" ? null : parseSwingAmount(b.cash);
             if (String(b.cash).trim() !== "" && c === null) throw new Error("Cash: enter an amount like 5L or 250000.");
@@ -1397,7 +1647,7 @@ async function appHandler(req, res, url) {
         else if (op === "resolve") return reply(res, 200, { results: await resolveNames([String(b.name || "")]) });
         else return reply(res, 404, { message: "Unknown swing operation." });
         await writeJson(swingFile(), st);
-        return reply(res, 200, await swingView());
+        return reply(res, 200, { ...(await swingView()), ...(notice ? { notice } : {}) });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname.startsWith("/api/networth")) {
@@ -1466,8 +1716,8 @@ async function appHandler(req, res, url) {
       if (id) return reply(res, 200, { changes: history.changes.filter(c => String(c.id) === id), priceSeries: history.priceSeries[id] || [] });
       return reply(res, 200, history);
     }
-    if (url.pathname === "/api/watchlist" && req.method === "POST") { const { stocks } = await readBody(req); if (!Array.isArray(stocks)) return reply(res, 400, { message: "stocks must be an array" }); await persistWatchlist(stocks); try { const st = await readLists(); await writeJson(U.listsFile, prune(st, stocks.map(symOf))); } catch {} return reply(res, 200, { ok: true, count: stocks.length }); }
-    if (url.pathname === "/api/refresh" && req.method === "POST") { const { stocks } = await readBody(req); const target = Array.isArray(stocks) && stocks.length ? stocks : await readWatchlist(); if (!target.length) return reply(res, 400, { message: "Watchlist is empty. Open the app once to publish it." }); const refreshed = await refreshWatchlist(target, true); return reply(res, 200, { ok: true, stocks: refreshed, refreshed: refreshed.filter(s => s.feedStatus === "Price refreshed").length }); }
+    if (url.pathname === "/api/watchlist" && req.method === "POST") { let { stocks } = await readBody(req); if (!Array.isArray(stocks)) return reply(res, 400, { message: "stocks must be an array" }); stocks = keepNewerPrices(stocks, await readWatchlist()); await persistWatchlist(stocks); try { const st = await readLists(); await writeJson(U.listsFile, prune(st, stocks.map(symOf))); } catch {} return reply(res, 200, { ok: true, count: stocks.length }); }
+    if (url.pathname === "/api/refresh" && req.method === "POST") { const { stocks } = await readBody(req); const saved = await readWatchlist(); const target = Array.isArray(stocks) && stocks.length ? keepNewerPrices(stocks, saved) : saved; if (!target.length) return reply(res, 400, { message: "Watchlist is empty. Open the app once to publish it." }); const refreshed = await refreshWatchlist(target, true); return reply(res, 200, { ok: true, stocks: refreshed, refreshed: refreshed.filter(s => s.feedStatus === "Price refreshed").length }); }
     if (url.pathname === "/api/valuation" && req.method === "GET") {
       const { fundamentals, rows } = await computeRows();
       await logVerdicts(rows); await runAlerts(rows);

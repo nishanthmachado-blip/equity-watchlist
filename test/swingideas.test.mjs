@@ -63,3 +63,14 @@ test("stop-loss on a swing position: alert once, carried from the swing watchlis
   assert.equal(w.stopLoss, 2900); assert.equal(w.idea.t1, 3300);
   assert.equal(sanitizePosition({ symbol: "TCS", qty: 10, avgPrice: 3000, notes: "x" }, p).stopLoss, 2850, "edits keep the stop");
 });
+
+test("price history from Kite: candles in either shape, instrument tokens kept from Zerodha's list", async () => {
+  const { normalizeCandles } = await import("../kite-mcp.mjs");
+  const { parseKiteInstruments } = await import("../scripmaster.mjs");
+  const a = normalizeCandles([{ date: "2026-10-12T00:00:00+05:30", open: 10, high: 12, low: 9, close: 11, volume: 500 }, { date: "2026-10-09T00:00:00+05:30", open: 9, high: 10, low: 8, close: 9.5, volume: 400 }]);
+  assert.deepEqual(a.map(b => [b.c, b.h, b.l, b.v]), [[9.5, 10, 8, 400], [11, 12, 9, 500]], "oldest first");
+  assert.equal(normalizeCandles({ data: { candles: [["2026-10-12T00:00:00+0530", 1, 2, 0.5, 1.5, 10]] } })[0].c, 1.5);
+  assert.throws(() => normalizeCandles(null, "Failed to get historical data"), /Unrecognised/);
+  const csv = "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange\n408065,1594,INFY,INFOSYS,0,,0,0.05,1,EQ,NSE,NSE\n";
+  assert.deepEqual(parseKiteInstruments(csv)[0], { symbol: "INFY", name: "Infosys", exchange: "NSE", token: 408065 });
+});

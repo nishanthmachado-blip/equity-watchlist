@@ -290,3 +290,81 @@ export function buildLedger(positions = [], closed = []) {
   }
   return { entries: out, stocks: Object.values(stocks).sort((a, b) => a.name.localeCompare(b.name)) };
 }
+
+// Buying more of a stock you already hold: one position, with the new buy as another dated lot and a new average.
+// The existing plan (limit, add level, targets, stop-loss, booking plan) is kept; blanks are filled from the new entry.
+export function mergePositions(a, b, now = new Date().toISOString()) {
+  const lots = [...lotsOf(a), ...lotsOf(b)].sort(byAt), qty = lots.reduce((s, l) => s + l.qty, 0);
+  const pick = k => a[k] ?? b[k] ?? null;
+  return {
+    ...a, qty, avgPrice: r2(lots.reduce((s, l) => s + l.qty * l.price, 0) / qty), lots, openedAt: lots[0].at,
+    limit: a.limit && b.limit ? Math.max(a.limit, b.limit) : pick("limit"), addAmount: pick("addAmount"), addBelow: pick("addBelow"),
+    targets: pick("targets"), bookPlan: pick("bookPlan"), stopLoss: pick("stopLoss"), soldAtTargets: 0,
+    notes: [...new Set([a.notes, b.notes].filter(Boolean))].join(" · ").slice(0, 200) || null, updatedAt: now
+  };
+}
+// One position per stock: entries for the same symbol (from earlier versions) are merged. Returns { list, merged: [symbols] }.
+export function dedupePositions(list = []) {
+  const out = [], at = new Map(), merged = new Set();
+  for (const p of list) {
+    const k = `${p.exchange || "NSE"}:${p.symbol}`;
+    if (at.has(k)) { const i = at.get(k); out[i] = mergePositions(out[i], p, out[i].updatedAt); merged.add(p.symbol); }
+    else { at.set(k, out.length); out.push(p); }
+  }
+  return { list: out, merged: [...merged] };
+}
+
+// ---- Charges and tax on selling (equity delivery, NSE) ----
+// Zerodha's published delivery charges (zerodha.com/charges, Oct 2026): no brokerage; STT 0.1% on buy and on sell;
+// NSE transaction charge 0.00307% (BSE 0.00375%); SEBI ₹10 per crore; stamp duty 0.015% on buys; GST 18% on
+// (brokerage + SEBI + transaction charges); DP ₹15.34 per scrip per day of selling (incl. GST). Editable in ⚙.
+export const CHARGE_DEFAULTS = Object.freeze({ brokeragePct: 0, sttPct: 0.1, txnPctNse: 0.00307, txnPctBse: 0.00375, sebiPerCr: 10, stampPct: 0.015, gstPct: 18, dpPerSale: 15.34, cessPct: 4 });
+const oneSide = (value, side, c, ex = "NSE") => {
+  const brokerage = value * c.brokeragePct / 100, stt = value * c.sttPct / 100, txn = value * (ex === "BSE" ? c.txnPctBse : c.txnPctNse) / 100;
+  const sebi = value * c.sebiPerCr / 1e7, stamp = side === "buy" ? value * c.stampPct / 100 : 0, gst = (brokerage + txn + sebi) * c.gstPct / 100;
+  return { brokerage, stt, txn, sebi, stamp, gst };
+};
+// lots: [{ qty, price, at }] being sold (FIFO), sellPrice, sellDate. ltExemptLeft: ₹ of the ₹1.25L LTCG exemption still
+// unused this financial year. Returns gross profit, every charge, taxable gains, tax (with cess) and the net profit.
+export function sellTaxEstimate({ lots = [], sellPrice, sellDate = new Date().toISOString(), exchange = "NSE", ltExemptLeft = TAX_RULES.ltExemption, charges = {} }) {
+  const c = { ...CHARGE_DEFAULTS, ...charges };
+  const day = String(sellDate).slice(0, 10), qty = lots.reduce((s, l) => s + l.qty, 0);
+  if (!(qty > 0) || !(sellPrice > 0)) return null;
+  const sellValue = qty * sellPrice, buyValue = lots.reduce((s, l) => s + l.qty * l.price, 0);
+  const sell = oneSide(sellValue, "sell", c, exchange), buy = oneSide(buyValue, "buy", c, exchange);
+  const dp = c.dpPerSale;
+  const sellCharges = sell.brokerage + sell.stt + sell.txn + sell.sebi + sell.gst + dp, buyCharges = buy.brokerage + buy.stt + buy.txn + buy.sebi + buy.stamp + buy.gst;
+  // Gains per lot (short term: held 12 months or less). Charges other than STT count as cost of buying / selling.
+  let st = 0, lt = 0, stQty = 0, ltQty = 0;
+  for (const l of lots) {
+    const buyDay = String(l.at || day).slice(0, 10), long = day >= ltDate(buyDay);
+    const deductible = (buyCharges - buy.stt + sellCharges - sell.stt) * (l.qty * l.price + l.qty * sellPrice) / (buyValue + sellValue || 1);
+    const g = l.qty * (sellPrice - l.price) - deductible;
+    if (long) { lt += g; ltQty += l.qty; } else { st += g; stQty += l.qty; }
+  }
+  // Set-off inside this sale: a short-term loss can reduce long-term gains, a long-term loss only long-term gains.
+  let netSt = st, netLt = lt; if (netSt < 0) { netLt += netSt; netSt = 0; } netLt = Math.max(0, netLt);
+  const exemptUsed = Math.min(netLt, Math.max(0, ltExemptLeft)), taxableLt = netLt - exemptUsed;
+  const stTax = netSt * TAX_RULES.stRate, ltTax = taxableLt * TAX_RULES.ltRate, cess = (stTax + ltTax) * c.cessPct / 100, tax = stTax + ltTax + cess;
+  const gross = sellValue - buyValue, totalCharges = sellCharges + buyCharges, net = gross - totalCharges - tax;
+  const R = v => Math.round(v * 100) / 100;
+  return {
+    qty, sellValue: R(sellValue), buyValue: R(buyValue), gross: R(gross), grossPct: R(gross / buyValue * 100),
+    charges: { stt: R(sell.stt + buy.stt), sttSell: R(sell.stt), sttBuy: R(buy.stt), exchange: R(sell.txn + buy.txn), sebi: R(sell.sebi + buy.sebi), stamp: R(buy.stamp), gst: R(sell.gst + buy.gst), brokerage: R(sell.brokerage + buy.brokerage), dp: R(dp), sellSide: R(sellCharges), buySide: R(buyCharges), total: R(totalCharges) },
+    shortTerm: { qty: stQty, gain: R(st), tax: R(stTax) }, longTerm: { qty: ltQty, gain: R(lt), exemptUsed: R(exemptUsed), taxable: R(taxableLt), tax: R(ltTax) },
+    cess: R(cess), tax: R(tax), net: R(net), netPct: R(net / buyValue * 100), keepPct: gross > 0 ? R(net / gross * 100) : null,
+    rules: { stRate: TAX_RULES.stRate * 100, ltRate: TAX_RULES.ltRate * 100, ltExemption: TAX_RULES.ltExemption, cessPct: c.cessPct, asOf: TAX_RULES.asOf }
+  };
+}
+// FIFO lots that a sale of `qty` shares would use.
+export function lotsForSale(p, qty) {
+  const out = []; let left = qty;
+  for (const l of lotsOf(p).sort(byAt)) { if (left <= 0) break; const n = Math.min(l.qty, left); out.push({ qty: n, price: l.price, at: l.at }); left -= n; }
+  return out;
+}
+// LTCG exemption left this financial year after the long-term gains already booked in swing trades (and any you used elsewhere).
+export function ltExemptionLeft(closed = [], usedElsewhere = 0, today = new Date().toISOString().slice(0, 10)) {
+  const fy = fyOf(today).label;
+  const booked = swingTaxRows(closed).rows.filter(r => r.fy === fy && r.term === "LTCG").reduce((s, r) => s + r.gain, 0);
+  return Math.max(0, TAX_RULES.ltExemption - Math.max(0, booked) - Math.max(0, Number(usedElsewhere) || 0));
+}

@@ -14,12 +14,17 @@ export function resetGoogle() { cooldownUntil = 0; }
 const num = v => { const x = Number(String(v ?? "").replace(/[₹,\s]/g, "")); return Number.isFinite(x) && String(v ?? "").trim() !== "" ? x : null; };
 
 // Pulls the latest price (and the 52-week range / previous close when present) out of the quote page HTML.
-export function parseGoogleQuote(html) {
+export function parseGoogleQuote(html, symbol = null) {
   if (typeof html !== "string" || html.length < 200) throw new Error("Google Finance: empty page");
   if (/consent\.google\.com|Before you continue to Google/i.test(html)) throw new Error("Google Finance: consent page returned instead of the quote");
-  // 1) Structured attribute on the quote container; 2) the big price element as a fallback.
-  let price = num(html.match(/data-last-price="([\d.,]+)"/)?.[1]);
-  if (price === null) price = num(html.match(/class="[^"]*\bYMlKec\b[^"]*\bfxKbKc\b[^"]*"[^>]*>\s*(?:₹|Rs\.?\s*)?([\d,]+(?:\.\d+)?)\s*</)?.[1]);
+  // The page also lists related stocks and indices, each with its own data-last-price. Prefer, in order: the big price
+  // element of the quote itself, a data-last-price tag that names this symbol, then the first data-last-price.
+  let price = num(html.match(/class="[^"]*\bYMlKec\b[^"]*\bfxKbKc\b[^"]*"[^>]*>\s*(?:₹|Rs\.?\s*)?([\d,]+(?:\.\d+)?)\s*</)?.[1]);
+  if (price === null && symbol) {
+    const tag = [...html.matchAll(/<[^>]*data-last-price="[\d.,]+"[^>]*>/g)].map(m => m[0]).find(t => new RegExp(`["':/]${symbol.replace(/[&]/g, "\\$&")}["':]`).test(t));
+    if (tag) price = num(tag.match(/data-last-price="([\d.,]+)"/)?.[1]);
+  }
+  if (price === null) price = num(html.match(/data-last-price="([\d.,]+)"/)?.[1]);
   if (!(price > 0)) throw new Error("Google Finance: layout not recognised (no price found)");
   const currency = html.match(/data-currency-code="([A-Z]{3})"/)?.[1] || null;
   if (currency && currency !== "INR") throw new Error(`Google Finance: quote is in ${currency}, not INR (wrong instrument?)`);
@@ -40,5 +45,5 @@ export async function fetchGoogleQuote(symbol, { exchange = googleConfig.exchang
   if (response.status === 429 || response.status === 403) { cooldownUntil = Date.now() + googleConfig.cooldownMs; throw new GoogleBlocked(cooldownUntil, `HTTP ${response.status}`); }
   if (response.status === 404) throw new Error(`Google Finance: ${sym}:${exchange} not found`);
   if (!response.ok) throw new Error(`Google Finance: HTTP ${response.status}`);
-  return { ...parseGoogleQuote(await response.text()), symbol: sym, source: "Google Finance" };
+  return { ...parseGoogleQuote(await response.text(), sym), symbol: sym, source: "Google Finance" };
 }

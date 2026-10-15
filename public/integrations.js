@@ -17,8 +17,8 @@
   async function renderSources() {
     const h = await api("/api/health").catch(() => null);
     if (!h) { $("#intSources").innerHTML = '<p class="hint">Start the local server.</p>'; return; }
-    const names = { kite: "Kite MCP (Zerodha LTP)", yahoo: "Yahoo Finance", google: "Google Finance" };
-    const cool = { yahoo: h.yahooCooldownUntil, google: h.googleCooldownUntil };
+    const names = { kite: "Kite MCP (Zerodha LTP)", nse: "NSE (exchange quote)", yahoo: "Yahoo Finance", google: "Google Finance" };
+    const cool = { nse: h.nseCooldownUntil, yahoo: h.yahooCooldownUntil, google: h.googleCooldownUntil };
     $("#intSources").innerHTML = `<ol class="flag-list">${h.priceSources.map(s => {
       const note = s === "kite" && !h.kiteEnabled ? "switched off (KITE_MCP_ENABLED=0)" : cool[s] ? `cooling down until ${new Date(cool[s]).toLocaleTimeString("en-IN")}` : "active";
       return `<li><div class="fcompany">${esc(names[s])}</div><div class="fnote">${esc(note)}</div></li>`;
@@ -28,13 +28,28 @@
   async function compare() {
     const sym = $("#intCmpSymbol").value.trim().toUpperCase(), out = $("#intCmpOut");
     if (!sym) { out.innerHTML = '<p class="hint">Enter an NSE symbol.</p>'; return; }
-    out.innerHTML = '<p class="hint">Asking each source…</p>';
+    out.innerHTML = '<p class="hint">Asking each source in turn (can take up to a minute)…</p>';
     try {
       const x = await api(`/api/price-compare?symbol=${encodeURIComponent(sym)}`);
-      const row = (name, q) => `<tr><td>${name}</td><td>${q.error ? "—" : inr(q.price)}</td><td>${q.low && q.high ? `${inr(q.low)} – ${inr(q.high)}` : "—"}</td><td class="${q.error ? "avoid" : ""}">${esc(q.error || "OK")}</td></tr>`;
-      out.innerHTML = `<div class="table-wrap"><table style="min-width:0"><thead><tr><th>Source</th><th>Price</th><th>52W range</th><th>Result</th></tr></thead><tbody>${row("Google Finance", x.google)}${row("Yahoo Finance", x.yahoo)}${row("Kite MCP", x.kite)}</tbody></table></div>${x.maxSpreadPct === null ? "" : `<p class="hint">Largest gap between sources: ${x.maxSpreadPct}%. More than ~1% on a liquid stock usually means a stale quote or a wrong instrument.</p>`}`;
+      const label = { nse: "NSE", yahoo: "Yahoo Finance", screener: "Screener", google: "Google Finance", kite: "Kite (Zerodha)" };
+      const why = e => /fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|certificate/i.test(e) ? " · could not connect: check internet / firewall / proxy" : /403|401/.test(e) ? " · the site is blocking this machine" : /429|rate/i.test(e) ? " · rate-limited: too many requests, wait a few minutes" : /timeout|aborted/i.test(e) ? " · timed out" : /layout|no price|no current price/i.test(e) ? " · page changed or returned no price" : "";
+      const row = k => { const q = x.sources[k] || {}; const ok = Number.isFinite(q.price); return `<tr><td>${label[k]}${x.order.includes(k) ? ` <small class="hint">#${x.order.indexOf(k) + 1}</small>` : ' <small class="hint">not used</small>'}</td><td><b>${ok ? inr(q.price) : "—"}</b></td><td>${q.low && q.high ? `${inr(q.low)} – ${inr(q.high)}` : "—"}</td><td>${q.ms ?? "—"} ms</td><td class="${ok ? "buy" : q.skipped ? "" : "avoid"}">${ok ? "OK" : esc(q.skipped || q.error || "—")}${!ok && q.error ? `<small class="hint">${why(q.error)}</small>` : ""}</td></tr>`; };
+      out.innerHTML = `<div class="table-wrap"><table style="min-width:0"><thead><tr><th>Source</th><th>Price</th><th>52W range</th><th>Time</th><th>Result</th></tr></thead><tbody>${Object.keys(label).map(row).join("")}</tbody></table></div>
+        <p class="hint">${x.working.length ? `Working: <b>${x.working.map(k => label[k]).join(", ")}</b>. A refresh uses the first working source in the order shown.` : "<b>No source answered.</b> This machine cannot reach any price site right now (see the reasons above)."}${x.maxSpreadPct !== null ? ` Sources differ by up to ${x.maxSpreadPct}%.` : ""}${x.proxy ? ` Proxy in use: ${esc(x.proxy)}.` : ""}</p>`;
     } catch (e) { out.innerHTML = `<p class="hint">Failed: ${esc(e.message)}</p>`; }
   }
+  // Debug log (owner): the server's recent log lines, filterable, with a copy button.
+  async function showLog() {
+    const out = $("#intLogOut"), f = $("#intLogFilter").value;
+    out.innerHTML = '<p class="hint">Loading…</p>';
+    try {
+      const x = await api(`/api/debug/log?lines=400${f ? `&filter=${encodeURIComponent(f)}` : ""}`);
+      out.innerHTML = `<p class="hint">${x.lines.length} line(s) · price sources ${esc(x.priceSources.join(" → "))} · Node ${esc(x.node)} · market ${x.marketOpen ? "open" : "closed"} <button type="button" class="ghost" id="intLogCopy">Copy</button></p><pre class="dbg-log">${esc(x.lines.join("\n") || "(nothing logged yet: press Refresh on the watchlist, then show the log again)")}</pre>`;
+      $("#intLogCopy").onclick = async () => { try { await navigator.clipboard.writeText(x.lines.join("\n")); $("#intLogCopy").textContent = "Copied"; } catch { $("#intLogCopy").textContent = "Select the text and copy"; } };
+      const pre = out.querySelector("pre"); pre.scrollTop = pre.scrollHeight;
+    } catch (e) { out.innerHTML = `<p class="hint">${esc(e.message)}</p>`; }
+  }
+  document.addEventListener("click", e => { if (e.target.id === "intLogBtn") showLog(); });
 
   let holdingsView = null;
   const stanceCls = a => ({ Accumulate: "v-under", Hold: "v-fair", "Hold (don't add)": "v-rich1", Review: "v-rich", Trim: "v-rich", "No view": "v-none" }[a] || "v-none");

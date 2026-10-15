@@ -22,11 +22,14 @@ async function cookies(f) {
   return value;
 }
 const n = v => { const x = Number(String(v ?? "").replace(/,/g, "")); return Number.isFinite(x) && String(v ?? "").trim() !== "" ? x : null; };
+// "14-Oct-2026 15:29:59" (IST) → ISO
+const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+export function nseTime(t) { const m = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(String(t || "")); if (!m || !(m[2].toLowerCase() in MON)) return null; return new Date(Date.UTC(+m[3], MON[m[2].toLowerCase()], +m[1], +m[4], +m[5], +(m[6] || 0)) - 5.5 * 3600e3).toISOString(); }
 export function parseNseQuote(json) {
   const md = json?.metadata || {}, pi = json?.priceInfo || {};
   return {
     pe: n(md.pdSymbolPe), sectorPe: n(md.pdSectorPe), sector: md.pdSectorInd || null, industry: json?.industryInfo?.basicIndustry || md.industry || null,
-    price: n(pi.lastPrice), high52: n(pi.weekHighLow?.max), low52: n(pi.weekHighLow?.min), inav: n(pi.iNavValue)
+    price: n(pi.lastPrice), prevClose: n(pi.previousClose), high52: n(pi.weekHighLow?.max), low52: n(pi.weekHighLow?.min), inav: n(pi.iNavValue), asOf: nseTime(md.lastUpdateTime)
   };
 }
 export async function fetchNseQuote(symbol, fetchImpl = fetch) {

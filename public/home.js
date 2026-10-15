@@ -574,6 +574,8 @@
   }
   async function loadLists() { try { lists = (await get("/api/lists")).lists; applyActiveList(); renderListBar(); } catch {} }
   window.loadLists = loadLists;
+  window.redrawAll = () => redrawAll();
+  window.addEventListener("prices:updated", () => { if (!$("#homeView").hidden) loadSwingStrip(); });
   function redrawAll() {
     try { render(); renderValuation(); renderPicks(); renderGrowth(); renderRecent(); } catch (e) { console.error(e); }
     if (!$("#reportsView").hidden) try { renderDashboard(); } catch {}
@@ -945,7 +947,7 @@
       <td>${r.verdict ? `<span class="chip ${esc(r.verdictCls)}">${esc(r.verdict)}</span>` : '<span class="hint">Value it →</span>'}</td></tr>`).join("")
       : `<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--muted)">${mk.rows.length ? "No stock matches the filter." : mk.source === "none" ? 'No live quotes right now. <button type="button" class="ghost" id="mkGoKite">Log in to Kite</button> under Connect brokers to see today\'s movers for your stocks.' : "None of your stocks is on this list right now."}</td></tr>`;
     $("#mkGoKite")?.addEventListener("click", () => setView("integrations"));
-    const src = { nse: "NSE · whole market", kite: "Your watchlist + holdings · Kite live quotes", yahoo: "Your watchlist + holdings · Yahoo quotes", saved: "Your watchlist · saved prices", none: "No source available" }[mk.source] || mk.source;
+    const src = { nse: "NSE · whole market", kite: "Your watchlist + holdings · Kite quotes", yahoo: "Your watchlist + holdings · Yahoo quotes", saved: "Your watchlist · saved prices", none: "No source available" }[mk.source] || mk.source;
     $("#mkMineWrap").hidden = $("#mkSource").value !== "nse";
     $("#mkStatus").textContent = `${src} · ${new Date(mk.asOf).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}`;
     const showNote = mk.note && mk.source !== "kite";

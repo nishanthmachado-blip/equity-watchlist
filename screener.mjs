@@ -6,6 +6,7 @@
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 export const screenerConfig = { cooldownMs: 10 * 60 * 1000, maxCooldownMs: 30 * 60 * 1000, timeoutMs: 20000, spacingMs: 2500 };
 let cooldownUntil = 0;
+const SCREENER_BASE = () => (process.env.SCREENER_BASE || "https://www.screener.in").replace(/\/+$/, ""); // only changed for a proxy or tests
 export class ScreenerBlocked extends Error {
   constructor(until, detail) { super(`Screener.in is rate-limiting this connection${detail ? ` (${detail})` : ""}; pausing Screener requests until ${new Date(until).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })} IST.`); this.rateLimited = true; this.until = until; }
 }
@@ -227,7 +228,7 @@ export async function fetchScreener(stock, fetchImpl = fetch) {
     }
     return r;
   };
-  const base = `https://www.screener.in/company/${encodeURIComponent(sym)}/`;
+  const base = `${SCREENER_BASE()}/company/${encodeURIComponent(sym)}/`;
   let r = await get(base + "consolidated/"), html = null;
   if (r.ok) {
     html = await r.text();
@@ -243,7 +244,7 @@ export async function fetchScreener(stock, fetchImpl = fetch) {
   if (wid) {
     try {
       await new Promise(res => setTimeout(res, 800));
-      const pr = await get(`https://www.screener.in/api/company/${wid}/peers/`);
+      const pr = await get(`${SCREENER_BASE()}/api/company/${wid}/peers/`);
       const peersHtml = pr.ok ? await pr.text() : "";
       const peers = peersHtml ? parsePeersPe(peersHtml) : null;
       out.peersTable = peersHtml ? parsePeersTable(peersHtml) : null;
@@ -259,13 +260,13 @@ export async function fetchScreenerExtras(stock, { ids = null, want = ["peers", 
   const sym = (stock.marketSymbol || stock.ticker || "").toUpperCase();
   const cd = screenerCooldown(); if (cd) throw new ScreenerBlocked(cd);
   const get = async url => {
-    const r = await fetchImpl(url, { headers: { "User-Agent": UA, Accept: url.includes("/api/") ? "application/json, text/html" : "text/html", "Accept-Language": "en-US,en;q=0.9", Referer: `https://www.screener.in/company/${encodeURIComponent(sym)}/` }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(screenerConfig.timeoutMs) : undefined });
+    const r = await fetchImpl(url, { headers: { "User-Agent": UA, Accept: url.includes("/api/") ? "application/json, text/html" : "text/html", "Accept-Language": "en-US,en;q=0.9", Referer: `${SCREENER_BASE()}/company/${encodeURIComponent(sym)}/` }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(screenerConfig.timeoutMs) : undefined });
     if (r.status === 429 || r.status === 403) { cooldownUntil = Date.now() + screenerConfig.cooldownMs; throw new ScreenerBlocked(cooldownUntil, `HTTP ${r.status}`); }
     return r;
   };
   const out = { ids: ids || null, extra: null, peersTable: null, bars: null };
   if (!out.ids?.companyId || !out.ids?.warehouseId) {
-    const base = `https://www.screener.in/company/${encodeURIComponent(sym)}/`;
+    const base = `${SCREENER_BASE()}/company/${encodeURIComponent(sym)}/`;
     let r = await get(base + "consolidated/"), html = r.ok ? await r.text() : null;
     if (r.status === 404 || (html !== null && !hasFigures(html))) { r = await get(base); html = null; }
     if (!r.ok) throw new Error(`Screener HTTP ${r.status}`);
@@ -273,11 +274,11 @@ export async function fetchScreenerExtras(stock, { ids = null, want = ["peers", 
     out.ids = { companyId: out.extra.companyId, warehouseId: out.extra.warehouseId };
   }
   const pause = () => new Promise(res => setTimeout(res, 700));
-  if (want.includes("peers") && out.ids.warehouseId) { await pause(); const r = await get(`https://www.screener.in/api/company/${out.ids.warehouseId}/peers/`); if (r.ok) out.peersTable = parsePeersTable(await r.text()); }
+  if (want.includes("peers") && out.ids.warehouseId) { await pause(); const r = await get(`${SCREENER_BASE()}/api/company/${out.ids.warehouseId}/peers/`); if (r.ok) out.peersTable = parsePeersTable(await r.text()); }
   if (want.includes("chart")) {
     for (const id of [out.ids.companyId, out.ids.warehouseId].filter(Boolean)) {
       await pause();
-      const r = await get(`https://www.screener.in/api/company/${id}/chart/?q=Price-DMA50-DMA200-Volume&days=365&consolidated=true`);
+      const r = await get(`${SCREENER_BASE()}/api/company/${id}/chart/?q=Price-DMA50-DMA200-Volume&days=365&consolidated=true`);
       if (r.ok) { try { out.bars = parseScreenerChart(await r.json()); } catch { /* not JSON */ } }
       if (out.bars) break;
     }
@@ -291,8 +292,22 @@ export function parseScreenerSearch(json) {
 }
 export async function searchScreener(q, { fetchImpl = fetch } = {}) {
   const cd = screenerCooldown(); if (cd) throw new ScreenerBlocked(cd);
-  const r = await fetchImpl(`https://www.screener.in/api/company/search/?q=${encodeURIComponent(q)}&v=3&fts=1`, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined });
+  const r = await fetchImpl(`${SCREENER_BASE()}/api/company/search/?q=${encodeURIComponent(q)}&v=3&fts=1`, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined });
   if (r.status === 429 || r.status === 403) { cooldownUntil = Date.now() + screenerConfig.cooldownMs; throw new ScreenerBlocked(cooldownUntil, `HTTP ${r.status}`); }
   if (!r.ok) throw new Error(`Screener search HTTP ${r.status}`);
   return parseScreenerSearch(await r.json());
+}
+
+// Live-ish price from the company page's top ratios (Current Price, High / Low = 52-week range). One page request.
+export async function fetchScreenerPrice(stock, fetchImpl = fetch) {
+  const sym = (stock.marketSymbol || stock.ticker || stock.symbol || "").toUpperCase();
+  if (!/^[A-Z0-9&-]+$/.test(sym)) throw new Error("bad symbol");
+  const cd = screenerCooldown(); if (cd) throw new ScreenerBlocked(cd);
+  const r = await fetchImpl(`${SCREENER_BASE()}/company/${encodeURIComponent(sym)}/`, { headers: { "User-Agent": UA, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(screenerConfig.timeoutMs) : undefined });
+  if (r.status === 429 || r.status === 403) { cooldownUntil = Date.now() + screenerConfig.cooldownMs; throw new ScreenerBlocked(cooldownUntil, `HTTP ${r.status}`); }
+  if (r.status === 404) throw new Error(`Screener has no page for ${sym}`);
+  if (!r.ok) throw new Error(`Screener HTTP ${r.status}`);
+  const top = parseTopRatios(await r.text()), price = top["Current Price"]?.[0], hl = top["High / Low"] || [];
+  if (!(price > 0)) throw new Error("Screener: no current price on the page");
+  return { price, high: hl[0] > 0 ? hl[0] : null, low: hl[1] > 0 ? hl[1] : null, source: "Screener" };
 }

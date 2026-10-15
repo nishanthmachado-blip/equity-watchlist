@@ -1,5 +1,91 @@
 # Equity Watchlist MVP
 
+## v4.8.0: what changed — live prices on every tab
+
+- **Prices update every minute while the market is open** (9:15 am–3:30 pm IST, weekdays). Before, the interval was 15 minutes. Set the interval with `PRICE_REFRESH_SECONDS` (default 60, minimum 30).
+  - One shared run prices every account's watchlist, swing positions and swing watchlist, fetching each stock once.
+  - Sources: NSE (one by one, spaced), then Yahoo in batches of 40, then Yahoo's chart, Google and Screener for anything still missing or delayed, inside a time budget.
+  - A run that takes longer delays the next one; runs never overlap.
+  - The closing-price refresh after 3:30 pm stays.
+- **⟳ Refresh prices in the top bar, on every tab:**
+  - It shows "Live · 10:32 am" when prices are fresh, and turns amber when they are more than 5 minutes old during market hours.
+  - Click it to refresh now; it spins while working and tells you which stocks got no fresh price.
+- **Open pages update by themselves:** every page checks for newer prices every 20 seconds and redraws the screen you are on (Watchlist, Valuation, Home, Swing trading, …), with no click needed.
+- New endpoints: `GET /api/prices/status` and `POST /api/prices/refresh`.
+
+## v4.7.5: what changed — Swing page updates, tax on swing profits, closing prices
+
+- **Swing page updates reliably:**
+  - ⟳ Refresh prices shows a spinner ("Updating prices…") and then "Updated hh:mm:ss".
+  - Each update waits at most 8 seconds. Prices still loading finish in the background and appear about 4 seconds later ("N still loading…").
+  - An older, slower answer can no longer replace a newer one, and the page updates again when you come back to the tab.
+  - Every price shows its source and age (e.g. "NSE · live", "Yahoo · 4 min old"), with saved prices marked in amber.
+- **Tax and charges on swing trades** (estimates):
+  - Each position shows "net ₹… after tax" if sold now; click it for the full breakdown.
+  - The Sell box shows the breakdown live for the quantity, price and date you enter, and 🧮 Tax calculator works for any buy and sell.
+  - Charges are Zerodha's delivery rates: STT 0.1% each side, NSE 0.00307%, SEBI ₹10/crore, stamp 0.015% on buys, GST 18%, DP ₹15.34 per stock sold.
+  - Each FIFO lot is taxed by holding period: STCG 20%, or LTCG 12.5% above the ₹1.25 lakh yearly exemption (less long-term gains already booked this financial year and anything you enter as used elsewhere), plus 4% cess.
+  - "Booked so far" also shows the amount after tax and charges.
+- **Freshest price wins:** NSE quotes now carry their time stamp. When NSE is not available, a refresh keeps asking Yahoo, Screener and Google and uses the most recent quote, rather than the first one that answers.
+- **Closing prices:** a refresh runs once after the close (15:40–17:00 IST). Before this, the day's last automatic price was from 15:15–15:30, which explained small differences in the evening.
+
+## v4.7.4: what changed — prices that stick, and price debugging
+
+- **Fix: an open page could put old prices back.** The page sends its own copy of the watchlist to the server when you edit or refresh. If it had been open for a while, its older prices overwrote newer ones the server had fetched (e.g. by the 15-minute refresh).
+  - Now, for each stock, the newer price (by its timestamp) is kept.
+  - Refresh starts from the server's current copy.
+  - A price you type in the editor is stamped "Entered by you", so it still wins.
+- **Refresh tells you what happened:** for example "✓ 98 of 107 prices refreshed (NSE 80, Screener 18). 9 failed, e.g. XYZ: …".
+- **Integrations → Price sources → Compare sources** asks NSE, Yahoo, Screener and Google for one symbol, ignoring cool-downs. Kite is listed as not used. Each source shows its price, time taken and result, with a plain reason for failures:
+  - could not connect (the network cause, e.g. ENOTFOUND, ECONNREFUSED, a certificate error);
+  - blocked (401/403);
+  - rate-limited (429);
+  - timed out;
+  - page changed.
+- **Debug log (owner):** the server's last 1,500 log lines, filterable to price lines, with a Copy button. Each stock's refresh writes one `[price]` line, e.g. `[price] INFY: nse: ✗ HTTP 403 (210 ms) → yahoo: ✓ ₹1062.1 (380 ms)`. Each refresh ends with a `[refresh]` summary by source.
+- NSE, Screener and Google requests are now spaced out (one at a time per site), since they block bursts of requests.
+
+## v4.7.3: what changed — prices no longer from Kite
+
+- **Kite is not used for prices any more:** its quotes go stale when the MCP connection drops. Default `PRICE_SOURCES=nse,yahoo,screener,google`:
+  1. **NSE:** the exchange's own quote.
+  2. **Yahoo:** the live `regularMarketPrice`.
+  3. **Screener:** the "Current Price" on the company page.
+  4. **Google Finance.**
+- This applies everywhere: watchlist / valuation refresh, the Swing page's live prices and the market lists. Kite stays for syncing holdings and mutual funds, and as a last resort for the swing-ideas chart history. Add `kite` back to `PRICE_SOURCES` only if you want it.
+- **Refresh always fetches a real-time quote:** Swing trading's "⟳ Refresh prices" skips the 45-second price cache. A saved price used as a last resort is labelled with its time.
+
+## v4.7.2: what changed — correct live prices
+
+- **The problem:** a stock could show an old price (INFY ₹1,048.85 while NSE showed ₹1,062.10) even after Refresh, labelled "Price refreshed".
+  - Yahoo's feed was read from its last *daily bar*, which lags during the day, instead of its live price field. Its custom identity was also quick to be rate-limited.
+  - When Kite and Yahoo failed, Google Finance was read from the first `data-last-price` on the page, which can belong to a related stock or index shown there.
+- **Fixes:**
+  - **NSE's own quote is now a price source**, right after Kite (default `PRICE_SOURCES=kite,nse,yahoo,google`). It is the exchange's price, the same as nseindia.com.
+  - Yahoo uses `regularMarketPrice` (live) and Yahoo's own 52-week high/low, with a normal browser identity and the second Yahoo host as backup.
+  - Google Finance takes the quote's own main price, or the tag naming the stock, before anything else.
+  - The Swing page's live prices also try NSE and Yahoo's live price before falling back to the saved price.
+  - **Every price shows where and when it came from**, e.g. "Price refreshed (NSE, 13 Oct, 3:30 pm)". If a refresh fails it says so, with the time of the price still shown.
+  - The Integrations page lists NSE among the price sources, with its cool-down.
+
+## v4.7.1: what changed — one position per stock
+
+- Adding a swing position for a stock you already hold (+ Add swing position, "Bought" from the swing watchlist or from a swing idea) now adds to that position. The new buy becomes another dated buy, and quantity and average price are recalculated. A message confirms the new quantity and average.
+  - The existing plan (limit, add level, targets, stop-loss, booking plan) is kept; anything blank is filled from the new entry.
+  - The booking plan starts a new cycle, as with Buy.
+- Duplicate entries saved by earlier versions are merged automatically the next time the Swing page opens. Every buy stays in the ledger and the 📒 Buys list.
+- Fix: the green "Sell N now" badge in the Targets column was stretched across the column and hard to read.
+
+## v4.7: what changed — Swing ideas scan no longer depends on Yahoo alone
+
+- The ideas scan used only Yahoo's price history, so a Yahoo rate limit stopped it before the first chart ("No charts scanned yet"). Each stock now tries three sources, in order:
+  1. **Zerodha Kite:** when an account is logged in to Kite in the app, using Kite's daily candles (`get_historical_data`). This is the fastest and most reliable source. The instrument numbers come from Zerodha's company list, which refreshes itself.
+  2. **Yahoo:** if the main host refuses, the second host is tried.
+  3. **Screener's price chart.**
+- A source that rate-limits rests (Yahoo 15 min) while the others carry on. Only when every source is resting does the scan pause; it shows when it resumes and restarts by itself. **Scan now** clears the rests and tries again at once, for example right after logging in to Kite.
+- Your own swing positions, swing watchlist and watchlists are scanned before the market list, so your stocks get ideas first. Stocks with no data are retried after 6 hours instead of 3 days.
+- The status line shows which sources were used (e.g. "via Kite 180, Screener 61") and how many stocks had no data.
+
 ## v4.6: what changed — Swing ideas, stop-losses, trend health
 
 - **💡 Swing ideas** (Swing trading page): the app scans daily charts after every market close (and when you press **Scan now**). It covers ~185 liquid NSE stocks plus everything in your watchlists and swing watchlist, and finds four rule-based setups:

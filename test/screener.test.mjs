@@ -75,3 +75,13 @@ test("a blank consolidated page (standalone-only company) falls back to the stan
   assert.equal(r.entry.price, 217); assert.match(urls[0], /consolidated\/$/); assert.match(urls[1], /company\/TIPSMUSIC\/$/);
   resetScreener();
 });
+
+test("Screener price: Current Price and 52-week High / Low from the company page", async () => {
+  const { fetchScreenerPrice } = await import("../screener.mjs");
+  resetScreener();
+  const page = `<ul id="top-ratios"><li><span class="name">Current Price</span><span class="number">1,062</span></li><li><span class="name">High / Low</span><span class="number">1,690</span> / <span class="number">985</span></li></ul>`;
+  const q = await fetchScreenerPrice({ marketSymbol: "INFY" }, async () => ({ ok: true, status: 200, text: async () => page }));
+  assert.deepEqual(q, { price: 1062, high: 1690, low: 985, source: "Screener" });
+  await assert.rejects(fetchScreenerPrice({ marketSymbol: "INFY" }, async () => ({ ok: true, status: 200, text: async () => "<html></html>" })), /no current price/);
+  resetScreener();
+});

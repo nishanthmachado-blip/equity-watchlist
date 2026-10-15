@@ -487,7 +487,7 @@ test("search works offline: built-in list finds IOC / ONGC by symbol and name; K
 });
 
 // ---- v4.1: swing trading ----
-import { parseAmount, parsePrice, parseSheet, sanitizePosition, sanitizeWatch, evaluateSwing, diffSwingAlerts, applyBuy, applySell, reopenTrade, parseTargets, parseBookPlan, planShares, lotsOf, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger } from "../swing.mjs";
+import { parseAmount, parsePrice, parseSheet, sanitizePosition, sanitizeWatch, evaluateSwing, diffSwingAlerts, applyBuy, applySell, reopenTrade, parseTargets, parseBookPlan, planShares, lotsOf, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, sellTaxEstimate, lotsForSale, ltExemptionLeft } from "../swing.mjs";
 import { buildXlsx } from "../xlsx.mjs";
 import { pushAlerts, findChat, formatAlert, validToken } from "../notify.mjs";
 test("swing: amounts and prices in Indian shorthand", () => {
@@ -639,4 +639,38 @@ test("swing ledger: dated buys and sells, edited buys, edits that keep the buys"
   assert.deepEqual(L.entries.find(e => e.date === "2025-11-20").soldOn, ["2026-10-01"]);
   const st = L.stocks[0]; assert.deepEqual([st.bought, st.sold, st.held, st.first, st.last], [26, 15, 11, 2025 + "-11-20", "2026-10-01"]);
   assert.equal(evaluateSwing({ positions: [s.position], prices: new Map() }).positions[0].lotCount, 2);
+});
+
+test("swing: the same stock bought again is one position with a new average (and old duplicates merge)", () => {
+  const a = sanitizePosition({ symbol: "HEROMOTOCO", name: "Hero Motocorp", qty: 21, avgPrice: 4936.88, limit: "3L", addAmount: "1L", boughtOn: "2026-06-02" });
+  const b = sanitizePosition({ symbol: "HEROMOTOCO", name: "Hero Motocorp", qty: 21, avgPrice: 4940, stopLoss: 4500, boughtOn: "2026-10-01" });
+  const m = mergePositions(a, b);
+  assert.deepEqual([m.id, m.qty, m.avgPrice, m.lots.length, m.limit, m.addAmount, m.stopLoss, m.openedAt.slice(0, 10)], [a.id, 42, 4938.44, 2, 300000, 100000, 4500, "2026-06-02"]);
+  const infy1 = sanitizePosition({ symbol: "INFY", qty: 100, avgPrice: 1019.44 }), infy2 = sanitizePosition({ symbol: "INFY", qty: 200, avgPrice: 1033.8 });
+  const d = dedupePositions([a, infy1, b, infy2]);
+  assert.deepEqual(d.list.map(p => [p.symbol, p.qty, p.avgPrice]), [["HEROMOTOCO", 42, 4938.44], ["INFY", 300, 1029.01]]);
+  assert.deepEqual(d.merged.sort(), ["HEROMOTOCO", "INFY"]);
+  assert.equal(dedupePositions([a, infy1]).merged.length, 0);
+  assert.equal(buildLedger(d.list, []).entries.filter(e => e.symbol === "INFY").length, 2, "both buys stay in the ledger");
+});
+
+test("swing tax: STT, charges, STCG / LTCG with cess and the yearly exemption", async () => {
+  // ₹1,00,000 bought, sold for ₹1,19,000 = ₹19,000 gross profit
+  const st = sellTaxEstimate({ lots: [{ qty: 100, price: 1000, at: "2026-06-01T03:45:00Z" }], sellPrice: 1190, sellDate: "2026-10-14" });
+  assert.equal(st.gross, 19000); assert.equal(st.charges.stt, 219, "0.1% on buy 1,00,000 + sell 1,19,000"); assert.equal(st.charges.dp, 15.34); assert.equal(st.charges.stamp, 15);
+  assert.equal(st.shortTerm.qty, 100); assert.equal(st.longTerm.qty, 0);
+  assert.ok(Math.abs(st.tax - 3944) < 2, `tax ${st.tax}`); assert.ok(Math.abs(st.net - 14798) < 2, `net ${st.net}`);
+  const lt = sellTaxEstimate({ lots: [{ qty: 100, price: 1000, at: "2025-06-01T03:45:00Z" }], sellPrice: 1190, sellDate: "2026-10-14" });
+  assert.equal(lt.tax, 0, "inside the ₹1.25 L exemption"); assert.equal(lt.longTerm.qty, 100);
+  const lt2 = sellTaxEstimate({ lots: [{ qty: 100, price: 1000, at: "2025-06-01T03:45:00Z" }], sellPrice: 1190, sellDate: "2026-10-14", ltExemptLeft: 0 });
+  assert.ok(Math.abs(lt2.tax - lt2.longTerm.gain * 0.125 * 1.04) < 1);
+  const loss = sellTaxEstimate({ lots: [{ qty: 10, price: 1000, at: "2026-06-01T03:45:00Z" }], sellPrice: 900, sellDate: "2026-10-14" });
+  assert.equal(loss.tax, 0); assert.ok(loss.net < loss.gross, "charges make a loss bigger");
+  // mixed lots: FIFO uses the oldest first
+  const p = sanitizePosition({ symbol: "INFY", qty: 10, avgPrice: 1000, boughtOn: "2025-01-10" }), p2 = applyBuy(p, 10, 1200, "2026-06-01T03:45:00.000Z");
+  const mix = sellTaxEstimate({ lots: lotsForSale(p2, 15), sellPrice: 1300, sellDate: "2026-10-14" });
+  assert.deepEqual([mix.longTerm.qty, mix.shortTerm.qty], [10, 5]);
+  // exemption already used by swing LT gains booked this financial year
+  const sold = applySell(p, 10, 1300, "2026-08-01T03:45:00.000Z").trade;
+  assert.equal(ltExemptionLeft([sold], 0, "2026-10-14"), 125000 - 3000); assert.equal(ltExemptionLeft([sold], 200000, "2026-10-14"), 0);
 });

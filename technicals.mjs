@@ -54,11 +54,15 @@ export function parseYahooBars(json) {
 const CHART_BASE = () => (process.env.YAHOO_CHART_BASE || "https://query1.finance.yahoo.com").replace(/\/+$/, "");
 // Daily bars plus Yahoo's instrument details (instrumentType "ETF", long name). range: 1y | 2y | 5y | max
 export async function fetchChart(symbol, { fetchImpl = fetch, exchange = "NSE", range = "1y" } = {}) {
-  const res = await fetchImpl(`${CHART_BASE()}/v8/finance/chart/${encodeURIComponent(symbol + (exchange === "BSE" ? ".BO" : ".NS"))}?range=${range}&interval=1d`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15000) });
+  const path = `/v8/finance/chart/${encodeURIComponent(symbol + (exchange === "BSE" ? ".BO" : ".NS"))}?range=${range}&interval=1d`;
+  const get = base => fetchImpl(base + path, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: AbortSignal.timeout(15000) });
+  let res = await get(CHART_BASE());
+  if (res.status === 429 && !process.env.YAHOO_CHART_BASE) res = await get("https://query2.finance.yahoo.com"); // Yahoo's second host often still answers
   if (res.status === 429) { const e = new Error("Yahoo is rate-limiting price-history requests."); e.rateLimited = true; throw e; }
   if (res.status === 404) throw new Error(`Yahoo has no price history for ${symbol}.`);
   if (!res.ok) throw new Error(`Yahoo HTTP ${res.status}`);
   const json = await res.json(), meta = json?.chart?.result?.[0]?.meta || {};
-  return { bars: parseYahooBars(json), meta: { instrumentType: meta.instrumentType || null, longName: meta.longName || meta.shortName || null, currency: meta.currency || null } };
+  const n = v => (Number.isFinite(v) ? v : null);
+  return { bars: parseYahooBars(json), meta: { instrumentType: meta.instrumentType || null, longName: meta.longName || meta.shortName || null, currency: meta.currency || null, price: n(meta.regularMarketPrice), time: n(meta.regularMarketTime), prevClose: n(meta.chartPreviousClose ?? meta.previousClose), high52: n(meta.fiftyTwoWeekHigh), low52: n(meta.fiftyTwoWeekLow), symbol: meta.symbol || null } };
 }
 export async function fetchBars(symbol, opts = {}) { return (await fetchChart(symbol, opts)).bars; }

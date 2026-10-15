@@ -34,7 +34,8 @@ export function parseKiteInstruments(csv) {
     if (c[ix("instrument_type")] !== "EQ" || !/^(NSE|BSE)$/.test(c[ix("segment")] || "")) continue;
     const symbol = String(c[ix("tradingsymbol")] || "").toUpperCase(), name = c[ix("name")] || "";
     if (!/^[A-Z0-9&-]{1,20}$/.test(symbol) || !name || /-(SG|GS|GB|N\d|TB)$/.test(symbol)) continue; // skip G-secs, SGBs, T-bills
-    out.push({ symbol, name: titleCase(name), exchange: c[ix("segment")] });
+    const token = Number(c[ix("instrument_token")]);
+    out.push({ symbol, name: titleCase(name), exchange: c[ix("segment")], ...(token > 0 ? { token } : {}) }); // token: for Kite price history
   }
   return out;
 }

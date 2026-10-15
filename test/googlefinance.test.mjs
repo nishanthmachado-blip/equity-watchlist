@@ -42,3 +42,13 @@ test("fetch builds the right URL, validates symbols, and cools down after a 429"
   resetGoogle();
   await assert.rejects(() => fetchGoogleQuote("TCS", { fetchImpl: async () => new Response("", { status: 404 }) }), /not found/);
 });
+
+test("Google quote page: the stock's own price, not a related stock listed first", async () => {
+  const { parseGoogleQuote } = await import("../googlefinance.mjs");
+  const pad = "x".repeat(300);
+  const related = `<div data-symbol="TCS" data-source="NSE" data-last-price="3010.5" data-currency-code="INR"></div>`;
+  const main = `<div class="YMlKec fxKbKc">₹1,062.10</div>`;
+  assert.equal(parseGoogleQuote(pad + related + main + `<div data-symbol="INFY" data-last-price="1062.1"></div>`, "INFY").price, 1062.1);
+  assert.equal(parseGoogleQuote(pad + related + `<div data-entity="INFY:NSE" data-last-price="1062.1" data-currency-code="INR"></div>`, "INFY").price, 1062.1, "tag naming the symbol");
+  assert.equal(parseGoogleQuote(pad + `<div data-last-price="1062.1"></div>`, "INFY").price, 1062.1, "single tag still works");
+});

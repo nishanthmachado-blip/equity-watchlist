@@ -202,6 +202,13 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
       }
       return out;
     },
+    // Daily candles for one instrument (Kite instrument token), oldest first: [{ t, c, h, l, v }]
+    async historical(token, days = 380) {
+      const pad = n => String(n).padStart(2, "0"), fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+      const to = new Date(), from = new Date(to.getTime() - days * 864e5);
+      const { json, text } = await callTool("get_historical_data", { instrument_token: Number(token), from_date: fmt(from), to_date: fmt(to), interval: "day" });
+      return normalizeCandles(json, text);
+    },
     // Step-by-step probe for "login does not work": shows exactly where the conversation with the server stops.
     async diagnose() {
       const steps = [], add = (step, ok, detail) => steps.push({ step, ok, detail: String(detail ?? "").slice(0, 400) });
@@ -216,3 +223,11 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
   };
 }
 export const kite = createKiteClient();
+
+// get_historical_data answers with an array of { date, open, high, low, close, volume } (or { data: { candles: [[date, o, h, l, c, v]] } }).
+export function normalizeCandles(json, text = "") {
+  const rows = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : Array.isArray(json?.data?.candles) ? json.data.candles : Array.isArray(json?.candles) ? json.candles : null;
+  if (!rows) throw new KiteError(`Unrecognised price-history response: ${String(text).slice(0, 120)}`);
+  return rows.map(r => Array.isArray(r) ? { t: Date.parse(r[0]) / 1000, o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] } : { t: Date.parse(r.date) / 1000, o: +r.open, h: +r.high, l: +r.low, c: +r.close, v: +r.volume })
+    .filter(b => Number.isFinite(b.c) && b.c > 0).sort((a, b) => a.t - b.t);
+}

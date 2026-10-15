@@ -28,12 +28,12 @@
       <div class="${t.pnl > 0 ? "sw-up" : t.pnl < 0 ? "sw-down" : ""}"><span>Profit / loss</span><strong class="${cls(t.pnl)}">${sg(t.pnl)}</strong><small class="${cls(t.pnlPct)}">${pct(t.pnlPct)}</small></div>
       <div class="${t.takeProfit ? "sw-tp" : ""}"><span>🎯 To book profit</span><strong>${t.takeProfit}</strong>${t.stopHit ? `<small class="avoid">🛑 ${t.stopHit} at stop-loss</small>` : ""}</div>
       <div class="${t.deploy ? "sw-dp" : ""}"><span>💰 Deploy signals</span><strong>${t.deploy}</strong>${t.deployNow ? `<small>up to ${amt(t.deployNow)}</small>` : ""}</div>
-      <div><span>Booked so far</span><strong class="${cls(v.realised.pnl)}">${sg(v.realised.pnl)}</strong><small>${v.realised.count} closed trade${v.realised.count === 1 ? "" : "s"}</small></div>
+      <div><span>Booked so far</span><strong class="${cls(v.realised.pnl)}">${sg(v.realised.pnl)}</strong><small>${v.realised.count} closed trade${v.realised.count === 1 ? "" : "s"}${v.realisedNet && v.realised.count ? ` · ≈ ${sg(v.realisedNet.net)} after tax & charges` : ""}</small></div>
       ${fin(t.cash) ? `<div class="${t.cashShort ? "sw-short" : ""}" title="Buys take from it, sales add to it. Change it in ⚙ Settings."><span>💵 Free cash</span><strong>${amt(t.cash)}</strong><small>${t.cashShort ? `signals need ${amt(t.deployNow)}: short by ${amt(t.cashShort)}` : t.deployNow ? `signals need ${amt(t.deployNow)}` : "for new swing buys"}</small></div>`
         : `<div class="sw-setcash"><span>💵 Free cash</span><button type="button" class="linklike" data-go="cash">Set your swing cash</button><small>to see if you can cover deploy signals</small></div>`}`;
     renderScore(); renderLedger();
     const src = [...new Set([...v.positions, ...v.watch].map(r => r.priceSource).filter(Boolean))];
-    $("#swStatus").textContent = `${v.marketOpen ? "Market open" : "Market closed"} · prices from ${src.join(", ") || "—"} · ${new Date(v.checkedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}${t.unpriced ? ` · ${t.unpriced} without a price` : ""}`;
+    $("#swStatus").innerHTML = `<b>Updated ${hm(v.checkedAt)}</b> · ${v.marketOpen ? "market open, auto-updates every minute" : "market closed"} · prices from ${esc(src.join(", ") || "—")}${v.pricePending ? ` · <span class="sw-pending">${v.pricePending} still loading…</span>` : ""}${t.unpriced ? ` · ${t.unpriced} without a price` : ""}`;
     const order = { "stop-hit": -1, "take-profit": 0, "near-stop": 2.5, deploy: 1, "near-profit": 2, "near-deploy": 3, "deploy-limit": 4, hold: 5 };
     $("#swPosNote").textContent = v.positions.length ? `${v.positions.length} position${v.positions.length === 1 ? "" : "s"} · sorted by signal` : "";
     order.riding = 4.5;
@@ -42,10 +42,10 @@
       return `<tr class="sw-row ${(SIG[r.status] || [])[1] || ""}" data-id="${esc(r.id)}" data-sym="${esc(r.symbol)}">
         <td><div class="company">${esc(r.name)}</div><div class="ticker">${esc(r.symbol)}${r.exchange === "BSE" ? " · BSE" : ""}</div></td>
         <td class="num">${r.qty}</td><td class="num">${px(r.avgPrice)}</td>
-        <td class="num"><b>${px(r.price)}</b>${r.health ? `<div><span class="sw-health ${r.health.state}" title="${esc(r.health.note)}. Trailing stop idea: ₹${r.health.trail} (2 ATR under the price or the 20-day low, whichever is higher).">${{ strong: "▲ Uptrend", pause: "◆ Pausing", caution: "▼ Below 50-DMA", weak: "▼ Below 200-DMA" }[r.health.state]}</span></div>` : ""}${fin(r.dayPct) ? `<div class="ticker ${cls(r.dayPct)}">${pct(r.dayPct)} today</div>` : r.priceSource && !/Kite|Yahoo/.test(r.priceSource) ? `<div class="ticker">${esc(r.priceSource)}</div>` : ""}</td>
+        <td class="num"><b>${px(r.price)}</b>${r.health ? `<div><span class="sw-health ${r.health.state}" title="${esc(r.health.note)}. Trailing stop idea: ₹${r.health.trail} (2 ATR under the price or the 20-day low, whichever is higher).">${{ strong: "▲ Uptrend", pause: "◆ Pausing", caution: "▼ Below 50-DMA", weak: "▼ Below 200-DMA" }[r.health.state]}</span></div>` : ""}${fin(r.dayPct) ? `<div class="ticker ${cls(r.dayPct)}">${pct(r.dayPct)} today</div>` : ""}${srcLine(r)}</td>
         <td class="num">${inr(r.invested)}</td><td class="num">${inr(r.value)}</td>
-        <td class="num ${cls(r.pnl)}"><b>${sg(r.pnl)}</b><div>${pct(r.pnlPct)}</div></td>
-        <td class="sw-tg">${r.targets.map(t => `<div class="${t.hit ? "hit" : r.nextTarget?.n === t.n ? "next" : ""}${t.done ? " done" : ""}" title="${t.sellQty ? `Plan: sell ${t.sellQty} share${t.sellQty === 1 ? "" : "s"} at T${t.n} (${t.planPct}%), about ${sg(t.profit)} profit` : `No sale planned at T${t.n}`}${t.done ? " · booked" : ""}"><i>T${t.n}</i><span>+${t.pct}%</span><b>${px(t.price)}</b><em>${t.sellQty ? `sell ${t.sellQty}` : "hold"}</em>${t.done ? "✓✓" : t.hit ? "✓" : ""}</div>`).join("")}${r.ownTargets || r.ownPlan ? `<div class="ticker">own ${[r.ownTargets && "targets", r.ownPlan && "plan"].filter(Boolean).join(" + ")}</div>` : ""}${r.sellNow ? `<div class="sw-sellnow">Sell ${r.sellNow} now</div>` : ""}${r.stopLoss ? `<div class="sw-sl${r.status === "stop-hit" ? " hit" : ""}">SL ${px(r.stopLoss)}</div>` : ""}</td>
+        <td class="num ${cls(r.pnl)}"><b>${sg(r.pnl)}</b><div>${pct(r.pnlPct)}</div>${r.ifSold ? `<div class="sw-net" data-tax="${esc(r.id)}" title="If you sold all ${r.qty} now: ${taxTitle(r.ifSold)}">net ${sg(r.ifSold.net)}<small> after tax</small></div>` : ""}</td>
+        <td class="sw-tg">${r.targets.map(t => `<div class="tg-l ${t.hit ? "hit" : r.nextTarget?.n === t.n ? "next" : ""}${t.done ? " done" : ""}" title="${t.sellQty ? `Plan: sell ${t.sellQty} share${t.sellQty === 1 ? "" : "s"} at T${t.n} (${t.planPct}%), about ${sg(t.profit)} profit` : `No sale planned at T${t.n}`}${t.done ? " · booked" : ""}"><i>T${t.n}</i><span>+${t.pct}%</span><b>${px(t.price)}</b><em>${t.sellQty ? `sell ${t.sellQty}` : "hold"}</em>${t.done ? "✓✓" : t.hit ? "✓" : ""}</div>`).join("")}${r.ownTargets || r.ownPlan ? `<div class="ticker">own ${[r.ownTargets && "targets", r.ownPlan && "plan"].filter(Boolean).join(" + ")}</div>` : ""}${r.sellNow ? `<div class="sw-sellnow">Sell ${r.sellNow} now</div>` : ""}${r.stopLoss ? `<div class="sw-sl${r.status === "stop-hit" ? " hit" : ""}">SL ${px(r.stopLoss)}</div>` : ""}</td>
         <td>${r.limit ? `<div class="fd-w"><span><i style="width:${used}%"></i></span>${used}%</div><div class="ticker">${amt(r.invested)} of ${amt(r.limit)}</div>` : "—"}</td>
         <td>${r.addBelow ? `Add ${amt(r.addAmount)} below ${px(r.addBelow)}<div class="ticker">${fin(r.distanceToAdd) ? `${r.distanceToAdd > 0 ? `${r.distanceToAdd}% away` : "reached"}` : ""}</div>` : r.addAmount ? `Add ${amt(r.addAmount)}` : "—"}</td>
         <td>${sig(r)}</td>
@@ -83,12 +83,25 @@
     ${c.months.length > 1 ? `<div class="sw-months" role="img" aria-label="Booked profit by month">${c.months.map(m => `<div title="${m.month}: ${sg(m.pnl)}"><i class="${m.pnl >= 0 ? "up" : "dn"}" style="height:${Math.max(3, Math.round(Math.abs(m.pnl) / maxM * 48))}px"></i><span>${new Date(`${m.month}-01`).toLocaleDateString("en-IN", { month: "short" })}</span></div>`).join("")}</div>` : ""}
     ${sw.cash?.log?.length ? `<details class="sw-cashlog"><summary>Cash movements</summary><table class="sw-prev"><tbody>${sw.cash.log.map(l => `<tr><td>${new Date(l.at).toLocaleDateString("en-IN")}</td><td>${esc(l.why)}</td><td class="num ${cls(l.amount)}">${l.amount === null ? "" : sg(l.amount)}</td><td class="num">${amt(l.balance)}</td></tr>`).join("")}</tbody></table></details>` : ""}`;
   }
-  async function load(quiet = false) {
-    try { sw = await api("/api/swing"); render(); }
-    catch (e) { if (!quiet) $("#swStatus").textContent = e.message; }
-    clearTimeout(timer);
-    if (!$("#swingView").hidden) timer = setTimeout(() => load(true), sw?.marketOpen ? 60e3 : 5 * 60e3);
+  const hm = t => new Date(t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const srcLine = r => { if (!r.priceSource) return ""; const stale = r.priceStale || /saved|sync/.test(r.priceSource); const age = r.priceAsOf ? Math.round((Date.now() - Date.parse(r.priceAsOf)) / 60e3) : null; return `<div class="ticker${stale ? " sw-stale" : ""}" title="${stale ? "Live price not available right now: showing the last saved price." : r.priceAsOf ? `Market time ${new Date(r.priceAsOf).toLocaleString("en-IN")}` : ""}">${esc(r.priceSource)}${r.priceAsOf && age !== null ? ` · ${age <= 1 ? "live" : age < 60 * 18 && sw?.marketOpen ? `${age} min old` : new Date(r.priceAsOf).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}` : ""}</div>`; };
+  const taxTitle = e => `sale value ${inr(e.sellValue)}, gross ${sg(e.gross)}, charges ${inr(e.charges.total)} (STT ${inr(e.charges.stt)}), tax ${inr(e.tax)}${e.shortTerm.qty ? ` (short-term ${e.rules.stRate}%)` : ""}${e.longTerm.qty ? ` (long-term ${e.rules.ltRate}% above the exemption)` : ""} incl. ${e.rules.cessPct}% cess → you keep ${sg(e.net)}`;
+  // One request at a time is shown: a slower, older answer never replaces a newer one.
+  let loadSeq = 0, lastLoaded = 0, pendingTimer = null;
+  function setBusy(on) { const b = $("#swRefresh"); if (!b) return; b.classList.toggle("is-loading", on); b.disabled = on; b.textContent = on ? "Updating prices…" : "⟳ Refresh prices"; $("#swingView").classList.toggle("sw-busy", on); }
+  async function load(quiet = false, fresh = false) {
+    const seq = ++loadSeq; if (!quiet) setBusy(true);
+    try {
+      const v = await api(fresh ? "/api/swing?fresh=1" : "/api/swing");
+      if (seq !== loadSeq) return; // a newer request has been made
+      sw = v; lastLoaded = Date.now(); render();
+      clearTimeout(pendingTimer);
+      if (v.pricePending) pendingTimer = setTimeout(() => load(true), 4000); // some prices were still on their way: pick them up
+    } catch (e) { if (seq === loadSeq) $("#swStatus").textContent = `Could not update: ${e.message}`; }
+    finally { if (seq === loadSeq) { setBusy(false); clearTimeout(timer); if (!$("#swingView").hidden) timer = setTimeout(() => load(true), sw?.marketOpen ? 60e3 : 5 * 60e3); } }
   }
+  window.addEventListener("prices:updated", () => { if (!$("#swingView").hidden) load(true); }); // the header refresh / live update
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && !$("#swingView").hidden && Date.now() - lastLoaded > 30e3) load(true); });
   window.openSwing = () => { if (!sw) { $("#swRows").innerHTML = `<tr><td colspan="12" class="nw-empty-row">Loading live prices…</td></tr>`; $("#swStatus").textContent = "Loading…"; } load(); loadIdeas(); };
   // ---- Swing ideas ----
   let ideas = null, ideasTimer = null, ideasShown = 12;
@@ -100,7 +113,8 @@
   }
   function renderIdeas() {
     const x = ideas, sc = x.scan, setup = $("#swIdeasSetup").value, src = $("#swIdeasSrc").value;
-    $("#swIdeasStatus").textContent = sc.running ? `Scanning charts… ${sc.done} of ${sc.total}` : sc.pausedUntil ? sc.error : `${sc.scanned} of ${sc.universe} stocks scanned${sc.lastRun ? ` · ${new Date(sc.lastRun).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}` : ""}${sc.error ? ` · ${sc.error}` : ""}`;
+    const via = Object.entries(sc.sources || {}).map(([k, n]) => `${k} ${n}`).join(", ");
+    $("#swIdeasStatus").textContent = sc.running ? `Scanning charts… ${sc.done} of ${sc.total}${via ? ` (via ${via})` : ""}` : sc.pausedUntil ? `${sc.scanned} of ${sc.universe} scanned so far. ${sc.error}` : `${sc.scanned} of ${sc.universe} stocks scanned${sc.lastRun ? ` · ${new Date(sc.lastRun).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}` : ""}${via ? ` · via ${via}` : ""}${sc.failed ? ` · ${sc.failed} without data` : ""}${sc.error ? ` · ${sc.error}` : ""}`;
     $("#swIdeasScan").disabled = sc.running;
     const list = x.ideas.filter(i => (!setup || i.setup === setup) && (!src || i.source !== "market"));
     const sz = x.sizing;
@@ -119,7 +133,7 @@
       </div>
       <ul class="sw-why">${[...i.why, ...i.notes].map(w => `<li>${esc(w)}</li>`).join("")}</ul>
       <div class="sw-idea-acts"><button type="button" class="ghost" data-idea="watch"${i.watching ? " disabled" : ""}>${i.watching ? "✓ Watching" : "+ Swing watchlist"}</button><button type="button" class="primary" data-idea="bought">Bought</button><button type="button" class="ghost" data-idea="chart" title="Valuation and chart details">Details</button></div>
-    </article>`).join("") + (more > 0 ? `<button type="button" class="ghost sw-more" data-more>Show ${Math.min(more, 12)} more of ${more}</button>` : "") : `<p class="nw-empty-row">${sc.running ? "Scanning daily charts for setups… ideas appear as stocks are checked." : x.ideas.length ? "No ideas match these filters." : sc.scanned ? "No stock fits a setup today. That happens: no trade is a position too. The scan runs again after tomorrow's close." : "No charts scanned yet. Press Scan now (takes a few minutes for ~200 stocks)."}</p>`;
+    </article>`).join("") + (more > 0 ? `<button type="button" class="ghost sw-more" data-more>Show ${Math.min(more, 12)} more of ${more}</button>` : "") : `<p class="nw-empty-row">${sc.running ? "Scanning daily charts for setups… ideas appear as stocks are checked." : x.ideas.length ? "No ideas match these filters." : sc.scanned ? "No stock fits a setup today. That happens: no trade is a position too. The scan runs again after tomorrow's close." : sc.pausedUntil ? "Price-history sources are busy right now, so no charts could be read yet. The scan retries by itself." : "No charts scanned yet. Press Scan now (takes a few minutes for ~200 stocks)."}${!sc.kite && (sc.pausedUntil || !sc.scanned || sc.failed) ? ` <br><span class="hint">Yahoo and Screener limit how fast charts can be read; the scan continues by itself. If both stay busy, logging in to Zerodha in the app lets the scan fill the gaps from Kite.</span>` : ""}</p>`;
     $("#swIdeasBox").dataset.sizing = `${sz.riskPct}% risk · max ${amt(sz.perTrade)} per trade${fin(sz.capital) ? ` · swing cash ${amt(sz.capital)}` : ""}`;
   }
   async function ideaAction(i, act) {
@@ -137,7 +151,7 @@
         return api("/api/swing/promote", { id: w.id, qty: v("qty"), price: v("price"), date: v("date") });
       }
     });
-    if (out) { sw = out; render(); ideas.ideas = ideas.ideas.filter(x => x.symbol !== i.symbol); renderIdeas(); window.toast?.(`${i.name} added to your swing positions.`, { kind: "ok" }); }
+    if (out) { sw = out; render(); ideas.ideas = ideas.ideas.filter(x => x.symbol !== i.symbol); renderIdeas(); window.toast?.(out.notice || `${i.name} added to your swing positions.`, { kind: "ok", ms: 6000 }); }
   }
 
   // ---- dialogs ----
@@ -169,7 +183,7 @@
         return api("/api/swing/position", { id: p?.id, symbol: s.symbol, name: s.name, exchange: s.exchange, qty: v("qty"), avgPrice: v("avgPrice"), limit: v("limit"), addAmount: v("addAmount"), addBelow: v("addBelow"), targets: v("targets"), stopLoss: v("stopLoss"), bookPlan: v("bookPlan"), boughtOn: box.querySelector("[name=boughtOn]")?.value || undefined, notes: v("notes") });
       }
     });
-    if (out) { sw = out; render(); }
+    if (out) { sw = out; render(); if (out.notice) window.toast?.(out.notice, { kind: "ok", ms: 6000 }); }
   }
   async function editWatch(w = null) {
     const out = await window.ui.dialog({
@@ -190,12 +204,44 @@
       message: side === "sell" ? `You hold ${p.qty} at ${px(p.avgPrice)}.${p.sellNow ? ` Your booking plan says sell ${p.sellNow} now (T${p.hitLevel}).` : ""} Profit on the shares you sell is added to Closed trades.` : `Your average price is recalculated.${fin(sw.totals.cash) ? " The cost comes out of your swing cash." : ""}`,
       bodyHtml: `<div class="nw-form">${field("Quantity", "qty", side === "sell" ? (p.sellNow || p.qty) : "", 'inputmode="numeric" autofocus')}${field("Price (₹)", "price", p.price ?? "", 'inputmode="decimal"')}${dateField(side === "sell" ? "Sold on" : "Bought on")}</div><p class="ui-hint" data-prev></p>`,
       onOpen: box => {
-        const upd = () => { const q = Number(box.querySelector("[name=qty]").value), pr = Number(box.querySelector("[name=price]").value); box.querySelector("[data-prev]").textContent = side === "sell" && q > 0 && pr > 0 ? `Profit / loss on this sale: ${sg((pr - p.avgPrice) * q)} (${pct(+((pr / p.avgPrice - 1) * 100).toFixed(2))})` : side === "buy" && q > 0 && pr > 0 ? `New average: ${px(+((p.qty * p.avgPrice + q * pr) / (p.qty + q)).toFixed(2))} on ${p.qty + q} shares` : ""; };
+        let tt = null;
+        const upd = () => {
+          const q = Number(box.querySelector("[name=qty]").value), pr = Number(box.querySelector("[name=price]").value), d = box.querySelector("[name=date]").value;
+          if (side === "buy") { box.querySelector("[data-prev]").textContent = q > 0 && pr > 0 ? `New average: ${px(+((p.qty * p.avgPrice + q * pr) / (p.qty + q)).toFixed(2))} on ${p.qty + q} shares` : ""; return; }
+          if (!(q > 0 && pr > 0)) { box.querySelector("[data-prev]").textContent = ""; return; }
+          box.querySelector("[data-prev]").textContent = `Profit / loss on this sale: ${sg((pr - p.avgPrice) * q)} (${pct(+((pr / p.avgPrice - 1) * 100).toFixed(2))}) · working out tax…`;
+          clearTimeout(tt); tt = setTimeout(async () => { try { const e = await api("/api/swing/tax", { id: p.id, qty: q, price: pr, date: d }); box.querySelector("[data-prev]").innerHTML = taxTable(e); } catch (err) { box.querySelector("[data-prev]").textContent = err.message; } }, 300);
+        };
         box.querySelectorAll("input").forEach(i => { i.oninput = upd; }); upd();
       },
       collect: box => api(`/api/swing/${side}`, { id: p.id, qty: box.querySelector("[name=qty]").value, price: box.querySelector("[name=price]").value, date: box.querySelector("[name=date]").value })
     });
     if (out) { sw = out; render(); window.toast?.(side === "sell" ? "Sale recorded." : "Buy recorded.", { kind: "ok", ms: 3000 }); }
+  }
+  function taxTable(e) {
+    if (!e) return "";
+    const row = (k, v, cl = "") => `<tr${cl ? ` class="${cl}"` : ""}><td>${k}</td><td class="num">${v}</td></tr>`;
+    return `<table class="sw-taxt">${row(`Sale value (${e.qty} shares)`, inr(e.sellValue))}${row("Cost (bought for)", inr(e.buyValue))}${row("<b>Gross profit / loss</b>", `<b>${sg(e.gross)}</b> <small>${pct(e.grossPct)}</small>`, cls(e.gross))}
+      ${row(`STT 0.1% (sell ${inr(e.charges.sttSell)} + buy ${inr(e.charges.sttBuy)})`, `− ${inr(e.charges.stt)}`)}${row(`Exchange, SEBI, stamp, GST, DP (₹${e.charges.dp})`, `− ${inr(e.charges.total - e.charges.stt)}`)}
+      ${e.shortTerm.qty ? row(`STCG tax ${e.rules.stRate}% on ${inr(Math.max(0, e.shortTerm.gain))} (${e.shortTerm.qty} sh held ≤ 12 months)`, `− ${inr(e.shortTerm.tax)}`) : ""}
+      ${e.longTerm.qty ? row(`LTCG tax ${e.rules.ltRate}% on ${inr(e.longTerm.taxable)} (${e.longTerm.qty} sh held > 12 months; ${inr(e.longTerm.exemptUsed)} covered by the ₹1.25 L yearly exemption)`, `− ${inr(e.longTerm.tax)}`) : ""}
+      ${e.cess ? row(`Health & education cess ${e.rules.cessPct}%`, `− ${inr(e.cess)}`) : ""}
+      ${row("<b>You keep</b>", `<b>${sg(e.net)}</b>${e.keepPct !== null ? `<small style="display:block">${e.keepPct}% of the gross profit</small>` : ""}`, `sw-keep ${cls(e.net)}`)}</table>
+      <p class="hint" style="margin:6px 0 0">Estimate: Zerodha delivery charges; ${e.rules.asOf}. Surcharge (very high incomes) and your other gains/losses this year are not included. Not tax advice.</p>`;
+  }
+  // Tax calculator: any buy / sell, or the user's own numbers ("₹19,000 profit")
+  async function taxCalculator(p = null) {
+    await window.ui.dialog({
+      title: "Tax on a sale", icon: "🧮", okText: "Close", hideCancel: true, wide: true,
+      bodyHtml: `<div class="nw-form">${field("Quantity", "qty", p?.qty ?? 100, 'inputmode="numeric"')}${field("Bought at (₹ per share)", "buy", p?.avgPrice ?? 1000, 'inputmode="decimal"')}${field("Sell at (₹ per share)", "sell", p?.price ?? 1190, 'inputmode="decimal"')}
+        ${field("Bought on", "bought", p?.openedAt ? p.openedAt.slice(0, 10) : new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10), `type="date" max="${todayIst()}"`)}${dateField("Sell on", "date")}</div><div data-out class="ui-hint"></div>`,
+      onOpen: box => {
+        let t = null; const v = n => box.querySelector(`[name=${n}]`).value;
+        const upd = () => { clearTimeout(t); t = setTimeout(async () => { try { box.querySelector("[data-out]").innerHTML = taxTable(await api("/api/swing/tax", { qty: v("qty"), buyPrice: v("buy"), boughtOn: v("bought"), price: v("sell"), date: v("date") })); } catch (e) { box.querySelector("[data-out]").textContent = e.message; } }, 250); };
+        box.querySelectorAll("input").forEach(i => { i.oninput = upd; }); upd();
+      },
+      collect: () => true
+    });
   }
   // Buys of one position: the dates, quantities and prices you actually bought at (fix imported positions here).
   async function lotsDialog(p) {
@@ -238,7 +284,7 @@
       bodyHtml: `<div class="nw-form">${field("Quantity", "qty", w.amount && w.price ? Math.floor(w.amount / w.price) : "", 'inputmode="numeric" autofocus')}${field("Average price (₹)", "price", w.price ?? "", 'inputmode="decimal"')}${dateField("Bought on")}</div>`,
       collect: box => api("/api/swing/promote", { id: w.id, qty: box.querySelector("[name=qty]").value, price: box.querySelector("[name=price]").value, date: box.querySelector("[name=date]").value })
     });
-    if (out) { sw = out; render(); }
+    if (out) { sw = out; render(); if (out.notice) window.toast?.(out.notice, { kind: "ok", ms: 6000 }); }
   }
   async function pasteDialog() {
     let rows = null;
@@ -273,9 +319,10 @@
       bodyHtml: `<div class="nw-form">${[0, 1, 2].map(i => field(`Target ${i + 1} (T${i + 1}): % up from your average`, `t${i}`, sw.settings.targets[i] ?? "", `inputmode="decimal"${i ? ' placeholder="optional"' : ""}`)).join("")}${field("Booking plan: % of the position to sell at T1, T2, T3", "bookPlan", sw.settings.bookPlan.join(", "), 'placeholder="33, 33, 34"')}
         ${field("Deploy when down this % (stocks without an add level)", "dipPct", sw.settings.dipPct, 'inputmode="decimal"')}
         ${field("Risk per trade (% of swing cash lost if the stop is hit)", "riskPct", sw.settings.riskPct ?? 1, 'inputmode="decimal"')}${field("Max per trade (₹, e.g. 2L)", "perTrade", sw.settings.perTrade ? `${sw.settings.perTrade / 1e5}L` : "2L")}
+        ${field("LTCG exemption already used elsewhere this year (₹)", "ltUsedElsewhere", sw.taxInfo?.ltUsedElsewhere || "", 'placeholder="0"')}${field("DP charge per stock sold (₹)", "dpPerSale", sw.taxInfo?.charges?.dpPerSale ?? 15.34, 'inputmode="decimal"')}
         ${field("Cash set aside for swing (₹, e.g. 5L; blank = don't track)", "cash", fin(sw.totals.cash) ? sw.totals.cash : "", 'placeholder="e.g. 5L"')}</div>
         <p class="ui-hint">The Targets column shows the price and the shares to sell at each level; you get an alert at T1, T2 and T3. Booking plan examples: <b>33, 33, 34</b> = a third at each target · <b>50, 50</b> = half at T1, the rest at T2 · <b>25, 25</b> = half in two steps, keep the rest as a runner. Cash goes down when you record a buy and up when you record a sale.</p>`,
-      collect: box => api("/api/swing/settings", { targets: [0, 1, 2].map(i => box.querySelector(`[name=t${i}]`).value.trim()).filter(Boolean).join(","), bookPlan: box.querySelector("[name=bookPlan]").value, dipPct: box.querySelector("[name=dipPct]").value, riskPct: box.querySelector("[name=riskPct]").value, perTrade: box.querySelector("[name=perTrade]").value, cash: box.querySelector("[name=cash]").value })
+      collect: box => api("/api/swing/settings", { targets: [0, 1, 2].map(i => box.querySelector(`[name=t${i}]`).value.trim()).filter(Boolean).join(","), bookPlan: box.querySelector("[name=bookPlan]").value, dipPct: box.querySelector("[name=dipPct]").value, riskPct: box.querySelector("[name=riskPct]").value, perTrade: box.querySelector("[name=perTrade]").value, ltUsedElsewhere: box.querySelector("[name=ltUsedElsewhere]").value, dpPerSale: box.querySelector("[name=dpPerSale]").value, cash: box.querySelector("[name=cash]").value })
     });
     if (out) { sw = out; render(); loadIdeas(); }
   }
@@ -286,6 +333,7 @@
     $("#swAddWatch").onclick = () => editWatch();
     $("#swPaste").onclick = pasteDialog;
     $("#swSettings").onclick = () => settingsDialog();
+    $("#swTaxCalc").onclick = () => taxCalculator();
     $("#swIdeasScan").onclick = () => loadIdeas(true);
     $("#swIdeasSetup").onchange = $("#swIdeasSrc").onchange = () => { ideasShown = 12; if (ideas) renderIdeas(); };
     $("#swIdeas").addEventListener("click", async e => {
@@ -295,9 +343,10 @@
       b.disabled = true; try { await ideaAction(i, b.dataset.idea); } catch (err) { window.toast?.(err.message, { kind: "error" }); } finally { b.disabled = b.dataset.idea === "watch" && i.watching; }
     });
     $("#swExport").onclick = () => { if (!sw?.realised?.count && !sw?.positions?.length) { window.toast?.("Nothing to export yet.", { kind: "info" }); return; } const a = document.createElement("a"); a.href = "/api/swing/export.xlsx"; a.download = ""; document.body.append(a); a.click(); a.remove(); };
-    $("#swRefresh").onclick = async () => { const b = $("#swRefresh"); b.classList.add("is-loading"); await load(); b.classList.remove("is-loading"); };
+    $("#swRefresh").onclick = () => load(false, true);
     $("#swingView").addEventListener("click", async e => {
       if (e.target.closest('[data-go="paste"]')) { pasteDialog(); return; }
+      const nt = e.target.closest("[data-tax]"); if (nt) { const p = sw.positions.find(x => x.id === nt.dataset.tax); if (p) window.ui.dialog({ title: `${p.name}: if you sold all ${p.qty} now`, icon: "🧮", okText: "Close", hideCancel: true, wide: true, bodyHtml: taxTable(p.ifSold), collect: () => true }); return; }
       if (e.target.closest('[data-go="cash"]')) { settingsDialog("cash"); return; }
       const tb = e.target.closest("[data-tact]");
       if (tb) {
