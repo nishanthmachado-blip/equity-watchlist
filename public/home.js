@@ -82,6 +82,8 @@
       const cached = rowFor(symbol);
       if (cached && cached.view !== "No fundamentals" && cached.ageDays !== null && cached.ageDays < 1 && !pick?.force) {
         if (!listBy(activeListId)?.symbols.includes(symbol)) { lists = (await post("/api/lists/members", { id: activeListId, add: [symbol] })).lists; applyActiveList(); renderListBar(); }
+        status(st, `${symbol}: fetching the live price…`);
+        try { await post("/api/prices/live", { symbols: [symbol] }); await loadStocks(); await loadValuation(); } catch { /* the saved price stands */ }
         showResult(symbol); status(st, `${symbol}: data fetched today (${cached.source || "saved"}). Use Refresh data to fetch again.`); $("#vsSymbol").value = ""; return;
       }
       status(st, `${symbol}${res.exchange === "BSE" ? " (BSE)" : ""}${res.name ? ` · ${res.name}` : ""}: adding to your watchlist…`);
@@ -197,6 +199,20 @@
     } catch (err) { status(st, `Could not update the watchlist: ${err.message}`); }
   }
 
+  // "Yahoo · 3:28 pm", same label as the Swing page, so you can see which quote the valuation used
+  function priceStamp(symbol) {
+    const s = (typeof stocks !== "undefined" ? stocks : []).find(x => symKey(x.marketSymbol || x.ticker) === symKey(symbol));
+    if (!s?.priceAt) return "";
+    const d = new Date(s.priceAt), today = d.toDateString() === new Date().toDateString();
+    const when = d.toLocaleString("en-IN", today ? { hour: "numeric", minute: "2-digit" } : { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+    const src = String(s.priceSource || "").replace(/ Finance| MCP.*$/g, "");
+    return `<small class="hint vs-stamp">${esc(src)}${src ? " · " : ""}${esc(when)}</small>`;
+  }
+  // Live update: when a price changes, redraw the card that is open (only if its price moved)
+  window.addEventListener("prices:updated", () => {
+    const card = $("#vsResult .vs-card[data-symbol]"); if (!card) return;
+    const r = rowFor(card.dataset.symbol); if (r && String(r.price) !== card.dataset.price) showResult(card.dataset.symbol);
+  });
   function showResult(symbol) {
     const box = $("#vsResult"), r = rowFor(symbol);
     if (!r) { box.innerHTML = `<div class="vs-card vs-empty">${esc(symbol)} is not on your watchlist yet.</div>`; return; }
@@ -215,8 +231,8 @@
     const tags = c.tags.length ? c.tags.map(t => `<span class="chip v-none">${esc(t)}</span>`).join(" ") : "";
     const reasons = (r.reasons || []).map(x => `<li>${esc(x)}</li>`).join("");
     const gnotes = (c.growthNotes || []).map(x => `<li>${esc(x)}</li>`).join("");
-    $("#vsResult").innerHTML = `<article class="vs-card" data-symbol="${esc(r.symbol)}">
-      <div class="vs-top"><div><h2>${esc(r.company)} <small>(${esc(r.symbol)})</small>${capTag(r.cap)}</h2><p class="hint" style="margin:4px 0 0">${esc(r.sector || "")}${r.marketCap ? ` · ₹${Math.round(r.marketCap).toLocaleString("en-IN")} Cr market cap` : ""}</p></div><div class="vs-price"><span class="hint">Price</span><strong>${money(r.price)}</strong></div></div>
+    $("#vsResult").innerHTML = `<article class="vs-card" data-symbol="${esc(r.symbol)}" data-price="${esc(String(r.price))}">
+      <div class="vs-top"><div><h2>${esc(r.company)} <small>(${esc(r.symbol)})</small>${capTag(r.cap)}</h2><p class="hint" style="margin:4px 0 0">${esc(r.sector || "")}${r.marketCap ? ` · ₹${Math.round(r.marketCap).toLocaleString("en-IN")} Cr market cap` : ""}</p></div><div class="vs-price"><span class="hint">Price</span><strong>${money(r.price)}</strong>${priceStamp(r.symbol)}</div></div>
       <div class="vs-verdict"><span class="vs-big chip ${c.cls}">${esc(c.label)}</span>${tags}</div>
       ${c.growthScore !== null && c.growthScore !== undefined ? `<p class="hint" style="margin:4px 0 0">Growth score ${c.growthScore}/100 (passes every growth and durability gate).</p>` : ""}
       <div class="vs-grid">${tiles}</div>

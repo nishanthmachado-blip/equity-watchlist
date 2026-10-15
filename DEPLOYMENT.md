@@ -1,7 +1,7 @@
-# Equity Watchlist v4.8.1: Deployment Guide (AWS)
+# Equity Watchlist v4.8.2: Deployment Guide (AWS)
 
 **Audience:** deployment / infrastructure team
-**App version:** 4.8.1
+**App version:** 4.8.2
 **Owner:** Nishanth
 
 ---

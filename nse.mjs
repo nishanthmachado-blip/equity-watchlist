@@ -4,10 +4,10 @@
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 let cookieCache = null;
 let cooldownUntil = 0;
-export const nseConfig = { cooldownMs: 5 * 60 * 1000, timeoutMs: 15000 };
+export const nseConfig = { cooldownMs: 5 * 60 * 1000, timeoutMs: 8000, failsBeforePause: 3 };
 export class NseBlocked extends Error { constructor(until, detail) { super(`NSE is blocking/throttling this connection${detail ? ` (${detail})` : ""}; pausing NSE requests until ${new Date(until).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })} IST.`); this.rateLimited = true; this.until = until; } }
 export function nseCooldown(now = Date.now()) { return cooldownUntil > now ? cooldownUntil : 0; }
-export function resetNse() { cookieCache = null; cooldownUntil = 0; }
+export function resetNse() { cookieCache = null; cooldownUntil = 0; quietFails = 0; }
 const BROWSER = { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", "Accept-Encoding": "gzip, deflate, br", Connection: "keep-alive", "sec-ch-ua": '"Chromium";v="124", "Not-A.Brand";v="99"', "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Linux"' };
 export let lastNseStatus = null;
 function block(where = "", status = "") { lastNseStatus = `${where} HTTP ${status}`.trim(); cooldownUntil = Date.now() + nseConfig.cooldownMs; cookieCache = null; return new NseBlocked(cooldownUntil, lastNseStatus); }
@@ -32,9 +32,19 @@ export function parseNseQuote(json) {
     price: n(pi.lastPrice), prevClose: n(pi.previousClose), high52: n(pi.weekHighLow?.max), low52: n(pi.weekHighLow?.min), inav: n(pi.iNavValue), asOf: nseTime(md.lastUpdateTime)
   };
 }
+// NSE often does not refuse a server, it just never answers (time-outs, dropped connections, no cookies). Three such
+// failures in a row count as a block too, so callers stop waiting 8 s per stock and move straight on to Yahoo / Google.
+let quietFails = 0;
 export async function fetchNseQuote(symbol, fetchImpl = fetch) {
   if (!/^[A-Z0-9&-]+$/.test(symbol)) throw new Error("bad symbol");
   const cd = nseCooldown(); if (cd) throw new NseBlocked(cd);
+  try { const q = await nseQuoteOnce(symbol, fetchImpl); quietFails = 0; return q; }
+  catch (e) {
+    if (!(e instanceof NseBlocked) && e.message !== "bad symbol" && !/HTTP 404/.test(e.message) && ++quietFails >= nseConfig.failsBeforePause) { quietFails = 0; const b = block(`no answer (${String(e.cause?.code || e.name || e.message).slice(0, 40)})`); e.message += `; ${b.message}`; }
+    throw e;
+  }
+}
+async function nseQuoteOnce(symbol, fetchImpl) {
   const cookie = await cookies(fetchImpl);
   const res = await fetchImpl(`https://www.nseindia.com/api/quote-equity?symbol=${encodeURIComponent(symbol)}`, withTimeout({ headers: { ...BROWSER, Accept: "*/*", "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin", Referer: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`, cookie } }));
   if (res.status === 401) { cookieCache = null; throw new Error("NSE session expired (HTTP 401)"); }

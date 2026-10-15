@@ -111,3 +111,20 @@ test("a 429 on the data request starts a cooldown and honours Retry-After (cappe
   const mins = (yahooCooldown() - Date.now()) / 60000; assert.ok(mins > 19 && mins <= 20.1, `cooldown ${mins} min`);
   resetSession();
 });
+
+test("NSE that never answers is paused after three silent failures, so prices move on to Yahoo", async () => {
+  resetNse();
+  const hang = async () => { const e = new Error("The operation was aborted due to timeout"); e.name = "TimeoutError"; throw e; };
+  for (let k = 0; k < 2; k++) await assert.rejects(fetchNseQuote("INFY", hang), e => !(e instanceof NseBlocked));
+  assert.equal(nseCooldown(), 0, "two failures: not paused yet");
+  await assert.rejects(fetchNseQuote("INFY", hang), /pausing NSE requests/);
+  assert.ok(nseCooldown() > Date.now(), "third failure pauses NSE");
+  await assert.rejects(fetchNseQuote("INFY", hang), e => e instanceof NseBlocked); // no network call while paused
+  resetNse();
+  // a success in between resets the count
+  const okF = async u => u === "https://www.nseindia.com" ? { ok: true, status: 200, headers: { getSetCookie: () => ["a=1"] } } : { ok: true, status: 200, json: async () => ({ priceInfo: { lastPrice: 1110 } }) };
+  await assert.rejects(fetchNseQuote("INFY", hang)); await assert.rejects(fetchNseQuote("INFY", hang));
+  assert.equal((await fetchNseQuote("INFY", okF)).price, 1110);
+  await assert.rejects(fetchNseQuote("INFY", hang)); assert.equal(nseCooldown(), 0);
+  resetNse();
+});

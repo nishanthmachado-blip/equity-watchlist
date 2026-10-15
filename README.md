@@ -1,5 +1,20 @@
 # Equity Watchlist MVP
 
+## v4.8.2: what changed — one price for every screen
+
+- **Valuation, Home and Portfolio now use the Swing page's price path.** Every live quote (Swing page, the header
+  Refresh, the automatic refresh, Get valuation) goes into one shared store, and every screen reads from it, so INFY
+  shows the same price everywhere.
+- **Why prices were stuck:** the watchlist refresh asked NSE first, one stock at a time. When NSE does not answer
+  (instead of refusing), each stock waited up to 15 s and NSE was never paused, so the refresh ran out of time after a
+  few stocks. NSE now waits 8 s at most and pauses for 5 minutes after three silent failures; the refresh starts with
+  one Yahoo request for all stocks, then takes the Swing page's per-stock path (NSE → Yahoo → Google → Screener,
+  newest quote wins) for the rest. Anything unfinished completes in the background and appears by itself.
+- **Get valuation fetches the live price** at the same time as the fundamentals.
+- **The "Stock to value" card updates itself** when a newer price arrives and shows its source and time
+  (for example "Yahoo · 3:28 pm"), the same label as the Swing page.
+- Header button shows "Loading N…" while quotes finish in the background; the toast names stocks no source could price.
+
 ## v4.8.1: what changed — PAT tile, profit and loss colours
 
 - **🧾 Profit after tax (PAT)** tile on Swing trading: what you would keep if you sold every position now, after STT (0.1% each side), the other charges (exchange, SEBI, stamp, GST, DP) and tax.

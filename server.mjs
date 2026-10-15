@@ -342,7 +342,7 @@ async function resolveHoldingSymbols(items) {
 const dividendsFile = path.join(DATA_DIR, "dividends-cache.json"), technicalsFile = path.join(DATA_DIR, "technicals-cache.json");
 // Every valuation row also carries its dividend lens (from the cached dividend history) and the Value / Growth / Buy verdict.
 async function computeRows() {
-  const [stocks, fundamentals, divCache, sx, glOv] = await Promise.all([readWatchlist(), readFundamentals(), readJson(dividendsFile, {}), readJson(screenerExtraFile, {}), readJson(U.growthOverridesFile, {})]);
+  const [stocks, fundamentals, divCache, sx, glOv] = await Promise.all([syncLivePrices().then(r => r.stocks), readFundamentals(), readJson(dividendsFile, {}), readJson(screenerExtraFile, {}), readJson(U.growthOverridesFile, {})]);
   const exOf = new Map(stocks.map(st => [symOf(st), st.exchange || "NSE"]));
   const rows = computeAll(stocks, fundamentals).map(r => {
     const sym = String(r.symbol || "").toUpperCase(), ev = divCache[sym]?.events;
@@ -737,14 +737,15 @@ async function fetchLiveQuote(i) {
   if (livePending.has(key)) return livePending.get(key);
   const run = (async () => {
     const tries = [];
-    if (PRICE_SOURCES.includes("nse") && ex === "NSE" && !nseCooldown()) tries.push(async () => { const q = await paced("nse", 350, () => fetchNseQuote(i.symbol)); return q.price > 0 ? { price: q.price, prevClose: q.prevClose ?? null, source: "NSE", asOf: q.asOf || null } : null; });
-    if (PRICE_SOURCES.includes("yahoo")) tries.push(async () => { const q = await yahooQuote(i.symbol, ex); return { price: q.price, prevClose: q.prevClose ?? null, source: "Yahoo", asOf: q.asOf }; });
-    if (PRICE_SOURCES.includes("google")) tries.push(async () => { if (googleCooldown()) return null; const q = await paced("google", 500, () => fetchGoogleQuote(i.symbol, { exchange: ex === "BSE" ? "BOM" : googleConfig.exchange })); return { price: q.price, prevClose: q.prevClose ?? null, source: "Google", asOf: q.asOf }; });
+    if (PRICE_SOURCES.includes("nse") && ex === "NSE" && !nseCooldown()) tries.push(async () => { const q = await paced("nse", 350, () => fetchNseQuote(i.symbol)); return q.price > 0 ? { price: q.price, prevClose: q.prevClose ?? null, low: q.low52 || null, high: q.high52 || null, source: "NSE", asOf: q.asOf || null } : null; });
+    if (PRICE_SOURCES.includes("yahoo")) tries.push(async () => { const q = await yahooQuote(i.symbol, ex); return { price: q.price, prevClose: q.prevClose ?? null, low: q.low, high: q.high, source: "Yahoo", asOf: q.asOf }; });
+    if (PRICE_SOURCES.includes("google")) tries.push(async () => { if (googleCooldown()) return null; const q = await paced("google", 500, () => fetchGoogleQuote(i.symbol, { exchange: ex === "BSE" ? "BOM" : googleConfig.exchange })); return { price: q.price, prevClose: q.prevClose ?? null, low: q.low || null, high: q.high || null, source: "Google", asOf: q.asOf }; });
     if (PRICE_SOURCES.includes("screener") && ex === "NSE") tries.push(async () => { if (screenerCooldown()) return null; const q = await paced("screener", 1200, () => fetchScreenerPrice({ symbol: i.symbol })); return { price: q.price, prevClose: null, source: "Screener", asOf: null }; });
     const errs = []; let best = null;
     for (const t of tries) {
       try { const v = await t(); if (!v) continue; best = pickFresher(best, v); if (isFresh(best)) break; } catch (e) { errs.push(errText(e).slice(0, 80)); }
     }
+    if (best && i.last > 0 && /Google|Screener/.test(best.source) && Math.abs(best.price / i.last - 1) > 0.4) { errs.push(`${best.source} ₹${best.price} is >40% from ₹${i.last}; ignored`); best = null; }
     if (best) { best.at = Date.now(); livePriceCache.set(key, best); }
     console.log(`[live] ${i.symbol}: ${best ? `${best.source} ₹${best.price}${best.asOf ? ` @ ${new Date(best.asOf).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}` : ""}` : "no price"}${errs.length ? ` (failed: ${errs.join(" | ")})` : ""}`);
     return best;
@@ -771,6 +772,30 @@ async function livePrices(items, maxAgeMs = 45e3, { budgetMs = 8000 } = {}) {
   }
   out.pending = pending;
   return out;
+}
+// One price store for every screen. Whatever the live path fetched (Swing page, header refresh, the minute timer,
+// Get valuation) sits in livePriceCache; this copies any quote newer than the saved one into this account's watchlist,
+// so Valuation, Home, Portfolio and Swing always show the same price. Returns the (possibly updated) watchlist.
+const liveTime = q => Math.min(Date.parse(q.asOf || "") || q.at || 0, q.at || Date.now());
+async function syncLivePrices() {
+  const stocks = await readWatchlist(), patch = new Map(), bySource = {};
+  for (const x of stocks) {
+    const sym = symOf(x); if (!sym) continue;
+    const q = livePriceCache.get(`${x.exchange || "NSE"}:${sym}`);
+    if (!q || q.stale || !(q.price > 0)) continue;
+    let saved = Date.parse(x.priceAt || "") || 0; if (saved > Date.now() + 60e3) saved = 0; // a bad future stamp must not freeze the price
+    const t = liveTime(q);
+    if (t <= saved) continue;
+    if (/google|screener/i.test(q.source) && x.price > 0 && Math.abs(q.price / x.price - 1) > 0.4) continue; // scraped page resolved the wrong instrument
+    const hasRange = q.low > 0 && q.high > 0;
+    patch.set(x.id, { price: q.price, ...(hasRange ? { low: q.low, high: q.high, rangeUpdated: new Date().toISOString() } : { low: x.low > 0 ? Math.min(x.low, q.price) : q.price, high: x.high > 0 ? Math.max(x.high, q.price) : q.price }), prevClose: q.prevClose ?? x.prevClose ?? null, priceAt: new Date(t).toISOString(), priceSource: q.source, feedStatus: "Price refreshed", updated: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) });
+    bySource[q.source] = (bySource[q.source] || 0) + 1;
+  }
+  if (!patch.size) return { stocks, changed: 0, bySource };
+  const fresh = await readWatchlist(); // re-read right before writing so an edit made meanwhile is not lost
+  const next = fresh.map(x => (patch.has(x.id) ? { ...x, ...patch.get(x.id) } : x));
+  await persistWatchlist(next, fresh);
+  return { stocks: next, changed: patch.size, bySource };
 }
 // A quote is "fresh" when its market timestamp is within 3 minutes (or the market is closed); NSE counts as fresh.
 function isFresh(q) { if (!q) return false; if (q.source === "NSE") return true; if (!marketIsOpen()) return !!q.asOf || q.source !== "Screener"; return !!q.asOf && Date.now() - Date.parse(q.asOf) < 3 * 60e3; }
@@ -799,6 +824,7 @@ async function swingView({ alerts = true, fresh = false } = {}) {
   const dd = dedupePositions(st.positions || []), positions = dd.list; // older versions could hold one stock twice: merge them
   if (dd.merged.length) { st.positions = positions; await writeJson(swingFile(), st); console.log(`[swing] merged duplicate positions: ${dd.merged.join(", ")}`); }
   const prices = await livePrices([...positions, ...watch], fresh ? 0 : 45e3);
+  syncLivePrices().catch(() => {}); // the same quotes go to the watchlist, so Valuation and Home match this page
   const pricePending = prices.pending || 0;
   const view = evaluateSwing({ positions, watch, prices, settings: st.settings || {}, cash: st.cash?.balance ?? null });
   if (alerts && (positions.length || watch.length)) {
@@ -1250,25 +1276,20 @@ const quoteCache = new Map(); // "EX:SYM" -> { price, low, high, prevClose, asOf
 let priceRun = null;
 async function fetchQuotesFast(items, budgetMs) {
   const out = new Map(), key = i => `${i.exchange}:${i.symbol}`, deadline = Date.now() + budgetMs;
-  const left = () => items.filter(i => !out.has(key(i)));
   const fresh = q => q && (q.source === "NSE" || (q.asOf && Date.now() - Date.parse(q.asOf) < 3 * 60e3) || !marketIsOpen());
   const ok = (i, q) => { if (!(q?.price > 0)) return false; if (i.last > 0 && Math.abs(q.price / i.last - 1) > 0.4) return false; return true; }; // a quote 40% off the last price = wrong instrument
-  if (PRICE_SOURCES.includes("nse")) for (const i of left().filter(x => x.exchange === "NSE")) {
-    if (nseCooldown() || Date.now() > deadline) break;
-    try { const q = await paced("nse", 300, () => fetchNseQuote(i.symbol)); const v = { price: q.price, low: q.low52 || null, high: q.high52 || null, prevClose: q.prevClose ?? null, asOf: q.asOf || new Date().toISOString(), source: "NSE" }; if (ok(i, v)) out.set(key(i), v); } catch { /* next source */ }
+  // 1. Head start: one Yahoo request for every stock at once (a few hundred ms when it works).
+  if (PRICE_SOURCES.includes("yahoo") && items.length > 3 && !(yahooCooldown() > Date.now())) {
+    try { const qs = await yahooQuotes(items.map(i => ({ symbol: i.symbol, exchange: i.exchange }))); for (const i of items) { const q = qs.get(i.symbol); const v = q && { price: q.price, low: q.low52 ?? null, high: q.high52 ?? null, prevClose: Number.isFinite(q.pChange) && q.price ? Number((q.price / (1 + q.pChange / 100)).toFixed(2)) : null, asOf: q.time || null, source: "Yahoo" }; if (ok(i, v)) { out.set(key(i), v); livePriceCache.set(key(i), { ...v, at: Date.now() }); } } } catch (e) { console.log(`[prices] Yahoo batch unavailable (${errText(e).slice(0, 80)}); going stock by stock`); }
   }
-  if (PRICE_SOURCES.includes("yahoo") && left().length && !(yahooCooldown() > Date.now())) {
-    try { const qs = await yahooQuotes(left().map(i => ({ symbol: i.symbol, exchange: i.exchange }))); for (const i of left()) { const q = qs.get(i.symbol); const v = q && { price: q.price, low: q.low52 ?? null, high: q.high52 ?? null, prevClose: Number.isFinite(q.pChange) && q.price ? Number((q.price / (1 + q.pChange / 100)).toFixed(2)) : null, asOf: q.time || null, source: "Yahoo Finance" }; if (ok(i, v)) out.set(key(i), v); } } catch { /* next source */ }
-  }
-  // Still missing, or only a delayed quote while the market is open: the per-stock sources, newest quote wins.
-  for (const i of items.filter(x => !fresh(out.get(key(x))))) {
-    if (Date.now() > deadline) break;
-    const tries = [];
-    if (PRICE_SOURCES.includes("yahoo") && !out.has(key(i))) tries.push(async () => { const q = await yahooQuote(i.symbol, i.exchange); return { ...q, source: "Yahoo Finance" }; });
-    if (PRICE_SOURCES.includes("google") && !googleCooldown()) tries.push(async () => { const q = await paced("google", 500, () => fetchGoogleQuote(i.symbol, { exchange: i.exchange === "BSE" ? "BOM" : googleConfig.exchange })); return { price: q.price, low: q.low, high: q.high, prevClose: q.prevClose ?? null, asOf: q.asOf, source: "Google Finance" }; });
-    if (PRICE_SOURCES.includes("screener") && i.exchange === "NSE" && !out.has(key(i)) && !screenerCooldown()) tries.push(async () => { const q = await paced("screener", 1200, () => fetchScreenerPrice({ symbol: i.symbol })); return { ...q, asOf: null }; });
-    for (const t of tries) { if (Date.now() > deadline) break; try { const v = await t(); if (ok(i, v)) out.set(key(i), pickFresher(out.get(key(i)), v)); if (fresh(out.get(key(i)))) break; } catch { /* next */ } }
-  }
+  // 2. Exactly the Swing page's path for everything else (NSE → Yahoo → Google → Screener, newest quote wins), four
+  //    stocks at a time; each site keeps its own pacing. Whatever is unfinished at the deadline completes in the
+  //    background into the shared cache, and syncLivePrices() writes it to the watchlists on the next check.
+  const todo = items.filter(i => !fresh(out.get(key(i))));
+  let next = 0;
+  const worker = async () => { while (next < todo.length && Date.now() < deadline) { const i = todo[next++]; try { const v = await fetchLiveQuote(i); if (ok(i, v)) out.set(key(i), pickFresher(out.get(key(i)), v)); } catch { /* next stock */ } } };
+  await Promise.race([Promise.all(Array.from({ length: Math.min(4, todo.length) }, worker)), new Promise(r => setTimeout(r, Math.max(0, deadline - Date.now())))]);
+  if (next < todo.length) { const rest = todo.slice(next); next = todo.length; (async () => { for (const i of rest) await fetchLiveQuote(i).catch(() => {}); })(); }
   return out;
 }
 async function refreshAllPrices({ user = null, force = false } = {}) {
@@ -1285,22 +1306,16 @@ async function refreshAllPrices({ user = null, force = false } = {}) {
         for (const x of [...(st.positions || []), ...(st.watch || [])]) { const k = `${x.exchange || "NSE"}:${x.symbol}`; if (!items.has(k)) items.set(k, { symbol: x.symbol, exchange: x.exchange || "NSE" }); }
       };
       if (user) await asUser(user, collect); else await forEachUser(collect);
-      const all = [...items.values()], need = all.filter(i => force || !(quoteCache.get(`${i.exchange}:${i.symbol}`)?.at > Date.now() - 45e3));
-      const got = await fetchQuotesFast(need, Math.max(20e3, PRICE_REFRESH_SEC * 800));
-      for (const [k, q] of got) { quoteCache.set(k, { ...q, at: Date.now() }); livePriceCache.set(k, { price: q.price, prevClose: q.prevClose ?? null, source: q.source.replace(" Finance", ""), asOf: q.asOf, at: Date.now() }); }
-      // Write each account's watchlist (only stocks that got a newer quote) and check its alerts
-      const bySource = {}; let failed = 0;
+      const all = [...items.values()], need = all.filter(i => force || !(livePriceCache.get(`${i.exchange}:${i.symbol}`)?.at > Date.now() - 45e3));
+      // The header button waits ~12 s (the rest finishes in the background); the timer allows most of its interval.
+      const got = await fetchQuotesFast(need, force ? 12e3 : Math.max(20e3, PRICE_REFRESH_SEC * 800));
+      for (const [k, q] of got) quoteCache.set(k, { ...q, at: Date.now() });
+      // Write each account's watchlist from the shared live cache (same store the Swing page reads) and check its alerts
+      const bySource = {};
+      for (const q of got.values()) bySource[q.source] = (bySource[q.source] || 0) + 1;
       for (const u of accounts) await asUser(u, async () => {
-        const stocks = await readWatchlist(); let changed = false;
-        const next = stocks.map(x => {
-          const sym = symOf(x), q = sym && quoteCache.get(`${x.exchange || "NSE"}:${sym}`);
-          if (!q || q.at < t0 - 45e3) { if (sym && need.some(i => i.symbol === sym)) failed++; return x; }
-          if (Date.parse(x.priceAt || "") >= q.at) return x;
-          changed = true; bySource[q.source] = (bySource[q.source] || 0) + 1;
-          const hasRange = q.low > 0 && q.high > 0;
-          return { ...x, price: q.price, ...(hasRange ? { low: q.low, high: q.high, rangeUpdated: new Date().toISOString() } : { low: x.low > 0 ? Math.min(x.low, q.price) : q.price, high: x.high > 0 ? Math.max(x.high, q.price) : q.price }), priceAt: q.asOf && Date.parse(q.asOf) <= Date.now() + 60e3 ? q.asOf : new Date(q.at).toISOString(), priceSource: q.source, feedStatus: "Price refreshed", updated: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) };
-        });
-        if (changed) { await persistWatchlist(next, stocks); await runAlerts((await computeRows()).rows).catch(() => {}); }
+        const r = await syncLivePrices();
+        if (r.changed) await runAlerts((await computeRows()).rows).catch(() => {});
       });
       Object.assign(priceState, { lastRun: new Date().toISOString(), lastDurationMs: Date.now() - t0, lastCount: got.size, lastFailed: Math.max(0, need.length - got.size), bySource });
       if (got.size) lastPriceRefreshAt = priceState.lastRun;
@@ -1346,14 +1361,29 @@ if (process.env.AUTO_FUNDAMENTALS !== "0" && !process.env.NODE_TEST_CONTEXT) set
 async function appHandler(req, res, url) {
   try {
     if (url.pathname === "/api/health") return reply(res, 200, { ok: true, lastPriceRefreshAt, marketOpen: marketIsOpen(), provider: `${PRICE_SOURCES.join(" → ")} price feeds + Google News RSS`, priceSources: PRICE_SOURCES, kiteEnabled: kite.config.enabled, scheduledRefresh: `Every ${PRICE_REFRESH_SEC} seconds during NSE cash-market hours, plus once after the close`, yahooCooldownUntil: yahooCooldown() || null, googleCooldownUntil: googleCooldown() || null, nseCooldownUntil: nseCooldown() || null });
+    // "version" changes whenever any of this account's prices changes (also quotes that finished in the background).
+    const priceVersion = stocks => stocks.reduce((m, x) => Math.max(m, Date.parse(x.updatedAt || "") || 0, Date.parse(x.priceAt || "") || 0), 0) + ":" + stocks.reduce((s, x) => s + (Number(x.price) || 0), 0).toFixed(2);
+    const myPending = stocks => stocks.filter(x => livePending.has(`${x.exchange || "NSE"}:${symOf(x)}`)).length;
     if (url.pathname === "/api/prices/status" && req.method === "GET") {
-      const stocks = await readWatchlist(), latest = stocks.reduce((m, x) => Math.max(m, Date.parse(x.priceAt || "") || 0), 0);
-      return reply(res, 200, { ...priceState, intervalSec: PRICE_REFRESH_SEC, marketOpen: marketIsOpen(), myLatestPriceAt: latest ? new Date(latest).toISOString() : null });
+      const { stocks } = await syncLivePrices(), latest = stocks.reduce((m, x) => Math.max(m, Date.parse(x.priceAt || "") || 0), 0);
+      return reply(res, 200, { ...priceState, intervalSec: PRICE_REFRESH_SEC, marketOpen: marketIsOpen(), myLatestPriceAt: latest ? new Date(latest).toISOString() : null, version: priceVersion(stocks), pending: myPending(stocks) });
     }
     if (url.pathname === "/api/prices/refresh" && req.method === "POST") {
-      const st = await refreshAllPrices({ user: currentUser(), force: true });
-      const stocks = await readWatchlist(), latest = stocks.reduce((m, x) => Math.max(m, Date.parse(x.priceAt || "") || 0), 0);
-      return reply(res, 200, { ...st, intervalSec: PRICE_REFRESH_SEC, marketOpen: marketIsOpen(), myLatestPriceAt: latest ? new Date(latest).toISOString() : null, failedStocks: stocks.filter(x => symOf(x) && !(Date.parse(x.priceAt || "") > Date.now() - 5 * 60e3)).slice(0, 8).map(x => symOf(x)) });
+      const t0 = Date.now(), st = await refreshAllPrices({ user: currentUser(), force: true });
+      const { stocks } = await syncLivePrices(), latest = stocks.reduce((m, x) => Math.max(m, Date.parse(x.priceAt || "") || 0), 0);
+      const tracked = stocks.filter(x => symOf(x)), pending = myPending(stocks);
+      // Not priced in this refresh and not still loading = the sources had nothing for it
+      const failedStocks = tracked.filter(x => !(livePriceCache.get(`${x.exchange || "NSE"}:${symOf(x)}`)?.at >= t0) && !livePending.has(`${x.exchange || "NSE"}:${symOf(x)}`)).map(symOf);
+      return reply(res, 200, { ...st, intervalSec: PRICE_REFRESH_SEC, marketOpen: marketIsOpen(), myLatestPriceAt: latest ? new Date(latest).toISOString() : null, version: priceVersion(stocks), pending, failedStocks: failedStocks.slice(0, 8), failedCount: failedStocks.length });
+    }
+    // Live price for a few stocks right now (Get valuation, opening a stock): the Swing page's path, then saved for every screen
+    if (url.pathname === "/api/prices/live" && req.method === "POST") {
+      const { symbols } = await readBody(req); const stocks = await readWatchlist();
+      const items = (Array.isArray(symbols) ? symbols : []).slice(0, 20).map(s => String(s).toUpperCase()).map(sym => { const x = stocks.find(y => symOf(y) === sym); return { symbol: sym, exchange: x?.exchange || "NSE", last: x?.price }; });
+      if (!items.length) return reply(res, 400, { message: "symbols required" });
+      const got = await livePrices(items, 20e3, { budgetMs: 8000 });
+      await syncLivePrices();
+      return reply(res, 200, { prices: Object.fromEntries([...got].filter(([, v]) => !v.stale).map(([k, v]) => [k, { price: v.price, source: v.source, asOf: v.asOf || null }])), pending: got.pending });
     }
     if (url.pathname === "/api/price-compare" && req.method === "GET") {
       // Every source for one symbol, one at a time, ignoring cool-downs: shows exactly what each site answers from this machine.
@@ -1722,7 +1752,7 @@ async function appHandler(req, res, url) {
         return reply(res, 200, { symbols: clean });
       }
     }
-    if (url.pathname === "/api/stocks" && req.method === "GET") return reply(res, 200, { stocks: await readWatchlist() });
+    if (url.pathname === "/api/stocks" && req.method === "GET") return reply(res, 200, { stocks: (await syncLivePrices()).stocks });
     if (url.pathname === "/api/history" && req.method === "GET") {
       const history = await readHistory();
       const id = url.searchParams.get("id");
@@ -1752,7 +1782,10 @@ async function appHandler(req, res, url) {
       const targets = (Array.isArray(ids) && ids.length ? stocks.filter(s => ids.includes(s.id)) : []).slice(0, 10);
       if (!targets.length) return reply(res, 400, { message: "No matching stocks (max 10 per call)." });
       console.log(`[fundamentals] Fetching ${targets.length} stock(s).`);
-      const results = await runFundamentalsFetch(targets, force, ["screener", "yahoo", "nse"].includes(source) ? source : "auto");
+      const [results] = await Promise.all([runFundamentalsFetch(targets, force, ["screener", "yahoo", "nse"].includes(source) ? source : "auto"),
+        // and the live price at the same time, on the Swing page's path, so the valuation uses today's price
+        livePrices(targets.filter(t => symOf(t)).map(t => ({ symbol: symOf(t), exchange: t.exchange || "NSE", last: t.price })), 20e3, { budgetMs: 8000 }).catch(() => null)]);
+      await syncLivePrices().catch(() => {});
       // Rate-limited: keep the stock and try again by itself in 20 minutes (the timer keeps this user's context).
       const limited = results.filter(r => r.rateLimited).map(r => targets.find(t => t.company === r.company)).filter(Boolean).map(symOf);
       if (limited.length) setTimeout(() => queueFill(limited).catch(() => {}), 20 * 60e3).unref();
