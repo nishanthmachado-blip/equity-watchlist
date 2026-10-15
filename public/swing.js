@@ -26,6 +26,7 @@
       <div><span>Invested</span><strong>${amt(t.invested)}</strong></div>
       <div><span>Value now</span><strong>${amt(t.value)}</strong></div>
       <div class="${t.pnl > 0 ? "sw-up" : t.pnl < 0 ? "sw-down" : ""}"><span>Profit / loss</span><strong class="${cls(t.pnl)}">${sg(t.pnl)}</strong><small class="${cls(t.pnlPct)}">${pct(t.pnlPct)}</small></div>
+      ${t.pat ? `<div class="sw-pat${t.pat.net < 0 ? " neg" : ""}" title="If you sold every position now"><span>🧾 Profit after tax (PAT)</span><strong class="${cls(t.pat.net)}">${sg(t.pat.net)}</strong><small>if you book all now: P/L − STT ${inr(t.pat.stt)} − charges ${inr(t.pat.otherCharges)} − tax ${inr(t.pat.tax)}</small><button type="button" class="pat-btn" data-go="pat">How it is worked out</button></div>` : ""}
       <div class="${t.takeProfit ? "sw-tp" : ""}"><span>🎯 To book profit</span><strong>${t.takeProfit}</strong>${t.stopHit ? `<small class="avoid">🛑 ${t.stopHit} at stop-loss</small>` : ""}</div>
       <div class="${t.deploy ? "sw-dp" : ""}"><span>💰 Deploy signals</span><strong>${t.deploy}</strong>${t.deployNow ? `<small>up to ${amt(t.deployNow)}</small>` : ""}</div>
       <div><span>Booked so far</span><strong class="${cls(v.realised.pnl)}">${sg(v.realised.pnl)}</strong><small>${v.realised.count} closed trade${v.realised.count === 1 ? "" : "s"}${v.realisedNet && v.realised.count ? ` · ≈ ${sg(v.realisedNet.net)} after tax & charges` : ""}</small></div>
@@ -229,6 +230,19 @@
       ${row("<b>You keep</b>", `<b>${sg(e.net)}</b>${e.keepPct !== null ? `<small style="display:block">${e.keepPct}% of the gross profit</small>` : ""}`, `sw-keep ${cls(e.net)}`)}</table>
       <p class="hint" style="margin:6px 0 0">Estimate: Zerodha delivery charges; ${e.rules.asOf}. Surcharge (very high incomes) and your other gains/losses this year are not included. Not tax advice.</p>`;
   }
+  function patDialog() {
+    const p = sw.totals.pat; if (!p) return;
+    const row = (k, v, c = "") => `<tr${c ? ` class="${c}"` : ""}><td>${k}</td><td class="num">${v}</td></tr>`;
+    window.ui.dialog({ title: "Profit after tax if you book everything now", icon: "🧾", okText: "Close", hideCancel: true, wide: true,
+      bodyHtml: `<table class="sw-taxt">${row(`Sale value of all ${p.positions} positions`, inr(p.sellValue))}${row("<b>Profit / loss before tax</b>", `<b class="${cls(p.gross)}">${sg(p.gross)}</b>`)}
+        ${row("STT 0.1% (buy + sell)", `− ${inr(p.stt)}`)}${row("Exchange, SEBI, stamp, GST, DP charges", `− ${inr(p.otherCharges)}`)}
+        ${p.stGain ? row(`STCG tax 20% on ${inr(p.stGain)} (shares held 12 months or less)`, `− ${inr(p.stTax)}`) : ""}
+        ${p.ltGain ? row(`LTCG tax 12.5% on ${inr(p.ltGain - p.exemptUsed)} (${inr(p.exemptUsed)} of long-term gain covered by the ₹1.25 L yearly exemption)`, `− ${inr(p.ltTax)}`) : ""}
+        ${p.cess ? row("Health & education cess 4%", `− ${inr(p.cess)}`) : ""}
+        ${row("<b>Profit after tax (PAT)</b>", `<b class="${cls(p.net)}">${sg(p.net)}</b>${p.keepPct !== null ? `<small style="display:block">${p.keepPct}% of the profit</small>` : ""}`, "sw-keep")}</table>
+        <p class="hint" style="margin:8px 0 0">Losses in one stock offset gains in another, and the LTCG exemption is counted once for the year (less what you have already used). Estimate: no surcharge, and your other sales this year are not included. Not tax advice.</p>`,
+      collect: () => true });
+  }
   // Tax calculator: any buy / sell, or the user's own numbers ("₹19,000 profit")
   async function taxCalculator(p = null) {
     await window.ui.dialog({
@@ -346,6 +360,7 @@
     $("#swRefresh").onclick = () => load(false, true);
     $("#swingView").addEventListener("click", async e => {
       if (e.target.closest('[data-go="paste"]')) { pasteDialog(); return; }
+      if (e.target.closest('[data-go="pat"]')) { patDialog(); return; }
       const nt = e.target.closest("[data-tax]"); if (nt) { const p = sw.positions.find(x => x.id === nt.dataset.tax); if (p) window.ui.dialog({ title: `${p.name}: if you sold all ${p.qty} now`, icon: "🧮", okText: "Close", hideCancel: true, wide: true, bodyHtml: taxTable(p.ifSold), collect: () => true }); return; }
       if (e.target.closest('[data-go="cash"]')) { settingsDialog("cash"); return; }
       const tb = e.target.closest("[data-tact]");

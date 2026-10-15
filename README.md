@@ -1,5 +1,14 @@
 # Equity Watchlist MVP
 
+## v4.8.1: what changed — PAT tile, profit and loss colours
+
+- **🧾 Profit after tax (PAT)** tile on Swing trading: what you would keep if you sold every position now, after STT (0.1% each side), the other charges (exchange, SEBI, stamp, GST, DP) and tax.
+  - Tax is STCG 20% on shares held 12 months or less; LTCG 12.5% above the ₹1.25 L yearly exemption, counted once, less what is already used; plus 4% cess.
+  - Tax is worked out across the whole portfolio, so a loss in one stock offsets gains in others.
+  - "How it is worked out" shows the full breakdown.
+- **Colours:** profit is bold green and loss bold red everywhere (cards, tables, notes), in light and dark themes, even where a theme sets its own card colours.
+- The summary cards sit in two rows of four.
+
 ## v4.8.0: what changed — live prices on every tab
 
 - **Prices update every minute while the market is open** (9:15 am–3:30 pm IST, weekdays). Before, the interval was 15 minutes. Set the interval with `PRICE_REFRESH_SECONDS` (default 60, minimum 30).

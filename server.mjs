@@ -775,6 +775,18 @@ async function livePrices(items, maxAgeMs = 45e3, { budgetMs = 8000 } = {}) {
 // A quote is "fresh" when its market timestamp is within 3 minutes (or the market is closed); NSE counts as fresh.
 function isFresh(q) { if (!q) return false; if (q.source === "NSE") return true; if (!marketIsOpen()) return !!q.asOf || q.source !== "Screener"; return !!q.asOf && Date.now() - Date.parse(q.asOf) < 3 * 60e3; }
 function pickFresher(a, b) { if (!a) return b; const ta = Date.parse(a.asOf || "") || 0, tb = Date.parse(b.asOf || "") || 0; return tb > ta ? b : a; }
+// Profit after tax if every position were sold now: charges add up per position; tax is worked out once for the whole
+// portfolio, so a loss in one stock offsets gains in another and the ₹1.25 L LTCG exemption is used only once.
+function portfolioPat(list, exemptLeft, charges) {
+  if (!list.length) return null;
+  const sum = k => list.reduce((s, e) => s + k(e), 0);
+  const gross = sum(e => e.gross), stt = sum(e => e.charges.stt), other = sum(e => e.charges.total - e.charges.stt);
+  let st = sum(e => e.shortTerm.gain), lt = sum(e => e.longTerm.gain);
+  if (st < 0) { lt += st; st = 0; } lt = Math.max(0, lt);
+  const exemptUsed = Math.min(lt, exemptLeft), stTax = st * TAX_RULES.stRate, ltTax = (lt - exemptUsed) * TAX_RULES.ltRate, cess = (stTax + ltTax) * (charges.cessPct ?? 4) / 100;
+  const tax = stTax + ltTax + cess, net = gross - stt - other - tax, R = v => Math.round(v);
+  return { positions: list.length, sellValue: R(sum(e => e.sellValue)), gross: R(gross), stt: R(stt), otherCharges: R(other), stGain: R(st), ltGain: R(lt), exemptUsed: R(exemptUsed), stTax: R(stTax), ltTax: R(ltTax), cess: R(cess), tax: R(tax), net: R(net), keepPct: gross > 0 ? Math.round(net / gross * 1000) / 10 : null };
+}
 // Booked profit after charges and tax, per financial year (the ₹1.25L LTCG exemption applies once per year).
 function realisedAfterTax(closed, charges) {
   const tx = swingTaxRows(closed); let ch = 0;
@@ -805,6 +817,7 @@ async function swingView({ alerts = true, fresh = false } = {}) {
     r.ifSold = sellTaxEstimate({ lots: lotsForSale(p, r.qty), sellPrice: r.price, exchange: r.exchange, ltExemptLeft: exemptLeft, charges });
     if (r.sellNow > 0 && r.sellNow < r.qty) r.ifSellNow = sellTaxEstimate({ lots: lotsForSale(p, r.sellNow), sellPrice: r.price, exchange: r.exchange, ltExemptLeft: exemptLeft, charges });
   }
+  view.totals.pat = portfolioPat(view.positions.map(r => r.ifSold).filter(Boolean), exemptLeft, charges);
   return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), ledger: buildLedger(positions, all), taxInfo: { exemptLeft, charges, ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0 }, realisedNet: realisedAfterTax(all, charges), pricePending, cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
 }
 // Closed swing trades as an Excel file: one row per FIFO buy lot (short / long term), a yearly tax estimate and the scorecard.
