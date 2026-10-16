@@ -128,3 +128,14 @@ test("NSE that never answers is paused after three silent failures, so prices mo
   await assert.rejects(fetchNseQuote("INFY", hang)); assert.equal(nseCooldown(), 0);
   resetNse();
 });
+
+test("NSE price history: rows parsed oldest first, bad rows dropped", async () => {
+  const { parseNseHistory } = await import("../nse.mjs");
+  const bars = parseNseHistory({ data: [
+    { CH_TIMESTAMP: "2026-10-15", CH_CLOSING_PRICE: 41.2, CH_TRADE_HIGH_PRICE: 41.5, CH_TRADE_LOW_PRICE: 40.1 },
+    { CH_TIMESTAMP: "2026-10-14", CH_CLOSING_PRICE: "40.9", CH_TRADE_HIGH_PRICE: 41, CH_TRADE_LOW_PRICE: 40.5 },
+    { CH_TIMESTAMP: "bad", CH_CLOSING_PRICE: 1 }, { CH_TIMESTAMP: "2026-10-13", CH_CLOSING_PRICE: null }] });
+  assert.equal(bars.length, 2);
+  assert.deepEqual(bars.map(b => b.c), [40.9, 41.2]);
+  assert.equal(bars[1].h, 41.5);
+});

@@ -1,5 +1,19 @@
 # Equity Watchlist MVP
 
+## v4.8.3: what changed — ETFs no longer fail when Yahoo is busy
+
+- **Why ETFs failed:** an ETF is valued on 5 years of daily prices, which came only from Yahoo. The evening swing-ideas
+  scan reads hundreds of charts from the same Yahoo service, so Yahoo started rate-limiting the server and every ETF
+  showed "data sources busy". Stocks were fine because they use Screener first.
+- **More history sources for ETFs:** Yahoo → Kite (when you are logged in to Zerodha in the app) → NSE's historical
+  data → Screener's chart, first one that answers wins.
+- **Saved history:** each successful download is kept (`etf-bars.json`, shared, public prices). When every source is
+  busy, the saved history plus today's live price values the ETF; a full reading saved earlier is never downgraded.
+- **Last resort:** with no history anywhere, the ETF is valued on its place in the 52-week range from a live quote
+  (marked low confidence) and the full trend view is retried every 20 minutes, and whenever you press Get valuation.
+- A Yahoo rate limit on an ETF also rests the swing scan's Yahoo use for 15 minutes, and the scan now spaces Yahoo
+  requests 2 s apart (was 1.2 s).
+
 ## v4.8.2: what changed — one price for every screen
 
 - **Valuation, Home and Portfolio now use the Swing page's price path.** Every live quote (Swing page, the header

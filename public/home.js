@@ -80,7 +80,7 @@
       if (!res.symbol) throw new Error("Could not match that to an NSE-listed stock. Try the NSE symbol (the part in screener.in/company/SYMBOL).");
       const { symbol } = res; symbolUsed = symbol;
       const cached = rowFor(symbol);
-      if (cached && cached.view !== "No fundamentals" && cached.ageDays !== null && cached.ageDays < 1 && !pick?.force) {
+      if (cached && cached.view !== "No fundamentals" && cached.ageDays !== null && cached.ageDays < 1 && !pick?.force && !/range only/i.test(cached.source || "")) { // a range-only ETF reading is a stopgap: always try for the full history
         if (!listBy(activeListId)?.symbols.includes(symbol)) { lists = (await post("/api/lists/members", { id: activeListId, add: [symbol] })).lists; applyActiveList(); renderListBar(); }
         status(st, `${symbol}: fetching the live price…`);
         try { await post("/api/prices/live", { symbols: [symbol] }); await loadStocks(); await loadValuation(); } catch { /* the saved price stands */ }
@@ -225,7 +225,8 @@
     const tiles = assessable ? `
       <div class="vs-tile"><span>Fair value (bear · base · bull)</span><strong>${fv ? `${money(fv.bear)} · ${money(fv.base)} · ${money(fv.bull)}` : "—"}</strong>${up}</div>
       <div class="vs-tile"><span>Buy zone</span><strong>${r.zoneLow ? `${money(r.zoneLow)} – ${money(r.zoneHigh)}${r.floored ? " ⚑" : ""}` : "—"}</strong><small>${statusChip(r.status)} ${Number.isFinite(r.gapToZone) ? `${r.gapToZone > 0 ? "+" : ""}${Math.round(r.gapToZone * 100)}% vs top of zone` : ""}</small></div>
-      ${r.etf ? `<div class="vs-tile"><span>vs its 200-day average</span><strong>${Number.isFinite(r.etf.devNow) ? `${r.etf.devNow > 0 ? "+" : ""}${fmt(r.etf.devNow)}%` : "—"}</strong><small>${viewChip(r.view)} ${Number.isFinite(r.etf.pctile) ? `${Math.round(r.etf.pctile)}th percentile of its history` : ""}</small>${gaugeHtml(r.ratio)}</div>`
+      ${r.etf && !Number.isFinite(r.etf.devNow) && Number.isFinite(r.rangePos) ? `<div class="vs-tile"><span>Place in 52-week range</span><strong>${Math.round(r.rangePos * 100)}% of the way up</strong><small>${viewChip(r.view)} low confidence: price history not available yet</small>${gaugeHtml(r.ratio)}</div>`
+        : r.etf ? `<div class="vs-tile"><span>vs its 200-day average</span><strong>${Number.isFinite(r.etf.devNow) ? `${r.etf.devNow > 0 ? "+" : ""}${fmt(r.etf.devNow)}%` : "—"}</strong><small>${viewChip(r.view)} ${Number.isFinite(r.etf.pctile) ? `${Math.round(r.etf.pctile)}th percentile of its history` : ""}</small>${gaugeHtml(r.ratio)}</div>`
         : `<div class="vs-tile"><span>${esc(r.basis || "Multiple")} vs fair</span><strong>${fmt(r.multiple)} vs ${fmt(r.fairMultiple)}</strong><small>${viewChip(r.view)}</small>${gaugeHtml(r.ratio)}</div>`}
       <div class="vs-tile"><span>52-week range</span>${rangeBar(r.low, r.high, r.price) || "<strong>—</strong>"}</div>` : "";
     const tags = c.tags.length ? c.tags.map(t => `<span class="chip v-none">${esc(t)}</span>`).join(" ") : "";

@@ -96,3 +96,30 @@ export async function fetchNseJson(apiPath, { referer = "https://www.nseindia.co
   if (!res.ok) throw new Error(`NSE HTTP ${res.status}`);
   return res.json();
 }
+
+// Daily price history from NSE's historical-data API, in chunks of ~1 year (the most NSE serves per request).
+// Rows look like { CH_TIMESTAMP: "2026-10-15", CH_CLOSING_PRICE, CH_TRADE_HIGH_PRICE, CH_TRADE_LOW_PRICE }.
+export function parseNseHistory(json) {
+  const rows = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
+  const num = v => { const x = Number(String(v ?? "").replace(/,/g, "")); return Number.isFinite(x) && x > 0 ? x : null; };
+  return rows.map(r => {
+    const d = Date.parse(r.CH_TIMESTAMP || r.mTIMESTAMP || r.chTimestamp || r.date || "");
+    return { t: Number.isFinite(d) ? Math.floor(d / 1000) : null, c: num(r.CH_CLOSING_PRICE ?? r.chClosingPrice ?? r.close), h: num(r.CH_TRADE_HIGH_PRICE ?? r.chTradeHighPrice ?? r.high), l: num(r.CH_TRADE_LOW_PRICE ?? r.chTradeLowPrice ?? r.low) };
+  }).filter(b => b.t && b.c).sort((a, b) => a.t - b.t);
+}
+export async function fetchNseHistory(symbol, { years = 5, fetchImpl = fetch, pace = fn => fn() } = {}) {
+  if (!/^[A-Z0-9&-]+$/.test(symbol)) throw new Error("bad symbol");
+  const fmt = d => `${String(d.getUTCDate()).padStart(2, "0")}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${d.getUTCFullYear()}`;
+  const seen = new Map(); let to = new Date();
+  for (let k = 0; k < years; k++) {
+    const from = new Date(to.getTime() - 360 * 864e5);
+    const path = `/api/historical/cm/equity?symbol=${encodeURIComponent(symbol)}&series=%5B%22EQ%22%5D&from=${fmt(from)}&to=${fmt(to)}`;
+    let bars;
+    try { bars = parseNseHistory(await pace(() => fetchNseJson(path, { referer: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`, fetchImpl }))); }
+    catch (e) { if (seen.size) break; throw e; } // keep the years already fetched
+    if (!bars.length) break;
+    for (const b of bars) seen.set(b.t, b);
+    to = new Date(from.getTime() - 864e5);
+  }
+  return [...seen.values()].sort((a, b) => a.t - b.t);
+}

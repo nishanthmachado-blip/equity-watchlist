@@ -9,7 +9,7 @@ import { fetchFundamentalsForStock, yahooCooldown, yahooQuotes } from "./fundame
 import { MODEL, computeAll, computeValuation, sanitizeEntry, parseCsv, FIELDS } from "./valuation.mjs";
 import { fetchScreener, screenerCooldown, screenerConfig, fetchScreenerExtras, searchScreener, resetScreener, fetchScreenerPrice } from "./screener.mjs";
 import { readXlsx, parseDelimited, extractHoldings, fundSummary } from "./funds.mjs";
-import { fetchNseQuote, mergeNse, refreshFromNse, nseCooldown, fetchNseJson, resetNse, lastNseStatus } from "./nse.mjs";
+import { fetchNseQuote, mergeNse, refreshFromNse, nseCooldown, fetchNseJson, fetchNseHistory, resetNse, lastNseStatus } from "./nse.mjs";
 import { LADDERS, DEFAULT_SETTINGS, sanitizeBuy, positionRow, stress, exposure } from "./plan.mjs";
 import { addSnapshots, performance, compare } from "./tracker.mjs";
 import { fetchGoogleQuote, googleCooldown, googleConfig, resetGoogle } from "./googlefinance.mjs";
@@ -33,7 +33,7 @@ import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { PROFILES, STYLES, buildModel, assetMix } from "./model.mjs";
 import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
 import { buildXlsx } from "./xlsx.mjs";
-import { isEtf, indexFor, parseAllIndices, etfLens } from "./etf.mjs";
+import { isEtf, indexFor, parseAllIndices, etfLens, etfType } from "./etf.mjs";
 import { snapshot as swingSnapshot, rankIdeas, positionHealth } from "./swingideas.mjs";
 import { validToken, maskToken, botInfo, findChat, sendTelegram, pushAlerts } from "./notify.mjs";
 import { SEED as SCRIP_SEED, parseKiteInstruments, parseNseEquityList, mergeMaster, searchMaster } from "./scripmaster.mjs";
@@ -414,7 +414,7 @@ async function logVerdicts(rows) { const log = await readJson(U.valuationLogFile
 // full source fails and NSE answers. Each source has its own cooldown after a 403/429 and is skipped while it is cooling.
 async function runFundamentalsFetch(targets, force = false, source = process.env.FUNDAMENTALS_SOURCE || "auto") {
   const map = await readFundamentals();
-  const fresh = e => e?.asOf && Date.now() - new Date(e.asOf).getTime() < (e.profile === "etf" ? 864e5 : 7 * 864e5); // ETFs: daily
+  const fresh = e => e?.asOf && !(e.profile === "etf" && e.thin) && Date.now() - new Date(e.asOf).getTime() < (e.profile === "etf" ? 864e5 : 7 * 864e5); // ETFs: daily; a range-only ETF is always retried
   const order = source === "auto" ? ["screener", "yahoo", "nse"] : [source];
   const results = await mapLimit(targets, 1, async stock => {
     const symbol = symOf(stock);
@@ -426,8 +426,14 @@ async function runFundamentalsFetch(targets, force = false, source = process.env
     const etf = isEtf(symbol, stock.company) || map[symbol]?.profile === "etf";
     if (etf) {
       usedNetwork = true;
-      try { entry = await fetchEtfEntry(stock); how = "ETF lens"; completeness = "ETF"; }
+      try { entry = await fetchEtfEntry(stock, { force }); how = "ETF lens"; completeness = "ETF"; }
       catch (error) { errors.push(`ETF price history: ${error.message}`); if (error.rateLimited) rateLimited = true; else hardErrors.push("etf"); }
+      if (!entry && map[symbol]?.profile === "etf" && map[symbol].etfDevQ) { // a full trend reading saved earlier beats a range-only one (today's price comes from the live feed)
+        entry = map[symbol]; how = "ETF lens"; completeness = "ETF (52-week range)"; warnings.push(`Price history unavailable right now; kept the trend data from ${map[symbol].asOf}. Retried in 20 minutes.`); errors.length = 0; hardErrors.length = 0;
+      }
+      if (!entry) { // no history anywhere: 52-week range from a live quote, and try the full lens again later
+        try { const r = await etfRangeEntry(stock); if (r) { entry = r; how = "ETF lens"; completeness = "ETF (52-week range)"; warnings.push(`Price history unavailable (${errors.join("; ").slice(0, 200)}); valued on the 52-week range for now, full trend view retried in 20 minutes.`); errors.length = 0; hardErrors.length = 0; } } catch { /* keep the errors */ }
+      }
     }
     for (const src of etf ? [] : order) {
       if (entry) break;
@@ -461,7 +467,7 @@ async function runFundamentalsFetch(targets, force = false, source = process.env
     if (usedNetwork) await new Promise(r => setTimeout(r, how?.startsWith("Screener") || order[0] === "screener" ? screenerConfig.spacingMs : 1200));
     if (!entry) { console.error(`[fundamentals] ${stock.company}: ${errors.join(" | ") || "no data"}`); return { id: stock.id, company: stock.company, symbol, error: errors.join("; ") || "No data from any source", rateLimited }; }
     if (errors.length) warnings = [...warnings, `Fallback used (${errors.join("; ")})`];
-    return { id: stock.id, company: stock.company, symbol, entry: sanitizeEntry(entry), warnings, completeness, sources: how, rateLimited: false };
+    return { id: stock.id, company: stock.company, symbol, entry: sanitizeEntry(entry), warnings, completeness, sources: how, rateLimited: false, retryLater: completeness === "ETF (52-week range)" };
   });
   const latest = await readFundamentals();
   for (const r of results) if (r.entry) latest[r.symbol] = r.entry;
@@ -875,10 +881,56 @@ async function sendSwingExport(res) {
 }
 // ETF entry: 5 years of daily prices (Yahoo), the iNAV (NSE quote) and the tracked index's P/E (NSE allIndices, cached 1 h).
 let nseIndices = { at: 0, map: null };
-async function fetchEtfEntry(stock, { requireEtf = false } = {}) {
+// ETF price history from whichever source answers: Yahoo (5 years) → Kite (a logged-in account, ~5 years) → NSE's
+// historical API → Screener's chart. Every success is saved (shared file: prices are public), so when all sources are
+// busy the saved history plus today's live price still values the ETF. Yahoo answering 429 also rests the swing-ideas
+// scan's use of Yahoo, which is what usually exhausts it.
+const etfBarsFile = path.join(DATA_DIR, "etf-bars.json");
+async function etfHistory(stock, { force = false } = {}) {
+  const symbol = symOf(stock), exchange = stock.exchange || "NSE", errs = []; let limited = false;
+  const ok = (bars, source, meta = {}) => (bars?.length >= 200 ? { bars, source, meta } : (errs.push(`${source}: only ${bars?.length || 0} days`), null));
+  const tries = [
+    async () => {
+      if (barSources.yahoo > Date.now() && !force) { errs.push("Yahoo: resting after a rate limit"); limited = true; return null; } // you asked: one request is fine
+      try { const r = await fetchChart(symbol, { exchange, range: "5y" }); return ok(r.bars, "Yahoo", r.meta); }
+      catch (e) { if (e.rateLimited) { limited = true; barSources.yahoo = Date.now() + 15 * 60e3; } throw e; }
+    },
+    async () => {
+      const kc = await anyKiteWithSession().catch(() => null); if (!kc) { errs.push("Kite: not logged in"); return null; }
+      const token = (await scripMaster()).list.find(m => m.symbol === symbol && m.exchange === exchange && m.token)?.token; if (!token) { errs.push("Kite: no instrument token"); return null; }
+      return ok(await kc.historical(token, 1850), "Kite");
+    },
+    async () => {
+      if (exchange !== "NSE") return null;
+      if (nseCooldown()) { errs.push("NSE: paused"); limited = true; return null; }
+      return ok(await fetchNseHistory(symbol, { pace: fn => paced("nse", 500, fn) }), "NSE");
+    },
+    async () => {
+      if (exchange !== "NSE") return null;
+      if (screenerCooldown()) { errs.push("Screener: cooling down"); limited = true; return null; }
+      const r = await fetchScreenerExtras({ marketSymbol: symbol, exchange }, { want: ["chart"] }); return ok(r.bars, "Screener");
+    }
+  ];
+  for (const t of tries) {
+    try { const r = await t(); if (r) { const all = await readJson(etfBarsFile, {}); all[`${exchange}:${symbol}`] = { at: Date.now(), source: r.source, bars: r.bars.slice(-1300).map(b => ({ t: b.t, c: b.c, h: b.h ?? null, l: b.l ?? null })) }; await writeJson(etfBarsFile, all).catch(() => {}); return r; } }
+    catch (e) { errs.push(errText(e).slice(0, 120)); if (e.rateLimited) limited = true; }
+  }
+  // Every source busy or failing: the saved history, with today's live price added as the latest day
+  const saved = (await readJson(etfBarsFile, {}))[`${exchange}:${symbol}`];
+  if (saved?.bars?.length >= 200) {
+    const bars = [...saved.bars], live = (await livePrices([{ symbol, exchange }], 60e3, { budgetMs: 6000 }).catch(() => new Map())).get(symbol);
+    const today = Math.floor(Date.now() / 1000);
+    if (live && !live.stale && live.price > 0) { if (bars.at(-1).t > today - 18 * 3600) bars[bars.length - 1] = { ...bars.at(-1), c: live.price }; else bars.push({ t: today, c: live.price, h: live.price, l: live.price }); }
+    console.log(`[etf] ${symbol}: sources unavailable (${errs.join(" | ")}); using saved history from ${new Date(saved.at).toISOString().slice(0, 10)}`);
+    return { bars, source: `saved ${saved.source} history (${new Date(saved.at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}) + live price`, meta: {}, fromCache: true };
+  }
+  const err = new Error(errs.join("; ") || "no price-history source answered"); err.rateLimited = limited; throw err;
+}
+async function fetchEtfEntry(stock, { requireEtf = false, force = false } = {}) {
   const symbol = symOf(stock), exchange = stock.exchange || "NSE";
-  const { bars, meta } = await fetchChart(symbol, { exchange, range: "5y" });
-  if (requireEtf && meta.instrumentType !== "ETF") return null;
+  let bars, meta, source;
+  if (requireEtf) { ({ bars, meta } = await fetchChart(symbol, { exchange, range: "5y" })); if (meta.instrumentType !== "ETF") return null; source = "Yahoo"; }
+  else ({ bars, meta, source } = await etfHistory(stock, { force }));
   const name = stock.company && stock.company.toUpperCase() !== symbol ? stock.company : meta.longName || symbol;
   let inav = null, indexStats = null; const index = indexFor(symbol, name);
   if (exchange === "NSE" && !nseCooldown()) {
@@ -887,7 +939,21 @@ async function fetchEtfEntry(stock, { requireEtf = false } = {}) {
       try { if (!nseIndices.map || Date.now() - nseIndices.at > 3600e3) nseIndices = { at: Date.now(), map: parseAllIndices(await fetchNseJson("/api/allIndices")) }; indexStats = nseIndices.map[index] || null; } catch { /* optional */ }
     }
   }
-  return etfLens(bars, { symbol, name, inav, index, indexStats, today: istDay() });
+  const out = etfLens(bars, { symbol, name, inav, index, indexStats, today: istDay() });
+  out.source = /^saved/.test(source) ? `ETF lens: ${source}` : `ETF lens: ${source} price history`;
+  return out;
+}
+// Last resort when no price history at all can be had: value the ETF on where it sits in its 52-week range, from a live
+// quote (NSE / Google / Yahoo all report the range). Low confidence; the full trend lens is tried again in 20 minutes.
+async function etfRangeEntry(stock) {
+  const symbol = symOf(stock), exchange = stock.exchange || "NSE";
+  let q = null;
+  if (exchange === "NSE" && !nseCooldown()) try { const n = await fetchNseQuote(symbol); if (n.price > 0 && n.high52 > 0 && n.low52 > 0) q = { price: n.price, high: n.high52, low: n.low52, inav: n.inav, source: "NSE" }; } catch { /* next */ }
+  if (!q && !googleCooldown()) try { const g = await paced("google", 500, () => fetchGoogleQuote(symbol, { exchange: googleExchange(stock) })); if (g.price > 0 && g.high > 0 && g.low > 0) q = { ...g, source: "Google" }; } catch { /* next */ }
+  if (!q) try { const y = await yahooQuote(symbol, exchange); if (y.high > 0 && y.low > 0) q = { ...y, source: "Yahoo" }; } catch { /* none */ }
+  if (!q) return null;
+  const name = stock.company && stock.company.toUpperCase() !== symbol ? stock.company : symbol;
+  return { symbol, companyName: name, price: q.price, high52: q.high, low52: q.low, ...(q.inav > 0 ? { inav: q.inav, premium: Math.round((q.price / q.inav - 1) * 1e4) / 100 } : {}), profile: "etf", etfType: etfType(symbol, name), indexName: indexFor(symbol, name) || undefined, asOf: istDay(), priceDate: istDay(), thin: 1, source: `ETF: 52-week range only (${q.source} quote; price history unavailable right now)`, flags: "ETF valued on its 52-week range only until its price history can be fetched" };
 }
 // ---- Swing ideas: a daily scan of daily charts (shared cache: prices are public), ranked per account ----
 const swingScanFile = path.join(DATA_DIR, "swing-scan.json");
@@ -941,7 +1007,7 @@ function startSwingScan({ force = false } = {}) {
   (async () => {
     const cache = await readJson(swingScanFile, { snaps: {} }); cache.snaps ||= {};
     const save = () => writeJson(swingScanFile, cache);
-    const spacing = { Kite: 400, Yahoo: 1200, Screener: 2500 }, gap = Number(process.env.SWING_SCAN_SPACING_MS);
+    const spacing = { Kite: 400, Yahoo: 2000, Screener: 2500 }, gap = Number(process.env.SWING_SCAN_SPACING_MS);
     try {
       const { list, kiteUser } = await scanUniverse();
       const master = await scripMaster(), tokens = new Map(master.list.filter(m => m.token).map(m => [`${m.exchange}:${m.symbol}`, m.token]));
@@ -1787,7 +1853,7 @@ async function appHandler(req, res, url) {
         livePrices(targets.filter(t => symOf(t)).map(t => ({ symbol: symOf(t), exchange: t.exchange || "NSE", last: t.price })), 20e3, { budgetMs: 8000 }).catch(() => null)]);
       await syncLivePrices().catch(() => {});
       // Rate-limited: keep the stock and try again by itself in 20 minutes (the timer keeps this user's context).
-      const limited = results.filter(r => r.rateLimited).map(r => targets.find(t => t.company === r.company)).filter(Boolean).map(symOf);
+      const limited = results.filter(r => r.rateLimited || r.retryLater).map(r => targets.find(t => t.company === r.company)).filter(Boolean).map(symOf);
       if (limited.length) setTimeout(() => queueFill(limited).catch(() => {}), 20 * 60e3).unref();
       return reply(res, 200, { results, saved: results.filter(r => r.entry).length, retryInMin: limited.length ? 20 : null });
     }
