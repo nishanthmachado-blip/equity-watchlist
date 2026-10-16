@@ -139,7 +139,9 @@ function matchesCategory(s,cat){
 // on every page load regardless of server state, which meant opening the app in a
 // fresh browser/device could silently overwrite the server's live watchlist.json
 // with stale local defaults. That's fixed below.
-async function loadStocks(){
+let stocksReq=null;// callers at the same moment share one request
+async function loadStocks(){if(stocksReq)return stocksReq;stocksReq=loadStocksOnce().finally(()=>{stocksReq=null});return stocksReq}
+async function loadStocksOnce(){
   let serverStocks=null;
   try{const r=await fetch("/api/stocks");if(r.ok){const x=await r.json();serverStocks=Array.isArray(x.stocks)?x.stocks:[]}}catch{}
   if(serverStocks&&serverStocks.length){stocks=serverStocks;save();return}
@@ -619,7 +621,8 @@ $("#historySearch").oninput=renderHistoryPanel;
 let valuation={rows:[],model:null,fundamentalsCount:0};
 const esc=t=>String(t??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmt=(v,d=1)=>Number.isFinite(v)?v.toLocaleString("en-IN",{maximumFractionDigits:d}):"—";
-async function loadValuation(){try{const r=await fetch("/api/valuation");if(r.ok)valuation=await r.json()}catch{}}
+let valuationReq=null;// callers at the same moment share one request
+async function loadValuation(){if(valuationReq)return valuationReq;valuationReq=(async()=>{try{const r=await fetch("/api/valuation");if(r.ok)valuation=await r.json()}catch{}})().finally(()=>{valuationReq=null});return valuationReq}
 function statusTone(st){return st==="In zone"||st==="Below zone"?"buy":st==="Above zone"?"wait":st==="Wait (far above)"?"avoid":""}
 function viewTone(v){return v==="Undervalued"?"buy":v==="Fair"?"buy":v==="Fair to rich"?"wait":(v==="Rich"||v==="Very rich")?"avoid":""}
 function renderValuation_(){

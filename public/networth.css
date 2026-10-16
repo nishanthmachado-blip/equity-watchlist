@@ -249,3 +249,7 @@
 
 /* v4.8.2: source and time under the valuation price */
 .vs-price .vs-stamp{display:block;font-size:12px;margin-top:2px;text-align:right}
+
+/* v4.8.4: totals that leave out or estimate a position */
+.sw-cards small.sw-miss{display:block;color:#b45309;font-weight:600;font-size:11.5px;margin-top:2px}
+[data-theme="dark"] .sw-cards small.sw-miss{color:#fbbf24}

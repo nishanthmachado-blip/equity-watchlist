@@ -1,7 +1,7 @@
-# Equity Watchlist v4.8.3: Deployment Guide (AWS)
+# Equity Watchlist v4.9.0: Deployment Guide (AWS)
 
 **Audience:** deployment / infrastructure team
-**App version:** 4.8.3
+**App version:** 4.9.0
 **Owner:** Nishanth
 
 ---
@@ -320,6 +320,7 @@ Then in a browser:
 | The setup code is lost | It is in `$DATA_DIR/auth/setup-code.txt` until the owner exists. Or set `SETUP_CODE` and restart. |
 | A user forgot their password | The owner resets it in the app (👤 → Manage accounts → Reset password). If the **owner** forgot: on the host run `sudo -u equity env DATA_DIR=/var/lib/equity-watchlist node /opt/equity-watchlist/scripts/reset-password.mjs <username>`, then `sudo systemctl restart equity-watchlist`. It prints a temporary password. |
 | ALB target unhealthy | Set the health check path to `/healthz`; the SG must allow 4173 from the ALB SG; `HOST=0.0.0.0`. |
+| Prices only change when you reload / header button never says "Live" | The page gets live prices over `/api/events` (server-sent events). Caddy and the ALB pass it through as is. With nginx add `proxy_buffering off;` and `proxy_read_timeout 1h;` for that path. Without it the app still works and checks every 30 s. |
 | Angel One / Dhan MCP login doesn't return | `PUBLIC_URL` must be the https domain; the OAuth return path is `/api/brokers/mcp/callback`. |
 | Prices or fundamentals missing | Outbound 443 to the domains in section 2 is blocked, or the source is rate-limiting (the app backs off automatically). |
 | Logs | `journalctl -u equity-watchlist -f` |

@@ -1,5 +1,47 @@
 # Equity Watchlist MVP
 
+## v4.9.0: what changed — speed (new price architecture)
+
+Measured with a price site that takes 3 s per answer and a 41-stock watchlist:
+
+| | before | after |
+|---|---|---|
+| Swing page opened again after a minute | 3.1 s (waited for the price site) | 0.3 s |
+| Any page's data request | up to 3–8 s | 10–40 ms |
+| Header Refresh prices | 30 s, button blocked | answers at once, prices stream in, button shows "Updating 18/50" |
+| App files downloaded | ~550 KB on every visit | ~140 KB once, then from the browser cache |
+| Background reloads | everything every 4 s | only the open screen, only when a price changed |
+
+How it works now:
+
+- **Pages never wait for a price site.** All prices live in one in-memory store on the server. A page request is
+  answered from it at once; if a price is older than a minute it is fetched in the background. Only a stock that has
+  never had a price is waited for (at most 1.5 s, once).
+- **The server pushes prices to the page** (`/api/events`, server-sent events, one connection per tab, 25 s
+  keep-alive). New quotes for your stocks arrive within a fraction of a second of the server getting them; the open
+  screen redraws at most every 2 s; other screens catch up when you switch to them. If a proxy blocks the stream the
+  page falls back to checking every 30 s.
+- **Refresh prices** starts your quotes immediately, even while the automatic run is busy, and reports when done.
+- **App files** are compressed (brotli / gzip), kept in memory, and linked as `file.js?v=<hash>` so the browser keeps
+  them for a year and only downloads a file again when it changes. API answers are gzipped. Web fonts no longer block
+  the first paint.
+- **Warm start:** after a restart the app compresses its files and fetches every tracked price once in the background,
+  so the first visit is fast too.
+- Valuation reads no longer write the verdict log / check alerts in the request (done right after, in the background).
+- The banner "Watchlist prices were last refreshed …" now counts live price updates.
+
+## v4.8.4: what changed — ETF prices on the Swing page, totals with a missing price
+
+- **ITBEES had no price** because every live source failed for it (Yahoo's chart service rate-limited, Google not
+  answering, Screener has no ETF pages) and there was no saved price to fall back on.
+- **One more live source:** Yahoo's quote service (a separate endpoint that often answers when its charts are
+  rate-limited). Screener is no longer asked for ETF prices.
+- **Better fallback when live sources fail:** the newest of the saved watchlist price, the last good live price (now kept
+  on disk in `last-prices.json`, survives restarts), the price in the valuation data, the last close in the ETF price
+  history, or the last broker sync, shown with its date.
+- **Totals no longer go blank:** Value now and Profit / loss add up the positions that have a price and say what is left
+  out ("excl. ITBEES (no price)") or estimated ("ITBEES on last saved price").
+
 ## v4.8.3: what changed — ETFs no longer fail when Yahoo is busy
 
 - **Why ETFs failed:** an ETF is valued on 5 years of daily prices, which came only from Yahoo. The evening swing-ideas

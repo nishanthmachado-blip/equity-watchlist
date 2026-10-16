@@ -174,7 +174,7 @@ export function evaluateSwing({ positions = [], watch = [], prices = new Map(), 
   const priced = rows.filter(r => r.price !== null);
   return {
     settings: S, positions: rows, watch: wrows,
-    totals: { cash: fin(cash) ? r2(cash) : null, cashShort: fin(cash) && deployNow > cash ? Math.round(deployNow - cash) : 0, riding: rows.filter(r => r.status === "riding").length, invested: sum(rows, "invested"), value: priced.length === rows.length ? sum(rows, "value") : null, pnl: sum(priced, "pnl"), pnlPct: sum(priced, "invested") ? r2(sum(priced, "pnl") / sum(priced, "invested") * 100) : null, takeProfit: rows.filter(r => r.status === "take-profit").length, stopHit: rows.filter(r => r.status === "stop-hit").length, deploy: rows.filter(r => r.status === "deploy").length + wrows.filter(w => w.status === "deploy").length, deployNow: Math.round(deployNow), unpriced: rows.length + wrows.length - priced.length - wrows.filter(w => w.price !== null).length }
+    totals: { cash: fin(cash) ? r2(cash) : null, cashShort: fin(cash) && deployNow > cash ? Math.round(deployNow - cash) : 0, riding: rows.filter(r => r.status === "riding").length, invested: sum(rows, "invested"), value: sum(priced, "value"), missing: rows.filter(r => r.price === null).map(r => r.symbol), pnl: sum(priced, "pnl"), pnlPct: sum(priced, "invested") ? r2(sum(priced, "pnl") / sum(priced, "invested") * 100) : null, takeProfit: rows.filter(r => r.status === "take-profit").length, stopHit: rows.filter(r => r.status === "stop-hit").length, deploy: rows.filter(r => r.status === "deploy").length + wrows.filter(w => w.status === "deploy").length, deployNow: Math.round(deployNow), unpriced: rows.length + wrows.length - priced.length - wrows.filter(w => w.price !== null).length }
   };
 }
 

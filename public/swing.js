@@ -21,11 +21,13 @@
 
   function render() {
     const v = sw, t = v.totals;
+    // A position without a live price is left out of the totals (said so); one on an older saved price is counted and flagged
+    const priceNote = t.missing?.length ? `<small class="sw-miss" title="No price from any source yet; refresh again shortly">excl. ${esc(t.missing.join(", "))} (no price)</small>` : t.staleNames?.length ? `<small class="sw-miss" title="Live sources did not answer; the last saved price is used">${esc(t.staleNames.join(", "))} on last saved price</small>` : "";
     $("#swTargetLbl").textContent = `${v.settings.targets.join(" / ")}%`;
     $("#swCards").innerHTML = `
       <div><span>Invested</span><strong>${amt(t.invested)}</strong></div>
-      <div><span>Value now</span><strong>${amt(t.value)}</strong></div>
-      <div class="${t.pnl > 0 ? "sw-up" : t.pnl < 0 ? "sw-down" : ""}"><span>Profit / loss</span><strong class="${cls(t.pnl)}">${sg(t.pnl)}</strong><small class="${cls(t.pnlPct)}">${pct(t.pnlPct)}</small></div>
+      <div><span>Value now</span><strong>${amt(t.value)}</strong>${priceNote}</div>
+      <div class="${t.pnl > 0 ? "sw-up" : t.pnl < 0 ? "sw-down" : ""}"><span>Profit / loss</span><strong class="${cls(t.pnl)}">${sg(t.pnl)}</strong><small class="${cls(t.pnlPct)}">${pct(t.pnlPct)}</small>${priceNote}</div>
       ${t.pat ? `<div class="sw-pat${t.pat.net < 0 ? " neg" : ""}" title="If you sold every position now"><span>🧾 Profit after tax (PAT)</span><strong class="${cls(t.pat.net)}">${sg(t.pat.net)}</strong><small>if you book all now: P/L − STT ${inr(t.pat.stt)} − charges ${inr(t.pat.otherCharges)} − tax ${inr(t.pat.tax)}</small><button type="button" class="pat-btn" data-go="pat">How it is worked out</button></div>` : ""}
       <div class="${t.takeProfit ? "sw-tp" : ""}"><span>🎯 To book profit</span><strong>${t.takeProfit}</strong>${t.stopHit ? `<small class="avoid">🛑 ${t.stopHit} at stop-loss</small>` : ""}</div>
       <div class="${t.deploy ? "sw-dp" : ""}"><span>💰 Deploy signals</span><strong>${t.deploy}</strong>${t.deployNow ? `<small>up to ${amt(t.deployNow)}</small>` : ""}</div>
@@ -97,7 +99,7 @@
       if (seq !== loadSeq) return; // a newer request has been made
       sw = v; lastLoaded = Date.now(); render();
       clearTimeout(pendingTimer);
-      if (v.pricePending) pendingTimer = setTimeout(() => load(true), 4000); // some prices were still on their way: pick them up
+      if (v.pricePending && !window.liveStream?.()) pendingTimer = setTimeout(() => load(true), 5000); // no live stream: look again for prices still on their way
     } catch (e) { if (seq === loadSeq) $("#swStatus").textContent = `Could not update: ${e.message}`; }
     finally { if (seq === loadSeq) { setBusy(false); clearTimeout(timer); if (!$("#swingView").hidden) timer = setTimeout(() => load(true), sw?.marketOpen ? 60e3 : 5 * 60e3); } }
   }
@@ -110,7 +112,7 @@
     clearTimeout(ideasTimer);
     try { ideas = await api("/api/swing/ideas" + (scan ? "/scan" : ""), scan ? {} : undefined); renderIdeas(); }
     catch (e) { $("#swIdeasStatus").textContent = e.message; }
-    if (!$("#swingView").hidden) ideasTimer = setTimeout(() => loadIdeas(), ideas?.scan?.running ? 6000 : 5 * 60e3);
+    if (!$("#swingView").hidden) ideasTimer = setTimeout(() => loadIdeas(), ideas?.scan?.running ? 15000 : 5 * 60e3);
   }
   function renderIdeas() {
     const x = ideas, sc = x.scan, setup = $("#swIdeasSetup").value, src = $("#swIdeasSrc").value;

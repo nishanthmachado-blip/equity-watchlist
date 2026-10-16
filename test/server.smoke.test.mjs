@@ -29,5 +29,15 @@ test("server boots and read-only endpoints answer without errors", async () => {
     const evil = await fetch(`http://127.0.0.1:${port}/api/brokers/dhan/mcp/config`, { method: "POST", headers: { Cookie, Origin: "https://evil.example", "Content-Type": "text/plain" }, body: JSON.stringify({ url: "https://evil.example/mcp" }) });
     assert.equal(evil.status, 403);
     const own = await fetch(`http://127.0.0.1:${port}/api/brokers/dhan/mcp/status`, { headers: { Cookie } }); assert.equal(own.status, 200);
+    // Speed: app files are versioned, compressed and cached by the browser; the live price stream opens and greets
+    const html = await (await fetch(`http://127.0.0.1:${port}/`, { headers: { Cookie } })).text();
+    const appJs = html.match(/src="(app\.js\?v=[\w-]+)"/)?.[1]; assert.ok(appJs, "index.html links app.js with a version");
+    const js = await fetch(`http://127.0.0.1:${port}/${appJs}`, { headers: { Cookie, "Accept-Encoding": "gzip" } });
+    assert.equal(js.status, 200); assert.match(js.headers.get("cache-control"), /immutable/); assert.equal(js.headers.get("content-encoding"), "gzip");
+    const again = await fetch(`http://127.0.0.1:${port}/${appJs}`, { headers: { Cookie, "If-None-Match": js.headers.get("etag") } }); assert.equal(again.status, 304);
+    const ac = new AbortController(), ev = await fetch(`http://127.0.0.1:${port}/api/events`, { headers: { Cookie }, signal: ac.signal });
+    assert.match(ev.headers.get("content-type"), /text\/event-stream/);
+    const first = new TextDecoder().decode((await ev.body.getReader().read()).value); assert.match(first, /event: hello/); ac.abort();
+    const rf = await fetch(`http://127.0.0.1:${port}/api/prices/refresh`, { method: "POST", headers: { Cookie } }); assert.equal(rf.status, 202, "refresh answers at once");
   } finally { child.kill(); await fs.rm(dataDir, { recursive: true, force: true }); }
 });
