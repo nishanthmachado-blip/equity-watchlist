@@ -1,6 +1,9 @@
 // Optional NSE fallback: P/E, sector P/E, industry and 52-week range from NSE's public quote API.
 // NSE blocks many non-browser clients and changes this endpoint without notice, so everything here is
 // best-effort: callers must treat a failure as "no NSE data", never as a fatal error.
+// NSE_BASE / NSE_ARCHIVE_BASE point at a stand-in server in tests
+export const NSE_BASE = () => (process.env.NSE_BASE || "https://www.nseindia.com").replace(/\/+$/, "");
+export const NSE_ARCHIVE_BASE = () => (process.env.NSE_ARCHIVE_BASE || "https://nsearchives.nseindia.com").replace(/\/+$/, "");
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 let cookieCache = null;
 let cooldownUntil = 0;
@@ -14,7 +17,7 @@ function block(where = "", status = "") { lastNseStatus = `${where} HTTP ${statu
 const withTimeout = o => ({ ...o, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(nseConfig.timeoutMs) : undefined });
 async function cookies(f) {
   if (cookieCache && Date.now() - cookieCache.at < 10 * 60 * 1000) return cookieCache.value;
-  const r = await f("https://www.nseindia.com", withTimeout({ headers: { ...BROWSER, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "none", "Upgrade-Insecure-Requests": "1" } }));
+  const r = await f(NSE_BASE(), withTimeout({ headers: { ...BROWSER, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "none", "Upgrade-Insecure-Requests": "1" } }));
   if (r.status === 403 || r.status === 429) throw block("home page", r.status);
   const value = (r.headers.getSetCookie?.() || []).map(c => c.split(";")[0]).join("; ");
   if (!value) throw new Error("NSE did not issue cookies");
@@ -46,7 +49,7 @@ export async function fetchNseQuote(symbol, fetchImpl = fetch) {
 }
 async function nseQuoteOnce(symbol, fetchImpl) {
   const cookie = await cookies(fetchImpl);
-  const res = await fetchImpl(`https://www.nseindia.com/api/quote-equity?symbol=${encodeURIComponent(symbol)}`, withTimeout({ headers: { ...BROWSER, Accept: "*/*", "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin", Referer: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`, cookie } }));
+  const res = await fetchImpl(`${NSE_BASE()}/api/quote-equity?symbol=${encodeURIComponent(symbol)}`, withTimeout({ headers: { ...BROWSER, Accept: "*/*", "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin", Referer: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`, cookie } }));
   if (res.status === 401) { cookieCache = null; throw new Error("NSE session expired (HTTP 401)"); }
   if (res.status === 403 || res.status === 429) throw block("quote API", res.status);
   if (!res.ok) throw new Error(`NSE HTTP ${res.status}`);
@@ -89,7 +92,7 @@ export async function fetchNseJson(apiPath, { referer = "https://www.nseindia.co
   if (!/^\/api\/[A-Za-z0-9\-_/?=&.%]+$/.test(apiPath)) throw new Error("bad NSE path");
   const cd = nseCooldown(); if (cd) throw new NseBlocked(cd);
   const cookie = await cookies(fetchImpl);
-  const res = await fetchImpl(`https://www.nseindia.com${apiPath}`, withTimeout({ headers: { ...BROWSER, Accept: "*/*", "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin", Referer: referer, cookie } }));
+  const res = await fetchImpl(`${NSE_BASE()}${apiPath}`, withTimeout({ headers: { ...BROWSER, Accept: "*/*", "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin", Referer: referer, cookie } }));
   if (res.status === 401) { cookieCache = null; throw new Error("NSE session expired (HTTP 401)"); }
   if (res.status === 403 || res.status === 429) throw block(apiPath, res.status);
   if (res.status === 404) throw new Error(`NSE has no ${apiPath} endpoint (404)`);

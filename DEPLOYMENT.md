@@ -1,7 +1,7 @@
-# Equity Watchlist v4.9.0: Deployment Guide (AWS)
+# Equity Watchlist v5.0.0: Deployment Guide (AWS)
 
 **Audience:** deployment / infrastructure team
-**App version:** 4.9.0
+**App version:** 5.0.0
 **Owner:** Nishanth
 
 ---
@@ -253,12 +253,26 @@ Use this option if the team standardises on ALBs.
 | `SWING_SCAN_SPACING_MS` | `1200` | Pause between chart requests in the daily swing-ideas scan (~185 stocks + watchlists, about 5 minutes after 15:50 IST on weekdays) |
 | `SCREENER_BASE` | `https://www.screener.in` | Screener base URL (only change for a proxy or tests) |
 | `YAHOO_CHART_BASE` | `https://query1.finance.yahoo.com` | Yahoo price-history base used for ETF valuation and trend data (only change for a proxy or tests) |
+| `NSE_BASE` / `NSE_ARCHIVE_BASE` | `https://www.nseindia.com` / `https://nsearchives.nseindia.com` | NSE website and archive server (only change for a proxy or tests) |
+| `EOD` | on | `0` turns off the evening download of NSE's daily price file (bhavcopy) and index closes |
+| `EOD_BACKFILL_DAYS` | `320` | One-time history backfill from the daily files (about 15 months; one file every 2.5 s, ~15 minutes) |
+| `EOD_SPACING_MS` | `2500` | Pause between archive files during the backfill |
+| `BACKUP` | on | `0` turns off the automatic daily backup (02:30 IST) |
+| `BACKUP_DIR` | `DATA_DIR/backups` | Where daily backups are written: one gzip per account per day. Put it on a different disk or volume than `DATA_DIR` if you can |
+| `BACKUP_KEEP_DAYS` | `30` | Daily backups older than this are deleted from `BACKUP_DIR` |
+| `BACKUP_S3_BUCKET` | — | Also copy each daily backup to this S3 bucket (see section 9) |
+| `BACKUP_S3_REGION` / `BACKUP_S3_PREFIX` | `ap-south-1` / `equity-watchlist/` | Bucket region and key prefix |
+| `BACKUP_INCLUDE_SECRETS` | off | `1` includes broker logins, API keys and Telegram tokens in the automatic backups (off: they are left out) |
 
 Telegram phone alerts (v4.4): each user connects their own bot from 🔔 Alerts → 📱 Phone alerts. The bot token is stored in that user's `notify.json` (MongoDB document `users/<id>/notify.json`), is never returned in full by the API, and is left out of user backups like broker logins. Alerts are sent by the server, so they arrive with the browser closed; the background swing check runs every 5 minutes during market hours.
 
 ---
 
 ## 9. Backups
+
+**Automatic (v5.0):** every night at about 02:30 IST the app writes one gzip file per account to `BACKUP_DIR` (default `DATA_DIR/backups`), reads each one back to check it opens and holds every file, keeps `BACKUP_KEEP_DAYS` (30) days, and, when `BACKUP_S3_BUCKET` is set, copies each file to S3 (`s3://<bucket>/<prefix><day>/<account>.json.gz`). Broker logins and tokens are left out unless `BACKUP_INCLUDE_SECRETS=1`. Each user sees their own backups in 👤 → Backup & restore and can restore any day; the owner can run a backup now and sees any errors.
+
+S3 setup for the automatic copy: a private bucket (Block Public Access on, SSE-S3 or SSE-KMS default encryption), a lifecycle rule that expires objects under the prefix after 30–90 days, and an instance role (or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) allowed only `s3:PutObject` on `arn:aws:s3:::<bucket>/equity-watchlist/*`. No AWS SDK is needed; the app signs the upload itself.
 
 Each user can also download a backup of their own account from the app (👤 → Backup & restore). That complements, but does not replace, the server backups below.
 

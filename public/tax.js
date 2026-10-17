@@ -2,7 +2,7 @@
 // gains, and three ideas: use the ₹1.25 lakh long-term exemption, wait a few days for long-term rates, book losses.
 (() => {
   const $ = s => document.querySelector(s), esc = s => window.ui.esc(s);
-  let tx = null, open = new Set();
+  let tx = null, open = new Set(), account = "all";
   const api = async (url, body) => {
     const r = await fetch(url, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.message || `HTTP ${r.status}`); return j;
@@ -17,6 +17,16 @@
     const has = t.tradeCount > 0;
     $("#txEmpty").hidden = has; $("#txBody").hidden = !has;
     $("#txImports").innerHTML = t.imports.length ? `<ul class="nw-acc">${t.imports.slice(-6).reverse().map(i => `<li>${esc(i.file)}: ${i.rows} trades (${esc(i.from)} → ${esc(i.to)}), ${i.added} new · ${new Date(i.at).toLocaleDateString("en-IN")}</li>`).join("")}</ul><p class="hint">${t.tradeCount} trades on file. Importing the same file again is safe: duplicates are ignored.</p>` : "";
+    // Account picker: each account holder (PAN) has their own ₹1.25 L exemption
+    const ac = $("#txAcct");
+    if (ac) {
+      const opts = t.accounts || [];
+      ac.innerHTML = opts.length > 1 || t.untaggedTrades ? `<label class="hint">Account <select class="ui-input" id="txAcctSel"><option value="all">All accounts together</option>${opts.map(a => `<option value="${esc(a.id)}"${t.account === a.id ? " selected" : ""}>${esc(a.label)}${a.broker ? ` (${esc(a.broker)})` : ""}</option>`).join("")}</select></label>
+        ${t.perAccount ? `<span class="hint">${esc(t.perAccount)}</span>` : ""}
+        ${t.untaggedTrades && opts.length > 1 ? `<span class="tx-untag">${t.untaggedTrades} imported trades are not linked to an account. <select class="ui-input" id="txTagSel">${opts.map(a => `<option value="${esc(a.id)}">${esc(a.label)}</option>`).join("")}</select> <button type="button" class="ghost" id="txTagBtn">Link them</button></span>` : ""}` : "";
+      const sel = $("#txAcctSel"); if (sel) sel.onchange = () => { account = sel.value; load(); };
+      const tagB = $("#txTagBtn"); if (tagB) tagB.onclick = async () => { try { tx = await api("/api/tax/tag", { account: $("#txTagSel").value }); account = tx.account; render(); window.toast?.(`${tx.tagged} trades linked.`, { kind: "ok" }); } catch (e) { window.toast?.(e.message, { kind: "error" }); } };
+    }
     if (!has) return;
     $("#txCards").innerHTML = `
       <div><span>${esc(t.fy.label)} realised · short term</span><strong class="${cls(R.netSt)}">${sgn(R.netSt)}</strong><small>gains ${inr(R.stGain)} · losses ${inr(R.stLoss)}</small></div>
@@ -42,13 +52,13 @@
     }).join("") || `<tr><td colspan="7" class="nw-empty-row">Sync your holdings to see gains per stock.</td></tr>`;
     $("#txWarn").innerHTML = [U.mismatches ? `${U.mismatches} holding${U.mismatches === 1 ? "" : "s"} don't match the tradebook (bonus, split, transfer-in, another broker, or an earlier year not imported). Their unmatched shares are shown as "date unknown".` : "", R.unmatchedSells ? `${R.unmatchedSells} sell${R.unmatchedSells === 1 ? "" : "s"} this year had no matching buy: import older tradebook years for accurate figures.` : ""].filter(Boolean).map(x => `<p class="tx-warn">⚠ ${x}</p>`).join("");
   }
-  async function load() { try { tx = await api("/api/tax"); render(); } catch (e) { $("#txStatus").textContent = e.message; } }
+  async function load() { try { tx = await api(`/api/tax?account=${encodeURIComponent(account)}`); render(); } catch (e) { $("#txStatus").textContent = e.message; } }
   window.openTax = load;
   async function importFile(f) {
     if (!f) return; if (f.size > 20e6) { $("#txStatus").textContent = "File is larger than 20 MB."; return; }
     const st = $("#txStatus"); st.textContent = `Reading ${f.name}…`;
     const data = await new Promise((ok, no) => { const rd = new FileReader(); rd.onload = () => ok(String(rd.result).split(",")[1]); rd.onerror = no; rd.readAsDataURL(f); });
-    try { tx = await api("/api/tax/import", { filename: f.name, data }); render(); st.textContent = `${f.name}: ${tx.imported.rows} trades read, ${tx.imported.added} new${tx.imported.skipped?.fno ? `, ${tx.imported.skipped.fno} F&O rows skipped` : ""}.`; window.toast?.(`✓ Tradebook imported: ${tx.imported.added} new trades.`, { kind: "ok" }); }
+    try { tx = await api("/api/tax/import", { filename: f.name, data, account }); account = tx.account || account; render(); st.textContent = `${f.name}: ${tx.imported.rows} trades read, ${tx.imported.added} new${tx.imported.skipped?.fno ? `, ${tx.imported.skipped.fno} F&O rows skipped` : ""}.`; window.toast?.(`✓ Tradebook imported: ${tx.imported.added} new trades.`, { kind: "ok" }); }
     catch (e) { st.textContent = e.message; }
   }
   document.addEventListener("DOMContentLoaded", () => {

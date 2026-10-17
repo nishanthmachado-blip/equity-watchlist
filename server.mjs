@@ -2,14 +2,12 @@ import { loadedFromEnvFile } from "./env.mjs"; // must stay first: loads .env be
 import http from "node:http";
 import zlib from "node:zlib";
 import { EventEmitter } from "node:events";
-import { createHash } from "node:crypto";
-import { readFile as readDisk, stat as statDisk } from "node:fs/promises";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createAuth, publicUser } from "./auth.mjs";
 import { dfs as fs, initStorage, flushStorage, closeStorage, pingStorage, info as storageInfo } from "./storage.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fetchFundamentalsForStock, yahooCooldown, yahooQuotes } from "./fundamentals-yahoo.mjs";
+import { fetchFundamentalsForStock, yahooCooldown, yahooQuotes, yahooSummary } from "./fundamentals-yahoo.mjs";
 import { MODEL, computeAll, computeValuation, sanitizeEntry, parseCsv, FIELDS } from "./valuation.mjs";
 import { fetchScreener, screenerCooldown, screenerConfig, fetchScreenerExtras, searchScreener, resetScreener, fetchScreenerPrice } from "./screener.mjs";
 import { readXlsx, parseDelimited, extractHoldings, fundSummary } from "./funds.mjs";
@@ -35,9 +33,19 @@ import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { PROFILES, STYLES, buildModel, assetMix } from "./model.mjs";
-import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
+import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, SETUPS, MISTAKES, sanitizeReview, journalStats, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
 import { buildXlsx } from "./xlsx.mjs";
 import { isEtf, indexFor, parseAllIndices, etfLens, etfType } from "./etf.mjs";
+import { parseNseActions, parseYahooEvents, mergeActions, adjustPosition, adjustWatch } from "./corpactions.mjs";
+import { parseNseEvents, parseYahooCalendar, eventsFor, swingEventAdvice } from "./events.mjs";
+import { returnsView, indexTwin, swingFlows, dividendsReceived, forwardDividends } from "./returns.mjs";
+import { logIdeas, judgeIdea, ideaStats } from "./ideastrack.mjs";
+import { RULE_TYPES, sanitizeRule, describeRule, checkLiveRule, checkEodRule } from "./alertrules.mjs";
+import { morningDigest, eveningDigest } from "./digest.mjs";
+import { DEFAULT_BASKET, sanitizeBasket, basketView } from "./accumulate.mjs";
+import { backupConfig, gz, gunz, verifyBackup, writeLocal, listLocal, readLocal, pruneLocal, s3Put } from "./backup.mjs";
+import { staticAsset, sendStatic } from "./static.mjs";
+import { fetchBhavcopy, fetchIndexCloses, mergeBars, weekdaysBack, dayToT, INDEX_KEYS } from "./eod.mjs";
 import { snapshot as swingSnapshot, rankIdeas, positionHealth } from "./swingideas.mjs";
 import { validToken, maskToken, botInfo, findChat, sendTelegram, pushAlerts } from "./notify.mjs";
 import { SEED as SCRIP_SEED, parseKiteInstruments, parseNseEquityList, mergeMaster, searchMaster } from "./scripmaster.mjs";
@@ -230,35 +238,6 @@ function reply(res, status, body, type = "application/json; charset=utf-8") {
   if (res.acceptsGzip && /json|text|javascript/.test(type) && Buffer.byteLength(data) > 1500) { data = zlib.gzipSync(data, { level: 5 }); headers["Content-Encoding"] = "gzip"; headers.Vary = "Accept-Encoding"; }
   res.writeHead(status, headers);
   res.end(data);
-}
-// App files (js, css, icons): read once, compressed once, kept in memory. index.html links them as file?v=<hash>, so the
-// browser keeps each file for a year and fetches it again only when its content changes (a new hash).
-const staticCache = new Map();
-async function staticAsset(file) {
-  const st = await statDisk(file); const c = staticCache.get(file);
-  if (c && c.mtime === st.mtimeMs && (!c.deps || (await Promise.all(c.deps.map(d => staticAsset(d).then(x => x.etag)))).join() === c.depTags)) return c;
-  let buf = await readDisk(file), deps = null;
-  if (file.endsWith(".html")) { const v = await versionLinks(buf.toString("utf8"), path.dirname(file)); buf = Buffer.from(v.html); deps = v.deps; }
-  const text = /\.(js|css|html|svg|json|webmanifest)$/.test(file);
-  const a = { buf, mtime: st.mtimeMs, etag: `"${createHash("sha1").update(buf).digest("base64url").slice(0, 16)}"`, gz: text ? zlib.gzipSync(buf, { level: 9 }) : null, br: text ? zlib.brotliCompressSync(buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 7 } }) : null };
-  if (deps) { a.deps = deps; a.depTags = (await Promise.all(deps.map(d => staticAsset(d).then(x => x.etag)))).join(); }
-  staticCache.set(file, a); return a;
-}
-async function versionLinks(html, dir) {
-  const refs = [...new Set([...html.matchAll(/(?:src|href)="([a-z0-9_-]+\.(?:js|css))"/gi)].map(m => m[1]))];
-  const deps = [];
-  for (const r of refs) { try { const f = path.join(dir, r), a = await staticAsset(f); deps.push(f); html = html.split(`"${r}"`).join(`"${r}?v=${a.etag.slice(1, 11)}"`); } catch { /* leave as is */ } }
-  return { html, deps };
-}
-async function sendStatic(req, res, file, type) {
-  const a = await staticAsset(file);
-  const immutable = /[?&]v=/.test(req.url) && !file.endsWith(".html");
-  const h = { "Content-Type": type, ETag: a.etag, "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache", Vary: "Accept-Encoding" };
-  if (req.headers["if-none-match"] === a.etag) { res.writeHead(304, h); return res.end(); }
-  const ae = String(req.headers["accept-encoding"] || "");
-  let body = a.buf;
-  if (a.br && /\bbr\b/.test(ae)) { body = a.br; h["Content-Encoding"] = "br"; } else if (a.gz && /gzip/.test(ae)) { body = a.gz; h["Content-Encoding"] = "gzip"; }
-  h["Content-Length"] = body.length; res.writeHead(200, h); return res.end(req.method === "HEAD" ? undefined : body);
 }
 const MAX_BODY = 30 * 1024 * 1024;
 async function readBody(req) { let text = ""; for await (const chunk of req) { text += chunk; if (text.length > MAX_BODY) throw Object.assign(new Error("Request is too large."), { status: 413 }); } return text ? JSON.parse(text) : {}; }
@@ -686,6 +665,31 @@ async function restoreBackup(b, { replace = false } = {}) {
   return names;
 }
 
+// ---- Automatic daily backups (02:30 IST): every account, kept BACKUP_KEEP_DAYS days, optional S3 copy, read back and checked ----
+const backupState = { running: false, last: null };
+const backupDir = () => backupConfig().dir || path.join(DATA_DIR, "backups");
+async function runBackups() {
+  if (backupState.running) return backupState.last; backupState.running = true;
+  const cfg = backupConfig(), day = istDay(), report = { day, at: new Date().toISOString(), accounts: [], errors: [], s3: cfg.s3 ? `s3://${cfg.s3.bucket}/${cfg.s3.prefix}` : null, dir: backupDir() };
+  try {
+    await forEachUser(async () => {
+      const u = currentUser(), b = await makeBackup(cfg.includeSecrets), n = Object.keys(b.files).length, buf = gz(b), name = u.username.replace(/[^\w.-]/g, "_");
+      try {
+        const f = await writeLocal(backupDir(), day, name, buf); verifyBackup(await readLocal(backupDir(), day, name), n); // read back and check
+        const row = { account: u.username, files: n, bytes: buf.length, file: f, checked: true };
+        if (cfg.s3) { try { row.s3 = await s3Put(cfg.s3, `${day}/${name}.json.gz`, buf); } catch (e) { row.s3Error = e.message; report.errors.push(`${u.username} S3: ${e.message}`); } }
+        report.accounts.push(row);
+      } catch (e) { report.errors.push(`${u.username}: ${e.message}`); }
+    });
+    report.pruned = await pruneLocal(backupDir(), cfg.keepDays, day);
+    console.log(`[backup] ${report.accounts.length} account(s) backed up${cfg.s3 ? " (+S3)" : ""}${report.errors.length ? `; problems: ${report.errors.join("; ")}` : ""}`);
+  } catch (e) { report.errors.push(e.message); }
+  finally { backupState.running = false; backupState.last = report; await writeJson(path.join(DATA_DIR, "backup-status.json"), report).catch(() => {}); }
+  return report;
+}
+let lastBackupDay = null;
+setInterval(() => { const n = new Date(Date.now() + 5.5 * 3600e3), m = n.getUTCHours() * 60 + n.getUTCMinutes(), day = n.toISOString().slice(0, 10); if (process.env.BACKUP !== "0" && m >= 150 && m <= 240 && lastBackupDay !== day) { lastBackupDay = day; runBackups().catch(() => {}); } }, 10 * 60e3).unref();
+
 // ---- Freshness: tell the user when numbers are old or a broker login has lapsed ----
 const kiteStatusCache = new Map();
 const weekdaysSince = (iso, now = new Date()) => { if (!iso) return Infinity; let d = new Date(`${istDay(new Date(iso))}T00:00:00Z`), n = 0; const end = istDay(now); while (true) { d = new Date(d.getTime() + 864e5); const day = d.toISOString().slice(0, 10); if (day > end) break; const wd = d.getUTCDay(); if (wd !== 0 && wd !== 6) n++; } return n; };
@@ -725,8 +729,11 @@ async function freshnessView() {
 
 // ---- Tax view: Zerodha Console tradebook → FIFO lots → long / short term, harvesting ideas ----
 const taxFile = () => userFile("tradebook.json");
-async function taxHoldings() {
-  const [view, store] = await Promise.all([kiteHoldingsView(), readJson(U.kiteHoldingsFile, { accounts: {} })]);
+async function taxHoldings(account = "all") {
+  const [view0, store] = await Promise.all([kiteHoldingsView(), readJson(U.kiteHoldingsFile, { accounts: {} })]);
+  // one account: its own holdings (each PAN has its own ₹1.25 L exemption), priced like the combined view
+  const view = account === "all" ? view0 : { holdings: (store.accounts?.[account]?.holdings || []).map(h => { const v = view0.holdings.find(x => x.symbol === h.symbol); const price = v && v.qty ? v.value / v.qty : h.lastPrice || h.avgPrice; return { ...h, company: v?.company || h.symbol, value: price * h.qty }; }) };
+  if (account !== "all") store.accounts = { [account]: store.accounts?.[account] || {} };
   const isinOf = new Map(); for (const a of Object.values(store.accounts || {})) for (const h of a.holdings || []) if (h.isin) isinOf.set(h.symbol, h.isin);
   const out = view.holdings.map(h => ({ key: h.symbol, symbol: h.symbol, isin: isinOf.get(h.symbol) || null, name: h.company || h.symbol, qty: h.qty, price: h.qty ? h.value / h.qty : null, avgPrice: h.avgPrice, kind: "stock" }));
   const mf = new Map();
@@ -734,7 +741,96 @@ async function taxHoldings() {
   for (const m of mf.values()) out.push({ ...m, avgPrice: m.qty ? m.cost / m.qty : null });
   return out;
 }
-async function taxPage() { const st = await readJson(taxFile(), { trades: [], imports: [] }); return { ...taxView({ trades: st.trades, holdings: await taxHoldings(), today: istDay() }), imports: st.imports || [] }; }
+async function taxPage(account = "all") {
+  const [st, accounts] = await Promise.all([readJson(taxFile(), { trades: [], imports: [] }), accountsList()]);
+  const single = accounts.length === 1 ? accounts[0].id : null;
+  const trades = account === "all" ? st.trades : st.trades.filter(x => (x.account || single) === account);
+  return { ...taxView({ trades, holdings: await taxHoldings(account), today: istDay() }), imports: st.imports || [], accounts, account, untaggedTrades: st.trades.filter(x => !x.account).length,
+    perAccount: account === "all" && accounts.length > 1 ? "Each account holder (PAN) has their own ₹1.25 lakh long-term exemption: pick an account above to see its own harvesting room." : null };
+}
+
+// ---- Returns (XIRR) vs the index, dividends received, forward dividend calendar ----
+// Index history: our NSE end-of-day files, topped up for older years from Yahoo (shared cache, weekly).
+const indexHistFile = path.join(DATA_DIR, "index-history.json");
+const BENCH = { NIFTY50: { label: "Nifty 50", yahoo: "^NSEI" }, NIFTY500: { label: "Nifty 500", yahoo: "^CRSLDX" }, SMALLCAP250: { label: "Nifty Smallcap 250", yahoo: "^CNXSC", yahooLabel: "Nifty Smallcap 100 (older years)" } };
+async function indexBars(key) {
+  const own = await eodBars(`_index-${key}`), cache = await readJson(indexHistFile, {}), c = cache[key];
+  if ((!c || Date.now() - c.at > 7 * 864e5) && BENCH[key]?.yahoo && !(barSources.yahoo > Date.now())) {
+    try { const { bars } = await fetchChart(BENCH[key].yahoo, { raw: true, range: "10y" }); if (bars.length > 200) { cache[key] = { at: Date.now(), bars: bars.map(b => ({ t: b.t, c: b.c })) }; await writeJson(indexHistFile, cache); } }
+    catch (e) { if (e.rateLimited) barSources.yahoo = Date.now() + 15 * 60e3; }
+  }
+  // Yahoo for the years before our own data starts; ours from then on (scaled to Yahoo's level when the index differs)
+  const yb = cache[key]?.bars || [];
+  if (!own.length) return yb;
+  const start = own[0].t, older = yb.filter(b => b.t < start - 43200);
+  if (!older.length) return own;
+  const overlap = yb.find(b => Math.abs(b.t - start) < 4 * 86400), k = overlap ? own[0].c / overlap.c : 1;
+  return [...older.map(b => ({ t: b.t, c: b.c * k })), ...own];
+}
+// Holdings of one account (or all) with today's price
+async function holdingsOf(account = "all") {
+  const [store, stocks] = await Promise.all([readJson(U.kiteHoldingsFile, { accounts: {} }), readWatchlist()]);
+  const wl = new Map(stocks.map(x => [symOf(x), x])), merged = new Map();
+  for (const [id, a] of Object.entries(store.accounts || {})) {
+    if (account !== "all" && id !== account) continue;
+    for (const h of a.holdings || []) {
+      const sym = String(h.symbol || "").toUpperCase(); if (!sym || !(h.qty > 0)) continue;
+      const price = livePriceCache.get(`${h.exchange || "NSE"}:${sym}`)?.price ?? wl.get(sym)?.price ?? h.lastPrice ?? null;
+      const m = merged.get(sym) || { symbol: sym, name: wl.get(sym)?.company || h.company || sym, qty: 0, cost: 0, price };
+      m.qty += h.qty; m.cost += (h.avgPrice || 0) * h.qty; merged.set(sym, m);
+    }
+  }
+  return [...merged.values()].map(m => ({ ...m, avgPrice: m.qty ? m.cost / m.qty : null }));
+}
+// Every known dividend (NSE corporate actions + Yahoo's dated history) as [{symbol, exDate, amount}]
+async function allDividends(symbols) {
+  const [ce, divCache] = await Promise.all([corpEvents(), readJson(dividendsFile, {})]);
+  const m = new Map();
+  for (const sym of symbols) for (const e of divCache[sym]?.events || []) if (e.a > 0) m.set(`${sym}:${e.d}`, { symbol: sym, exDate: e.d, amount: e.a, source: "Yahoo" });
+  for (const a of ce.actions || []) if (a.kind === "dividend" && a.amount > 0 && symbols.has(a.symbol)) m.set(`${a.symbol}:${a.exDate}`, { symbol: a.symbol, exDate: a.exDate, amount: a.amount, source: "NSE" });
+  return [...m.values()];
+}
+const accountsList = async () => Object.entries((await readJson(U.kiteHoldingsFile, { accounts: {} })).accounts || {}).map(([id, a]) => ({ id, label: a.label || id, broker: a.brokerName || a.broker || "" }));
+async function returnsPage(account = "all") {
+  const [tb, holdings, accounts, sw] = await Promise.all([readJson(taxFile(), { trades: [] }), holdingsOf(account), accountsList(), readJson(swingFile(), {})]);
+  const single = accounts.length === 1 ? accounts[0].id : null;
+  const trades = (tb.trades || []).filter(x => x.symbol && (account === "all" || (x.account || single) === account));
+  const syms = new Set([...trades.map(x => x.symbol), ...holdings.map(h => h.symbol)]);
+  const [dividends, ...benchBars] = await Promise.all([allDividends(syms), ...Object.keys(BENCH).map(k => indexBars(k))]);
+  const benchmarks = Object.fromEntries(Object.keys(BENCH).map((k, i) => [k, benchBars[i]]).filter(([, b]) => b.length));
+  const today = istDay(), view = returnsView({ trades, holdings, dividends, benchmarks, today, label: account === "all" ? "All accounts" : accounts.find(a => a.id === account)?.label || account });
+  // Swing book: its own XIRR and index twin
+  const swPrices = await livePrices([...(sw.positions || [])], 60e3, { budgetMs: 0 });
+  const swf = swingFlows(sw, swPrices, today);
+  const swing = (sw.closed || []).length || (sw.positions || []).length ? { xirr: swf.xirr, value: swf.value, bench: Object.fromEntries(Object.entries(benchmarks).map(([k, b]) => [k, indexTwin(swf.flows, b, today)])) } : null;
+  return { ...view, swing, accounts, account, benchmarks: Object.fromEntries(Object.entries(BENCH).map(([k, v]) => [k, { label: v.label, available: !!benchmarks[k], from: benchmarks[k]?.[0] ? new Date(benchmarks[k][0].t * 1000).toISOString().slice(0, 10) : null }])), tradeCount: trades.length, untaggedTrades: (tb.trades || []).filter(x => !x.account).length, today };
+}
+async function dividendIncomePage(account = "all") {
+  const [tb, holdings, accounts, goals] = await Promise.all([readJson(taxFile(), { trades: [] }), holdingsOf(account), accountsList(), readJson(userFile("share-goals.json"), { goals: [] })]);
+  const single = accounts.length === 1 ? accounts[0].id : null;
+  const trades = (tb.trades || []).filter(x => x.symbol && (account === "all" || (x.account || single) === account));
+  const syms = new Set([...trades.map(x => x.symbol), ...holdings.map(h => h.symbol)]), dividends = await allDividends(syms), today = istDay();
+  const fyStart = `${Number(today.slice(5, 7)) >= 4 ? today.slice(0, 4) : Number(today.slice(0, 4)) - 1}-04-01`;
+  const last12 = dividendsReceived({ trades, holdings, dividends, from: new Date(Date.parse(today) - 365 * 864e5).toISOString().slice(0, 10), to: today });
+  const fy = last12.filter(d => d.exDate >= fyStart);
+  return { account, accounts, today, received: { last12: last12, last12Total: last12.reduce((s, d) => s + d.income, 0), fyTotal: fy.reduce((s, d) => s + d.income, 0), fyFrom: fyStart, approx: last12.some(d => d.approx) }, forward: forwardDividends({ holdings, dividends, today }), goals: (goals.goals || []).map(g => { const held = g.market === "IN" ? holdings.find(h => h.symbol === g.symbol)?.qty ?? null : null, have = held ?? g.current ?? 0; return { ...g, held, have, pct: Math.min(100, Math.round(have / g.target * 1000) / 10), left: Math.max(0, g.target - have) }; }) };
+}
+
+// ---- Accumulation tracker (long-term basket: start small, add on dips up to a target per stock) ----
+const accFile = () => userFile("accumulate.json");
+async function accumulatePage() {
+  const st = await readJson(accFile(), { baskets: [] }), lists = await readLists().catch(() => ({ lists: [] })), { rows } = await computeRows(), accounts = await accountsList();
+  const bySym = new Map(rows.map(r => [String(r.symbol).toUpperCase(), r]));
+  const out = [];
+  for (const b of st.baskets || []) {
+    const symbols = b.listId ? (lists.lists.find(l => l.id === b.listId)?.symbols || b.symbols) : b.symbols;
+    const hold = await holdingsOf(b.account || "all"), held = new Map(hold.map(h => [h.symbol, { qty: h.qty, avgPrice: h.avgPrice }]));
+    const prices = await livePrices(symbols.map(s => ({ symbol: s, exchange: "NSE" })), 60e3, { budgetMs: 1500 });
+    const quotes = new Map(symbols.map(s => { const r = bySym.get(s), p = prices.get(s); return [s, { price: p?.price ?? r?.price ?? null, name: r?.company || hold.find(h => h.symbol === s)?.name || s, inZone: !!r?.verdict?.inZone, verdict: r?.verdict?.label || null }]; }));
+    out.push(basketView({ ...b, symbols }, held, quotes));
+  }
+  return { baskets: out, lists: (lists.lists || []).map(l => ({ id: l.id, name: l.name, count: l.symbols.length })), accounts, defaults: DEFAULT_BASKET };
+}
 
 // ---- Listed-company list for search (shared, refreshed weekly) ----
 const scripFile = path.join(DATA_DIR, "scrip-master.json");
@@ -905,10 +1001,179 @@ function realisedAfterTax(closed, charges) {
   const tax = tx.years.reduce((s, y) => s + y.tax, 0) * (1 + (charges.cessPct ?? 4) / 100), gross = closed.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
   return { gross: Math.round(gross), charges: Math.round(ch), tax: Math.round(tax), net: Math.round(gross - ch - tax) };
 }
+// Alerts to the phone (Telegram), in the background: a slow or failing Telegram never holds up the app.
+function phonePush(fresh) {
+  const user = currentUser();
+  (async () => {
+    const cfg = await readJson(U.notifyFile, {});
+    try { const n = await pushAlerts(cfg, fresh); if (n) await writeJson(U.notifyFile, { ...cfg, lastSent: new Date().toISOString(), lastError: null }); }
+    catch (e) { console.error(`[telegram] ${user?.username}: ${e.message}`); await writeJson(U.notifyFile, { ...cfg, lastError: e.message, lastErrorAt: new Date().toISOString() }); }
+  })().catch(() => {});
+}
+// ---- Alerts you set yourself, event heads-ups, and Telegram digests ----
+const rulesFile = () => userFile("price-rules.json");
+const userLocks = new Map(); // one rules / alerts update at a time per account
+function withUserLock(fn) { const u = currentUser(), prev = userLocks.get(u.id) || Promise.resolve(); const run = prev.catch(() => {}).then(fn); userLocks.set(u.id, run.catch(() => {})); return run; }
+// New alerts into the account's alert list (once per key), the open page (live stream) and Telegram
+async function fireEvents(evs) {
+  if (!evs.length) return [];
+  const store = await readJson(U.alertsFile, { state: {}, events: [] }), have = new Set(store.events.map(e => e.key).filter(Boolean));
+  const fresh = evs.filter(e => !e.key || !have.has(e.key)); if (!fresh.length) return [];
+  await writeJson(U.alertsFile, { ...store, events: mergeEvents(store.events, fresh) });
+  console.log(`[alerts] ${currentUser().username}: ${fresh.map(e => e.title).join(" | ")}`);
+  phonePush(fresh); notifyUser(currentUser().id, "alert", { count: fresh.length, titles: fresh.map(e => e.title).slice(0, 3) });
+  return fresh;
+}
+const rulesIndex = new Map(); // symbol -> Set of users with an active live rule on it
+async function loadRulesIndex() {
+  rulesIndex.clear();
+  await forEachUser(async () => { const u = currentUser(); for (const r of (await readJson(rulesFile(), { rules: [] })).rules || []) if (r.active && RULE_TYPES[r.type]?.live) (rulesIndex.get(r.symbol) || rulesIndex.set(r.symbol, new Map()).get(r.symbol)).set(u.id, u); });
+}
+if (!process.env.NODE_TEST_CONTEXT) setTimeout(() => loadRulesIndex().catch(() => {}), 2000).unref();
+const range52 = new Map(); // symbol -> { day, hi, lo } from our end-of-day history (yesterday and before)
+async function hiLo52(sym) {
+  const day = istDay(), c = range52.get(sym); if (c?.day === day) return c;
+  const bars = (await eodBars(sym)).filter(b => new Date(b.t * 1000).toISOString().slice(0, 10) < day).slice(-252);
+  const v = bars.length >= 100 ? { day, hi: Math.max(...bars.map(b => b.h ?? b.c)), lo: Math.min(...bars.map(b => b.l ?? b.c)) } : { day, hi: null, lo: null };
+  range52.set(sym, v); return v;
+}
+priceBus.on("quote", (key, q) => {
+  const sym = key.slice(key.indexOf(":") + 1), users = rulesIndex.get(sym); if (!users?.size || q.stale || !(q.price > 0)) return;
+  for (const u of users.values()) asUser(u, () => withUserLock(async () => {
+    const st = await readJson(rulesFile(), { rules: [] }), day = istDay(), hl = await hiLo52(sym), evs = []; let changed = false;
+    st.rules = (st.rules || []).map(r => { if (r.symbol !== sym) return r; const x = checkLiveRule(r, { price: q.price, prevClose: q.prevClose, high: hl.hi, low: hl.lo }, day); if (!x) return r; changed = true; evs.push(x.event); return x.rule; });
+    if (changed) { await writeJson(rulesFile(), st); await fireEvents(evs); loadRulesIndex().catch(() => {}); }
+  })).catch(e => console.error(`[rules] ${e.message}`));
+});
+// Chart rules (volume, golden cross, 200-DMA, 52-week on the close): once a day, after the NSE end-of-day file
+async function checkEodRules() {
+  await forEachUser(() => withUserLock(async () => {
+    const st = await readJson(rulesFile(), { rules: [] }); if (!(st.rules || []).some(r => r.active && RULE_TYPES[r.type]?.eod)) return;
+    const day = istDay(), evs = []; let changed = false;
+    for (let i = 0; i < st.rules.length; i++) { const r = st.rules[i]; if (!r.active || !RULE_TYPES[r.type]?.eod || RULE_TYPES[r.type]?.live && r.type !== "high52" && r.type !== "low52") continue; const x = checkEodRule(r, await eodBars(r.symbol), day); if (x) { st.rules[i] = x.rule; evs.push(x.event); changed = true; } }
+    if (changed) { await writeJson(rulesFile(), st); await fireEvents(evs); }
+  }));
+}
+// Everything you track with its upcoming events (shared by the Home panel, heads-up alerts and the digests)
+async function upcomingEvents({ pastDays = 3, aheadDays = 30 } = {}) {
+  const [ce, stocks, sw, hold] = await Promise.all([corpEvents(), readWatchlist(), readJson(swingFile(), {}), readJson(U.kiteHoldingsFile, { accounts: {} })]);
+  const today = istDay(), where = new Map(), qty = new Map();
+  const tag = (sym, t) => { if (!sym) return; sym = String(sym).toUpperCase(); (where.get(sym) || where.set(sym, new Set()).get(sym)).add(t); };
+  for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) { tag(h.symbol, "holding"); const k = String(h.symbol).toUpperCase(); qty.set(k, (qty.get(k) || 0) + (Number(h.qty) || 0)); }
+  for (const p of sw.positions || []) { tag(p.symbol, "swing"); qty.set(p.symbol, (qty.get(p.symbol) || 0) + p.qty); }
+  for (const w of sw.watch || []) tag(w.symbol, "swing watchlist");
+  for (const x of stocks) tag(symOf(x), "watchlist");
+  const names = new Map([...stocks.map(x => [symOf(x), x.company]), ...(sw.positions || []).map(p => [p.symbol, p.name])]);
+  const out = [];
+  for (const [sym, tags] of where) for (const e of eventsFor(sym, { events: ce.events || [], actions: ce.actions || [], today, pastDays, aheadDays })) {
+    const q = qty.get(sym) || 0;
+    out.push({ symbol: sym, name: names.get(sym) || sym, kind: e.kind, label: e.label, date: e.date, days: e.days, amount: e.amount ?? null, factor: e.factor ?? null, estimate: !!e.estimate, detail: e.detail || null, where: [...tags], qty: q || null, income: e.kind === "dividend" && e.amount && q ? Math.round(e.amount * q) : null });
+  }
+  out.sort((a, b) => a.date.localeCompare(b.date));
+  return { events: out, sources: ce.sources || null, updatedAt: ce.at || null, errors: ce.errors || [] };
+}
+// Heads-up alerts: results within 2 days or an ex-dividend date within 3, for what you hold or swing-trade
+async function eventHeadsUps() {
+  await forEachUser(() => withUserLock(async () => {
+    const { events } = await upcomingEvents({ pastDays: 0, aheadDays: 3 }), evs = [];
+    for (const e of events) {
+      const mine = e.where.includes("holding") || e.where.includes("swing"); if (!mine) continue;
+      const swing = e.where.includes("swing"), when = e.days === 0 ? "today" : e.days === 1 ? "tomorrow" : `in ${e.days} days`;
+      if ((e.kind === "results" || e.kind === "board-dividend") && e.days <= 2) evs.push({ key: `ev-${e.symbol}-${e.kind}-${e.date}`, at: new Date().toISOString(), type: swing ? "swing-event" : "event-results", symbol: e.symbol, title: `${e.name}: results ${when}`, detail: swing ? "Swing position: open the Swing page for what to do before the results." : "Expect a bigger move than usual." });
+      if (e.kind === "dividend" && e.days <= 3) evs.push({ key: `ev-${e.symbol}-div-${e.date}`, at: new Date().toISOString(), type: swing ? "swing-event" : "event-dividend", symbol: e.symbol, title: `${e.name}: ex-dividend ${when}${e.income ? ` (${"₹" + e.income.toLocaleString("en-IN")} for you)` : ""}`, detail: `${e.label}${e.amount ? ` ₹${e.amount} a share` : ""}. Hold the shares at the end of the day before the ex-date to get it; selling on the ex-date still gets it.` });
+      if ((e.kind === "bonus" || e.kind === "split") && e.days <= 3) evs.push({ key: `ev-${e.symbol}-${e.kind}-${e.date}`, at: new Date().toISOString(), type: swing ? "swing-event" : "event-capital", symbol: e.symbol, title: `${e.name}: ${e.label} ${when}`, detail: "Share count goes up and the price down by the same factor; swing positions are adjusted automatically." });
+    }
+    await fireEvents(evs);
+  }));
+}
+// Digests (Telegram): morning 08:45 IST and evening 16:00 IST on weekdays, when switched on
+async function digestData(kind) {
+  const day = istDay(), [swing, up, cfg] = await Promise.all([swingView({ alerts: false }).catch(() => null), upcomingEvents({ pastDays: 0, aheadDays: 7 }), readJson(U.notifyFile, {})]);
+  const appUrl = process.env.APP_URL || process.env.PUBLIC_URL || "";
+  if (kind === "morning") { const rules = ((await readJson(rulesFile(), { rules: [] })).rules || []).filter(r => r.active).length; return { html: morningDigest({ day, swing, events: up.events, rules, appUrl }), cfg }; }
+  const hold = await holdingsOf("all"); let dayChange = 0, value = 0, prevValue = 0; const movers = [];
+  for (const h of hold) { const q = livePriceCache.get(`NSE:${h.symbol}`); if (!(h.price > 0)) continue; value += h.price * h.qty; if (q?.prevClose > 0) { dayChange += (h.price - q.prevClose) * h.qty; prevValue += q.prevClose * h.qty; movers.push({ symbol: h.symbol, dayPct: (h.price / q.prevClose - 1) * 100 }); } }
+  const store = await readJson(U.alertsFile, { events: [] }), fired = store.events.filter(e => String(e.at || "").slice(0, 10) === day && (e.type === "rule" || String(e.type).startsWith("swing")));
+  const booked = (swing?.closed || []).filter(t => String(t.closedAt || "").slice(0, 10) === day);
+  const ideas = await swingIdeas().then(x => x.ideas.filter(i => i.score >= 60)).catch(() => []);
+  return { html: eveningDigest({ day, swing, holdings: hold.length ? { value, dayChange, dayPct: prevValue ? dayChange / prevValue * 100 : 0, movers: movers.sort((a, b) => Math.abs(b.dayPct) - Math.abs(a.dayPct)).slice(0, 3) } : null, booked, fired, ideas, events: up.events, appUrl }), cfg };
+}
+async function sendDigest(kind) {
+  const { html, cfg } = await digestData(kind), t = cfg.telegram;
+  if (!t?.enabled || !t.token || !t.chatId) throw new Error("Connect Telegram first (Alerts → Phone alerts).");
+  await sendTelegram(t.token, t.chatId, html); return html;
+}
+let lastDigestTick = { morning: null, evening: null, headsUp: null, eodRules: null };
+setInterval(() => {
+  const n = new Date(Date.now() + 5.5 * 3600e3), m = n.getUTCHours() * 60 + n.getUTCMinutes(), w = n.getUTCDay(), day = n.toISOString().slice(0, 10);
+  if (w === 0 || w === 6) return;
+  if (m >= 510 && lastDigestTick.headsUp !== day) { lastDigestTick.headsUp = day; eventHeadsUps().catch(e => console.error(`[events] heads-up: ${e.message}`)); }
+  for (const [kind, from, to] of [["morning", 525, 560], ["evening", 960, 1020]]) {
+    if (m < from || m > to || lastDigestTick[kind] === day) continue; lastDigestTick[kind] = day;
+    forEachUser(async () => { const cfg = await readJson(U.notifyFile, {}); if (!cfg.digest?.[kind] || !cfg.telegram?.enabled) return; try { await sendDigest(kind); console.log(`[digest] ${kind} sent to ${currentUser().username}`); } catch (e) { console.error(`[digest] ${currentUser().username}: ${e.message}`); } }).catch(() => {});
+  }
+}, 5 * 60e3).unref();
+
+// ---- Corporate actions and company events (shared: public data), refreshed daily ----
+// NSE's market-wide lists first (one request each for all stocks): corporate actions from 30 days back to 90 ahead, and
+// the board-meeting calendar (results). If NSE does not answer, Yahoo's calendar and split / dividend history are asked
+// for the stocks you hold or swing-trade only.
+const corpEventsFile = path.join(DATA_DIR, "corp-events.json");
+const ceState = { running: false, lastError: null };
+const ddmmyyyy = d => { const [y, m, dd2] = d.split("-"); return `${dd2}-${m}-${y}`; };
+const shiftDay = (day, n) => { const d = new Date(`${day}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+async function corpUniverse() { // symbols the decisions are needed for: swing positions / watchlist and holdings, every account
+  const set = new Set();
+  await forEachUser(async () => { const [st, hold] = await Promise.all([readJson(swingFile(), {}), readJson(U.kiteHoldingsFile, { accounts: {} })]); for (const x of [...(st.positions || []), ...(st.watch || [])]) set.add(x.symbol); for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol) set.add(String(h.symbol).toUpperCase()); });
+  return set;
+}
+async function refreshCorpEvents({ force = false } = {}) {
+  if (ceState.running) return; ceState.running = true; ceState.lastError = null;
+  try {
+    const cur = await readJson(corpEventsFile, { actions: [], events: [] });
+    if (!force && cur.at && Date.now() - cur.at < 12 * 3600e3) return;
+    const today = istDay(), errs = [];
+    let nseActions = null, nseEvents = null;
+    try { nseActions = parseNseActions(await fetchNseJson(`/api/corporates-corporateActions?index=equities&from_date=${ddmmyyyy(shiftDay(today, -30))}&to_date=${ddmmyyyy(shiftDay(today, 90))}`, { referer: "https://www.nseindia.com/companies-listing/corporate-filings-actions" })); } catch (e) { errs.push(`NSE actions: ${errText(e).slice(0, 80)}`); }
+    try { nseEvents = parseNseEvents(await fetchNseJson(`/api/event-calendar?index=equities&from_date=${ddmmyyyy(shiftDay(today, -14))}&to_date=${ddmmyyyy(shiftDay(today, 60))}`, { referer: "https://www.nseindia.com/companies-listing/corporate-filings-event-calendar" })); } catch (e) { errs.push(`NSE events: ${errText(e).slice(0, 80)}`); }
+    let yActions = [], yEvents = [];
+    if (!nseActions || !nseEvents) { // Yahoo for the stocks that matter to you
+      const syms = [...await corpUniverse()].slice(0, 80);
+      for (const sym of syms) {
+        if (!nseEvents && !(yahooCooldown() > Date.now())) { try { yEvents.push(...parseYahooCalendar(sym, await yahooSummary(sym, ["calendarEvents", "summaryDetail", "defaultKeyStatistics"]))); } catch (e) { if (e.rateLimited || /rate/i.test(e.message)) break; } }
+        if (!nseActions && !(barSources.yahoo > Date.now())) { try { const { events } = await fetchChart(sym, { range: "2y", events: true }); yActions.push(...parseYahooEvents(sym, events)); } catch (e) { if (e.rateLimited) barSources.yahoo = Date.now() + 15 * 60e3; } }
+        await new Promise(r => setTimeout(r, 1200));
+      }
+    }
+    // keep older actions (dividends received use a year of history); drop events older than 30 days
+    const actions = mergeActions(cur.actions || [], nseActions || [], yActions).filter(a => a.exDate >= shiftDay(today, -400));
+    const events = [...(nseEvents || (cur.events || []).filter(e => e.source === "NSE")), ...yEvents, ...(nseEvents ? [] : (cur.events || []).filter(e => e.source === "Yahoo" && !yEvents.some(y => y.symbol === e.symbol)))].filter(e => e.date >= shiftDay(today, -30));
+    await writeJson(corpEventsFile, { at: Date.now(), actions, events, sources: { actions: nseActions ? "NSE" : yActions.length ? "Yahoo" : "none", events: nseEvents ? "NSE" : yEvents.length ? "Yahoo" : "none" }, errors: errs });
+    console.log(`[events] ${actions.length} corporate actions (${nseActions ? "NSE" : "Yahoo"}), ${events.length} events${errs.length ? ` (${errs.join("; ")})` : ""}`);
+  } catch (e) { ceState.lastError = e.message; console.error(`[events] ${e.message}`); }
+  finally { ceState.running = false; }
+}
+setInterval(() => refreshCorpEvents().catch(() => {}), 3 * 3600e3).unref();
+if (!process.env.NODE_TEST_CONTEXT) setTimeout(() => refreshCorpEvents().catch(() => {}), 12e3).unref();
+let ceMem = { at: 0, data: null };
+async function corpEvents() { if (!ceMem.data || Date.now() - ceMem.at > 60e3) ceMem = { at: Date.now(), data: await readJson(corpEventsFile, { actions: [], events: [] }) }; return ceMem.data; }
+
 async function swingView({ alerts = true, fresh = false } = {}) {
-  const st = await readJson(swingFile(), {}), watch = st.watch || [];
-  const dd = dedupePositions(st.positions || []), positions = dd.list; // older versions could hold one stock twice: merge them
+  const st = await readJson(swingFile(), {}); let watch = st.watch || [];
+  const dd = dedupePositions(st.positions || []); let positions = dd.list; // older versions could hold one stock twice: merge them
   if (dd.merged.length) { st.positions = positions; await writeJson(swingFile(), st); console.log(`[swing] merged duplicate positions: ${dd.merged.join(", ")}`); }
+  // Bonuses and splits whose ex-date has passed: adjust quantity, average, lots and stop-loss (once per action)
+  const ce = await corpEvents(), today = istDay(), adjusted = [];
+  positions = positions.map(p => { const r = adjustPosition(p, ce.actions || [], today); adjusted.push(...r.applied.map(a => ({ ...a, symbol: p.symbol, name: p.name }))); return r.position; });
+  watch = watch.map(w => adjustWatch(w, ce.actions || [], today).watch);
+  if (adjusted.length || watch.some((w, i) => w !== (st.watch || [])[i])) {
+    st.positions = positions; st.watch = watch; await writeJson(swingFile(), st);
+    if (adjusted.length) {
+      console.log(`[swing] corporate actions applied: ${adjusted.map(a => `${a.symbol} ${a.label}`).join(", ")}`);
+      const store = await readJson(U.alertsFile, { state: {}, events: [] }), evs = adjusted.map(a => ({ key: `ca-${a.key}`, at: new Date().toISOString(), type: "swing-corp-action", symbol: a.symbol, title: `${a.name || a.symbol}: adjusted for ${a.label}`, detail: `${a.from.qty} → ${a.to.qty} shares, average ₹${a.from.avgPrice} → ₹${a.to.avgPrice} (ex-date ${a.exDate}). Targets and stop-loss moved with it.` }));
+      await writeJson(U.alertsFile, { ...store, events: mergeEvents(store.events, evs) }); phonePush(evs);
+    }
+  }
   const prices = await livePrices([...positions, ...watch], fresh ? 0 : 45e3);
   syncLivePrices().catch(() => {}); // the same quotes go to the watchlist, so Valuation and Home match this page
   const pricePending = prices.pending || 0;
@@ -923,6 +1188,10 @@ async function swingView({ alerts = true, fresh = false } = {}) {
   const scan = await readJson(swingScanFile, { snaps: {} });
   for (const r of view.positions) { const sn = scan.snaps?.[r.symbol]; r.health = sn?.s ? { ...positionHealth(sn.s, r.avgPrice), asOf: sn.at } : null; const q = prices.get(r.symbol); r.priceAsOf = q?.asOf || null; r.priceStale = !!q?.stale; }
   view.totals.staleNames = view.positions.filter(r => r.priceStale).map(r => r.symbol);
+  // Results, dividends, bonuses: what they mean for each position (and what is coming up for the swing watchlist)
+  for (const r of view.positions) { const pos = positions.find(p => p.id === r.id); r.adjustments = pos?.adjustments || []; r.events = swingEventAdvice(r, eventsFor(r.symbol, { events: ce.events || [], actions: ce.actions || [], today })); }
+  for (const w of view.watch) { const ev = eventsFor(w.symbol, { events: ce.events || [], actions: ce.actions || [], today, pastDays: 0, aheadDays: 30 }); w.upcoming = ev.slice(0, 3).map(e => ({ kind: e.kind, label: e.label, date: e.date, days: e.days, amount: e.amount ?? null })); }
+  view.eventsSource = ce.sources || null; view.eventsAt = ce.at || null;
   // If sold now: charges, STT and tax on the whole position, and on the booking plan's "sell now" quantity
   const charges = { ...CHARGE_DEFAULTS, ...(st.settings?.charges || {}) }, exemptLeft = ltExemptionLeft(st.closed || [], st.settings?.ltUsedElsewhere || 0);
   for (const r of view.positions) if (r.price > 0) {
@@ -931,7 +1200,7 @@ async function swingView({ alerts = true, fresh = false } = {}) {
     if (r.sellNow > 0 && r.sellNow < r.qty) r.ifSellNow = sellTaxEstimate({ lots: lotsForSale(p, r.sellNow), sellPrice: r.price, exchange: r.exchange, ltExemptLeft: exemptLeft, charges });
   }
   view.totals.pat = portfolioPat(view.positions.map(r => r.ifSold).filter(Boolean), exemptLeft, charges);
-  return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), ledger: buildLedger(positions, all), taxInfo: { exemptLeft, charges, ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0 }, realisedNet: realisedAfterTax(all, charges), pricePending, cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
+  return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), journal: { ...journalStats(all), setups: SETUPS, mistakes: MISTAKES }, ledger: buildLedger(positions, all), taxInfo: { exemptLeft, charges, ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0 }, realisedNet: realisedAfterTax(all, charges), pricePending, cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
 }
 // Closed swing trades as an Excel file: one row per FIFO buy lot (short / long term), a yearly tax estimate and the scorecard.
 async function sendSwingExport(res) {
@@ -969,6 +1238,9 @@ let nseIndices = { at: 0, map: null };
 const etfBarsFile = path.join(DATA_DIR, "etf-bars.json");
 async function etfHistory(stock, { force = false } = {}) {
   const symbol = symOf(stock), exchange = stock.exchange || "NSE", errs = []; let limited = false;
+  // Our own NSE end-of-day history: enough years and up to date → no other source needed
+  const own = exchange === "NSE" ? await eodBars(symbol) : [];
+  if (own.length >= 1000 && eodRecent(own)) return { bars: own, source: "NSE end-of-day", meta: {} };
   const ok = (bars, source, meta = {}) => (bars?.length >= 200 ? { bars, source, meta } : (errs.push(`${source}: only ${bars?.length || 0} days`), null));
   const tries = [
     async () => {
@@ -993,9 +1265,10 @@ async function etfHistory(stock, { force = false } = {}) {
     }
   ];
   for (const t of tries) {
-    try { const r = await t(); if (r) { const all = await readJson(etfBarsFile, {}); all[`${exchange}:${symbol}`] = { at: Date.now(), source: r.source, bars: r.bars.slice(-1300).map(b => ({ t: b.t, c: b.c, h: b.h ?? null, l: b.l ?? null })) }; await writeJson(etfBarsFile, all).catch(() => {}); return r; } }
+    try { const r = await t(); if (r) { eodSeed(symbol, r.bars); const all = await readJson(etfBarsFile, {}); all[`${exchange}:${symbol}`] = { at: Date.now(), source: r.source, bars: r.bars.slice(-1300).map(b => ({ t: b.t, c: b.c, h: b.h ?? null, l: b.l ?? null })) }; await writeJson(etfBarsFile, all).catch(() => {}); return r; } }
     catch (e) { errs.push(errText(e).slice(0, 120)); if (e.rateLimited) limited = true; }
   }
+  if (own.length >= 200 && eodRecent(own)) { console.log(`[etf] ${symbol}: sources unavailable; using our NSE end-of-day history (${own.length} days)`); return { bars: own, source: "NSE end-of-day", meta: {} }; }
   // Every source busy or failing: the saved history, with today's live price added as the latest day
   const saved = (await readJson(etfBarsFile, {}))[`${exchange}:${symbol}`];
   if (saved?.bars?.length >= 200) {
@@ -1036,6 +1309,87 @@ async function etfRangeEntry(stock) {
   const name = stock.company && stock.company.toUpperCase() !== symbol ? stock.company : symbol;
   return { symbol, companyName: name, price: q.price, high52: q.high, low52: q.low, ...(q.inav > 0 ? { inav: q.inav, premium: Math.round((q.price / q.inav - 1) * 1e4) / 100 } : {}), profile: "etf", etfType: etfType(symbol, name), indexName: indexFor(symbol, name) || undefined, asOf: istDay(), priceDate: istDay(), thin: 1, source: `ETF: 52-week range only (${q.source} quote; price history unavailable right now)`, flags: "ETF valued on its 52-week range only until its price history can be fetched" };
 }
+// ---- NSE end-of-day data: the official daily price file → our own price history (shared: prices are public) ----
+// Every evening the bhavcopy adds one bar to each tracked stock's history (eod/SYMBOL.json) and the index closes to
+// eod/_index-*.json. A one-time backfill (about 15 months, one file every few seconds) seeds it. The swing scan and the
+// ETF valuation read this history first, so they no longer need Yahoo; closing prices reach every screen as "NSE close".
+const eodDir = path.join(DATA_DIR, "eod"), eodStateFile = path.join(DATA_DIR, "eod-state.json"), eodLatestFile = path.join(DATA_DIR, "eod-latest.json");
+const eodFile = sym => path.join(eodDir, `${sym.replace(/[^A-Z0-9&-]/gi, "_")}.json`);
+const eodState = { running: false, backfill: null, lastError: null };
+const eodMem = new Map(); // symbol -> bars (read-through cache)
+async function eodBars(sym) { if (eodMem.has(sym)) return eodMem.get(sym); const b = (await readJson(eodFile(sym), { bars: [] })).bars || []; eodMem.set(sym, b); return b; }
+async function eodSave(sym, add) { const bars = mergeBars(await eodBars(sym), add); eodMem.set(sym, bars); await writeJson(eodFile(sym), { symbol: sym, bars }); return bars; }
+const eodRecent = (bars, days = 6) => bars.length && Date.now() / 1000 - bars.at(-1).t < days * 86400;
+// Everything worth keeping a history for: every account's watchlist, swing positions / watchlist and holdings, the scan list
+async function eodUniverse() {
+  const set = new Set(["NIFTYBEES"]);
+  await forEachUser(async () => {
+    const [stocks, st, hold] = await Promise.all([readWatchlist(), readJson(swingFile(), {}), readJson(U.kiteHoldingsFile, { accounts: {} })]);
+    for (const x of stocks) if (symOf(x) && (x.exchange || "NSE") === "NSE") set.add(symOf(x));
+    for (const x of [...(st.positions || []), ...(st.watch || [])]) if ((x.exchange || "NSE") === "NSE") set.add(x.symbol);
+    for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol) set.add(String(h.symbol).toUpperCase());
+  });
+  for (const x of SEED_STOCKS) set.add(x.symbol);
+  return set;
+}
+// One trading day → bars for the tracked symbols (returned, so a backfill can batch the writes)
+async function eodFetchDay(day, universe) {
+  const [bhav, idx] = await Promise.all([fetchBhavcopy(day), fetchIndexCloses(day).catch(() => null)]);
+  if (!bhav) return null; // holiday or not published yet
+  const t = dayToT(bhav.day || day), bars = new Map();
+  for (const r of bhav.rows) if (universe.has(r.symbol)) bars.set(r.symbol, { t, c: r.close, h: r.high ?? r.close, l: r.low ?? r.close, v: r.volume ?? null, p: r.prev ?? null });
+  const idxBars = new Map();
+  for (const r of idx?.rows || []) { const k = INDEX_KEYS[String(r.name).toUpperCase()]; if (k) idxBars.set(k, { t, c: r.close, pe: r.pe, pb: r.pb, dy: r.dy }); }
+  return { day: bhav.day || day, bars, idxBars, all: bhav.rows };
+}
+async function eodIngest(day, universe) {
+  const got = await eodFetchDay(day, universe); if (!got) return null;
+  for (const [sym, b] of got.bars) await eodSave(sym, [b]);
+  for (const [k, b] of got.idxBars) await eodSave(`_index-${k}`, [b]);
+  // the full day's closes (every listed stock) for quick lookups, and the official close into the live store
+  await writeJson(eodLatestFile, { day: got.day, prices: Object.fromEntries(got.all.map(r => [r.symbol, { c: r.close, p: r.prev, h: r.high, l: r.low, v: r.volume }])) });
+  const asOf = new Date(`${got.day}T10:00:00Z`).toISOString();
+  for (const [sym, b] of got.bars) { const k = `NSE:${sym}`, c = livePriceCache.get(k); if (!c || (Date.parse(c.asOf || "") || 0) < Date.parse(asOf) || /saved/.test(c.source || "")) setLive(k, { price: b.c, prevClose: b.p, low: null, high: null, source: "NSE close", asOf }); }
+  return got;
+}
+async function runEod({ backfillDays = Number(process.env.EOD_BACKFILL_DAYS) || 320 } = {}) {
+  if (eodState.running) return eodState; eodState.running = true; eodState.lastError = null;
+  try {
+    const st = await readJson(eodStateFile, { days: [] }), have = new Set(st.days || []), universe = await eodUniverse();
+    // 1. the latest days (today after 18:00 IST, and anything missed in the last two weeks)
+    const now = new Date(Date.now() + 5.5 * 3600e3), today = now.toISOString().slice(0, 10), afterPublish = now.getUTCHours() * 60 + now.getUTCMinutes() >= 18 * 60 + 10;
+    for (const day of weekdaysBack(today, 10)) {
+      if (have.has(day) || (day === today && !afterPublish)) continue;
+      try { const g = await eodIngest(day, universe); if (g) { have.add(g.day); if (g.day === today) checkEodRules().catch(e => console.error(`[rules] ${e.message}`)); st.lastDay = [st.lastDay || "", g.day].sort().at(-1); console.log(`[eod] ${g.day}: ${g.bars.size} stocks, ${g.idxBars.size} indices`); } else if (day !== today) have.add(day); }
+      catch (e) { eodState.lastError = e.message; if (e.rateLimited) break; }
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    st.days = [...have].sort().slice(-1500); await writeJson(eodStateFile, st);
+    // 2. one-time backfill, oldest gaps last; bars are batched in memory and written every 20 days
+    if (!st.backfilled && backfillDays > 0) {
+      const todo = weekdaysBack(today, backfillDays).filter(d => !have.has(d) && d < today);
+      eodState.backfill = { done: 0, total: todo.length };
+      const pend = new Map(); const flush = async () => { for (const [sym, add] of pend) await eodSave(sym, add); pend.clear(); st.days = [...have].sort().slice(-1500); await writeJson(eodStateFile, st); };
+      for (const day of todo) {
+        try { const g = await eodFetchDay(day, universe); have.add(day); if (g) { for (const [s, b] of g.bars) (pend.get(s) || pend.set(s, []).get(s)).push(b); for (const [k, b] of g.idxBars) (pend.get(`_index-${k}`) || pend.set(`_index-${k}`, []).get(`_index-${k}`)).push(b); } }
+        catch (e) { eodState.lastError = e.message; if (e.rateLimited) { await flush(); throw Object.assign(new Error("NSE archives are rate-limiting; backfill resumes later"), { soft: true }); } }
+        eodState.backfill.done++;
+        if (eodState.backfill.done % 20 === 0) await flush();
+        await new Promise(r => setTimeout(r, Number(process.env.EOD_SPACING_MS) || 2500));
+      }
+      await flush(); st.backfilled = new Date().toISOString(); await writeJson(eodStateFile, st);
+      console.log(`[eod] backfill finished: ${todo.length} days`);
+    }
+  } catch (e) { eodState.lastError = e.message; if (!e.soft) console.error(`[eod] ${e.message}`); }
+  finally { eodState.running = false; }
+  return eodState;
+}
+// Evenings after the file is published (18:10–23:30 IST, weekdays), every 30 minutes until today's day is in; and once at start.
+setInterval(() => { const n = new Date(Date.now() + 5.5 * 3600e3), m = n.getUTCHours() * 60 + n.getUTCMinutes(), w = n.getUTCDay(); if (w > 0 && w < 6 && m >= 1090 && m <= 1410) runEod().catch(() => {}); }, 30 * 60e3).unref();
+if (!process.env.NODE_TEST_CONTEXT && process.env.EOD !== "0") setTimeout(() => runEod().catch(() => {}), 20e3).unref();
+// Other sources' history (Yahoo, Kite, NSE API, Screener) is kept too, so a stock fetched once never needs that site again
+function eodSeed(sym, bars) { if (bars?.length && /^[A-Z0-9&-]+$/.test(sym)) eodSave(sym, bars.map(b => ({ t: b.t, c: b.c, h: b.h ?? b.c, l: b.l ?? b.c, v: b.v ?? null }))).catch(() => {}); }
+
 // ---- Swing ideas: a daily scan of daily charts (shared cache: prices are public), ranked per account ----
 const swingScanFile = path.join(DATA_DIR, "swing-scan.json");
 const scanState = { running: false, done: 0, total: 0, startedAt: null, finishedAt: null, pausedUntil: 0, lastError: null };
@@ -1057,9 +1411,12 @@ const barSources = { yahoo: 0, kite: 0 }; // cool-down until (ms); Screener keep
 function barsCooling() { return { kite: barSources.kite > Date.now(), yahoo: barSources.yahoo > Date.now(), screener: !!screenerCooldown() }; }
 async function dailyBars(x, { kiteUser, tokens, sx }) {
   const errs = [], cool = barsCooling();
+  // Our own NSE end-of-day history first: no network at all
+  if ((x.exchange || "NSE") === "NSE") { const own = await eodBars(x.symbol); if (own.length >= 200 && eodRecent(own)) return { bars: own, source: "NSE EOD" }; }
+  const seeded = r => { eodSeed(x.symbol, r.bars); return r; };
   const token = tokens.get(`${x.exchange || "NSE"}:${x.symbol}`);
   if (!cool.yahoo) {
-    try { const { bars } = await fetchChart(x.symbol, { exchange: x.exchange, range: "1y" }); if (bars.length >= 60) return { bars, source: "Yahoo" }; errs.push("Yahoo: too little history"); }
+    try { const { bars } = await fetchChart(x.symbol, { exchange: x.exchange, range: "1y" }); if (bars.length >= 60) return seeded({ bars, source: "Yahoo" }); errs.push("Yahoo: too little history"); }
     catch (e) { errs.push(`Yahoo: ${e.message}`); if (e.rateLimited) barSources.yahoo = Date.now() + 15 * 60e3; }
   }
   if (!screenerCooldown() && x.exchange !== "BSE") {
@@ -1067,13 +1424,13 @@ async function dailyBars(x, { kiteUser, tokens, sx }) {
       const ids = sx[x.symbol]?.ids?.companyId ? sx[x.symbol].ids : null;
       const r = await fetchScreenerExtras({ marketSymbol: x.symbol, exchange: x.exchange }, { ids, want: ["chart"] });
       if (r.ids?.companyId && !ids) saveScreenerExtra(x.symbol, { ids: r.ids }).catch(() => {});
-      if (r.bars?.length >= 60) return { bars: r.bars, source: "Screener" };
+      if (r.bars?.length >= 60) return seeded({ bars: r.bars, source: "Screener" });
       errs.push("Screener: no chart");
     } catch (e) { errs.push(`Screener: ${e.message}`); }
   }
   // Kite last: its feed can lag when the connection is unstable, so it only fills gaps
   if (kiteUser && token && !cool.kite) {
-    try { const b = await asUser(kiteUser, async () => { const kc = await anyKiteWithSession(); if (!kc) throw Object.assign(new Error("Kite login expired"), { off: true }); return kc.historical(token); }); if (b.length >= 60) return { bars: b, source: "Kite" }; errs.push("Kite: too little history"); }
+    try { const b = await asUser(kiteUser, async () => { const kc = await anyKiteWithSession(); if (!kc) throw Object.assign(new Error("Kite login expired"), { off: true }); return kc.historical(token); }); if (b.length >= 60) return seeded({ bars: b, source: "Kite" }); errs.push("Kite: too little history"); }
     catch (e) { errs.push(`Kite: ${e.message}`); if (e.off || e.loginRequired || /historical|permission|not (enabled|allowed|subscribed)|Unrecognised/i.test(e.message)) barSources.kite = Date.now() + 6 * 3600e3; else if (/rate|429|too many/i.test(e.message)) barSources.kite = Date.now() + 5 * 60e3; }
   }
   const c = barsCooling();
@@ -1126,6 +1483,19 @@ setInterval(() => {
   const mins = Number(t.hour) * 60 + Number(t.minute);
   if (!["Sat", "Sun"].includes(t.weekday) && mins >= 950 && mins <= 1320) readJson(swingScanFile, {}).then(c => { if (!c.lastRun || istDay(new Date(c.lastRun)) !== istDay() || new Date(c.lastRun).getTime() < Date.now() - 6 * 3600e3) startSwingScan(); }).catch(() => {});
 }, 15 * 60e3).unref();
+// Scanner track record (shared: same ideas for everyone): log today's ideas, judge older ones against the prices since
+const ideasLogFile = path.join(DATA_DIR, "ideas-log.json");
+let ideasJudgedAt = 0;
+async function trackIdeas(ideas) {
+  const day = istDay(); let { log } = logIdeas((await readJson(ideasLogFile, { log: {} })).log, ideas.filter(i => i.score >= 50), day);
+  if (Date.now() - ideasJudgedAt > 3600e3) { // judge open ideas at most hourly
+    ideasJudgedAt = Date.now();
+    for (const [k, x] of Object.entries(log)) { if (x.outcome) continue; const v = judgeIdea(x, await eodBars(x.symbol)); if (v) log[k] = { ...x, ...v }; }
+    const cutoff = new Date(Date.now() - 400 * 864e5).toISOString().slice(0, 10); for (const k of Object.keys(log)) if (log[k].day < cutoff) delete log[k];
+  }
+  await writeJson(ideasLogFile, { log });
+  return ideaStats(log);
+}
 async function swingIdeas() {
   const [cache, st, stocks, { rows }] = await Promise.all([readJson(swingScanFile, { snaps: {} }), readJson(swingFile(), {}), readWatchlist(), computeRows()]);
   const snaps = cache.snaps || {};
@@ -1140,7 +1510,8 @@ async function swingIdeas() {
   const ideas = rankIdeas(items, { held: new Set((st.positions || []).map(p => p.symbol)), watching: new Set((st.watch || []).map(w => w.symbol)), sizing, limit: 40 })
     .map(i => ({ ...i, source: mine.get(i.symbol)?.src || "market", asOf: snaps[i.symbol]?.at || null }));
   const failed = items.filter(i => !snaps[i.symbol]?.s && snaps[i.symbol]?.error).length;
-  return { ideas, sizing, scan: { running: scanState.running, done: scanState.done, total: scanState.total, scanned, failed, universe: items.length, lastRun: cache.lastRun || null, error: scanState.lastError, pausedUntil: scanState.pausedUntil > Date.now() ? scanState.pausedUntil : null, sources: scanState.sources || {}, kite: !!scanState.kite } };
+  const track = await trackIdeas(ideas).catch(e => { console.error(`[ideas-track] ${e.message}`); return null; });
+  return { ideas, sizing, track, scan: { running: scanState.running, done: scanState.done, total: scanState.total, scanned, failed, universe: items.length, lastRun: cache.lastRun || null, error: scanState.lastError, pausedUntil: scanState.pausedUntil > Date.now() ? scanState.pausedUntil : null, sources: scanState.sources || {}, kite: !!scanState.kite } };
 }
 async function resolveNames(names) {
   const [master, stocks] = await Promise.all([scripMaster(), readWatchlist()]);
@@ -1512,6 +1883,11 @@ async function appHandler(req, res, url) {
     // "version" changes whenever any of this account's prices changes (also quotes that finished in the background).
     const priceVersion = stocks => stocks.reduce((m, x) => Math.max(m, Date.parse(x.updatedAt || "") || 0, Date.parse(x.priceAt || "") || 0), 0) + ":" + stocks.reduce((s, x) => s + (Number(x.price) || 0), 0).toFixed(2);
     const myPending = stocks => stocks.filter(x => livePending.has(`${x.exchange || "NSE"}:${symOf(x)}`)).length;
+    // Results, dividends, bonuses for everything you track, next 30 days (and the last few)
+    if (url.pathname === "/api/events/upcoming" && req.method === "GET") return reply(res, 200, await upcomingEvents());
+    if (url.pathname === "/api/events/refresh" && req.method === "POST") { refreshCorpEvents({ force: true }).catch(() => {}); return reply(res, 202, { started: true }); }
+    if (url.pathname === "/api/eod/status" && req.method === "GET") { const st = await readJson(eodStateFile, {}); return reply(res, 200, { lastDay: st.lastDay || null, daysStored: (st.days || []).length, backfilled: st.backfilled || null, running: eodState.running, backfill: eodState.backfill, lastError: eodState.lastError }); }
+    if (url.pathname === "/api/eod/run" && req.method === "POST") { if (currentUser().role !== "owner") return reply(res, 403, { message: "Owner only." }); runEod().catch(() => {}); return reply(res, 202, { started: true }); }
     if (url.pathname === "/api/prices/status" && req.method === "GET") {
       const { stocks } = await syncLivePrices(), latest = stocks.reduce((m, x) => Math.max(m, Date.parse(x.priceAt || "") || 0), 0);
       return reply(res, 200, { ...priceState, intervalSec: PRICE_REFRESH_SEC, marketOpen: marketIsOpen(), myLatestPriceAt: latest ? new Date(latest).toISOString() : null, version: priceVersion(stocks), pending: myPending(stocks) });
@@ -1720,6 +2096,9 @@ async function appHandler(req, res, url) {
       return reply(res, 404, { message: "Unknown Kite operation." });
     }
     if (url.pathname === "/api/freshness" && req.method === "GET") return reply(res, 200, await freshnessView());
+    if (url.pathname === "/api/backups" && req.method === "GET") { const name = currentUser().username.replace(/[^\w.-]/g, "_"), status = backupState.last || await readJson(path.join(DATA_DIR, "backup-status.json"), null); return reply(res, 200, { list: await listLocal(backupDir(), name), status: status ? { day: status.day, at: status.at, mine: status.accounts.find(a => a.account === currentUser().username) || null, errors: currentUser().role === "owner" ? status.errors : [], s3: status.s3, dir: currentUser().role === "owner" ? status.dir : null, accounts: currentUser().role === "owner" ? status.accounts.length : null } : null, keepDays: backupConfig().keepDays, s3: !!backupConfig().s3, owner: currentUser().role === "owner" }); }
+    if (url.pathname === "/api/backups/run" && req.method === "POST") { if (currentUser().role !== "owner") return reply(res, 403, { message: "Owner only." }); return reply(res, 200, await runBackups()); }
+    if (url.pathname === "/api/backups/restore" && req.method === "POST") { const { day } = await readBody(req); if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day))) return reply(res, 400, { message: "Pick a backup day." }); const name = currentUser().username.replace(/[^\w.-]/g, "_"); let b; try { b = gunz(await readLocal(backupDir(), day, name)); } catch { return reply(res, 404, { message: "No backup of your account for that day." }); } const names = await restoreBackup(b, { replace: true }); console.log(`[backup] ${currentUser().username} restored the automatic backup of ${day}.`); return reply(res, 200, { ok: true, restored: names.length, day }); }
     if (url.pathname === "/api/backup" && req.method === "GET") {
       const b = await makeBackup(url.searchParams.get("secrets") === "1");
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Content-Disposition": `attachment; filename="equity-watchlist-${b.account}-${istDay()}.json"` });
@@ -1729,10 +2108,29 @@ async function appHandler(req, res, url) {
       try { const b = await readBody(req); const names = await restoreBackup(b.backup, { replace: !!b.replace }); console.log(`[backup] ${currentUser().username} restored ${names.length} file(s).`); return reply(res, 200, { ok: true, restored: names }); }
       catch (e) { return reply(res, 400, { message: e.message }); }
     }
+    if (url.pathname.startsWith("/api/accumulate")) {
+      const op = url.pathname.slice("/api/accumulate".length).replace(/^\//, "");
+      try {
+        if (req.method === "GET" && !op) return reply(res, 200, await accumulatePage());
+        const b = await readBody(req), st = await readJson(accFile(), { baskets: [] }); st.baskets ||= [];
+        if (op === "save") { const prev = b.id ? st.baskets.find(x => x.id === b.id) : null; const nb = sanitizeBasket(b, prev); if (!nb.listId && !nb.symbols.length) throw new Error("Add the stocks (or pick a watchlist)."); if (!prev && st.baskets.length >= 10) throw new Error("At most 10 baskets."); st.baskets = prev ? st.baskets.map(x => (x.id === nb.id ? nb : x)) : [...st.baskets, nb]; }
+        else if (op === "delete") st.baskets = st.baskets.filter(x => x.id !== b.id);
+        else return reply(res, 404, { message: "Unknown operation." });
+        await writeJson(accFile(), st); return reply(res, 200, await accumulatePage());
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/returns" && req.method === "GET") return reply(res, 200, await returnsPage(String(url.searchParams.get("account") || "all").slice(0, 40)));
+    if (url.pathname === "/api/dividend-income" && req.method === "GET") return reply(res, 200, await dividendIncomePage(String(url.searchParams.get("account") || "all").slice(0, 40)));
+    if (url.pathname === "/api/share-goals" && req.method === "POST") {
+      const { goals } = await readBody(req); if (!Array.isArray(goals) || goals.length > 30) return reply(res, 400, { message: "goals must be a list (30 max)" });
+      const clean = goals.map(g => ({ symbol: String(g.symbol || "").toUpperCase().replace(/[^A-Z0-9.&-]/g, "").slice(0, 20), market: g.market === "US" ? "US" : "IN", target: Math.max(1, Math.round(Number(g.target) || 0)), current: Number.isFinite(Number(g.current)) ? Math.max(0, Number(g.current)) : null, note: String(g.note || "").slice(0, 80) })).filter(g => g.symbol && g.target > 0);
+      await writeJson(userFile("share-goals.json"), { goals: clean }); return reply(res, 200, { goals: clean });
+    }
     if (url.pathname.startsWith("/api/tax")) {
       const op = url.pathname.slice("/api/tax".length).replace(/^\//, "");
       try {
-        if (req.method === "GET" && !op) return reply(res, 200, await taxPage());
+        const acct = String(url.searchParams.get("account") || "all").slice(0, 40);
+        if (req.method === "GET" && !op) return reply(res, 200, await taxPage(acct));
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown tax operation." });
         const b = await readBody(req), st = await readJson(taxFile(), { trades: [], imports: [] });
         if (op === "import") {
@@ -1741,13 +2139,17 @@ async function appHandler(req, res, url) {
           else tables = [{ rows: parseDelimited(String(b.text || "")) }];
           const parsed = tables.map(t => parseTradebook(t.rows)).sort((a, z) => z.trades.length - a.trades.length)[0];
           if (!parsed?.trades.length) throw new Error(parsed?.note || "No trades found in that file.");
+          const tagAs = b.account && b.account !== "all" ? String(b.account).slice(0, 40) : null; // which account (PAN) these trades belong to
+          if (tagAs) for (const x of parsed.trades) x.account = tagAs;
           const before = st.trades.length; st.trades = mergeTrades(st.trades, parsed.trades);
           if (st.trades.length > before) st.imports = [...(st.imports || []), { at: new Date().toISOString(), file: String(b.filename || "pasted").slice(0, 80), rows: parsed.trades.length, added: st.trades.length - before, from: parsed.trades[0].date, to: parsed.trades.at(-1).date }].slice(-30);
           if (st.trades.length > 50000) throw new Error("Too many trades (50,000 max).");
           await writeJson(taxFile(), st);
-          return reply(res, 200, { ...(await taxPage()), imported: { rows: parsed.trades.length, added: st.trades.length - before, skipped: parsed.skipped } });
+          return reply(res, 200, { ...(await taxPage(tagAs || "all")), imported: { rows: parsed.trades.length, added: st.trades.length - before, skipped: parsed.skipped } });
         }
         if (op === "clear") { await writeJson(taxFile(), { trades: [], imports: [] }); return reply(res, 200, await taxPage()); }
+        // older imports had no account: assign them to one
+        if (op === "tag") { const to = String(b.account || "").slice(0, 40); if (!to) throw new Error("Pick the account."); let n = 0; for (const x of st.trades) if (!x.account) { x.account = to; n++; } await writeJson(taxFile(), st); return reply(res, 200, { ...(await taxPage(to)), tagged: n }); }
         return reply(res, 404, { message: "Unknown tax operation." });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
@@ -1833,9 +2235,15 @@ async function appHandler(req, res, url) {
         else if (op === "buy") { const p = find("positions", b.id), q = Number(b.qty), pr = Number(b.price); if (!(q > 0 && Number.isInteger(q) && pr > 0)) throw new Error("Enter whole shares and a price."); const at = tradeDate(b.date); st.positions = st.positions.map(x => (x.id === p.id ? applyBuy(x, q, pr, at) : x)); moveCash(st, -q * pr, `Bought ${q} ${p.symbol} @ ₹${pr} on ${at.slice(0, 10)}`); }
         else if (op === "sell") {
           const p = find("positions", b.id), q = Number(b.qty), pr = Number(b.price);
-          const atTarget = pr > 0 && evaluateSwing({ positions: [p], prices: new Map([[p.symbol, { price: pr }]]), settings: st.settings || {} }).positions[0].hitLevel > 0; // sold at or above T1
-          const at = tradeDate(b.date), r = applySell(p, q, pr, at, { atTarget }); st.positions = r.position ? st.positions.map(x => (x.id === p.id ? r.position : x)) : st.positions.filter(x => x.id !== p.id); st.closed = [r.trade, ...st.closed].slice(0, 500);
+          const ev0 = evaluateSwing({ positions: [p], prices: new Map([[p.symbol, { price: pr }]]), settings: st.settings || {} }).positions[0];
+          const atTarget = pr > 0 && ev0.hitLevel > 0; // sold at or above T1
+          const at = tradeDate(b.date), r = applySell(p, q, pr, at, { atTarget }); r.trade.t1Price = ev0.targets?.[0]?.price ?? null; // journal: what selling before T1 left on the table
+          if (b.review) r.trade.review = sanitizeReview(b.review); st.positions = r.position ? st.positions.map(x => (x.id === p.id ? r.position : x)) : st.positions.filter(x => x.id !== p.id); st.closed = [r.trade, ...st.closed].slice(0, 500);
           moveCash(st, q * pr, `Sold ${q} ${p.symbol} @ ₹${pr} on ${at.slice(0, 10)}`);
+        }
+        else if (op === "review") { // journal: what went right or wrong on a closed trade
+          const t = st.closed.find(x => x.id === b.id); if (!t) throw new Error("That closed trade no longer exists.");
+          t.review = sanitizeReview(b); if (b.setup !== undefined) t.setup = SETUPS[b.setup] ? b.setup : null;
         }
         else if (op === "reopen" || op === "delete-trade") { // undo an accidental sale, or just drop the record
           const t = st.closed.find(x => x.id === b.id); if (!t) throw new Error("That closed trade no longer exists.");
@@ -2072,7 +2480,7 @@ async function appHandler(req, res, url) {
       const op = url.pathname.slice("/api/notify".length).replace(/^\//, "");
       try {
         const cfg = await readJson(U.notifyFile, {}), t = cfg.telegram || {};
-        const pub = c => { const x = c.telegram || {}; return { telegram: { connected: !!(x.token && x.chatId), enabled: !!x.enabled, token: maskToken(x.token), bot: x.bot || null, chat: x.chatLabel || null, scope: x.scope || "all" }, lastSent: c.lastSent || null, lastError: c.lastError || null, lastErrorAt: c.lastErrorAt || null }; };
+        const pub = c => { const x = c.telegram || {}; return { digest: { morning: !!c.digest?.morning, evening: !!c.digest?.evening }, telegram: { connected: !!(x.token && x.chatId), enabled: !!x.enabled, token: maskToken(x.token), bot: x.bot || null, chat: x.chatLabel || null, scope: x.scope || "all" }, lastSent: c.lastSent || null, lastError: c.lastError || null, lastErrorAt: c.lastErrorAt || null }; };
         if (req.method === "GET" && !op) return reply(res, 200, pub(cfg));
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown notify operation." });
         const b = await readBody(req);
@@ -2084,10 +2492,36 @@ async function appHandler(req, res, url) {
           cfg.lastError = null;
         } else if (op === "settings") { if (!t.token) throw new Error("Connect a bot first."); cfg.telegram = { ...t, enabled: b.enabled !== false, scope: b.scope === "swing" ? "swing" : "all" }; }
         else if (op === "test") { if (!t.token || !t.chatId) throw new Error("Connect a bot first."); await sendTelegram(t.token, t.chatId, "🔔 <b>Test alert</b> from Equity Watchlist. Phone alerts are working."); cfg.lastSent = new Date().toISOString(); cfg.lastError = null; }
+        else if (op === "digest") cfg.digest = { morning: !!b.morning, evening: !!b.evening };
+        else if (op === "digest-test") { await writeJson(U.notifyFile, cfg, { mode: 0o600 }); const html = await sendDigest(b.kind === "evening" ? "evening" : "morning"); return reply(res, 200, { ...pub(cfg), sent: html }); }
         else if (op === "disconnect") delete cfg.telegram;
         else return reply(res, 404, { message: "Unknown notify operation." });
         await writeJson(U.notifyFile, cfg, { mode: 0o600 });
         return reply(res, 200, pub(cfg));
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/digest/preview" && req.method === "GET") { const { html } = await digestData(url.searchParams.get("kind") === "evening" ? "evening" : "morning"); return reply(res, 200, { html }); }
+    // Alerts you set yourself
+    if (url.pathname.startsWith("/api/rules")) {
+      const op = url.pathname.slice("/api/rules".length).replace(/^\//, "");
+      try {
+        const st = await readJson(rulesFile(), { rules: [] }); st.rules ||= [];
+        const out = () => ({ rules: st.rules.map(r => ({ ...r, text: describeRule(r) })), types: Object.fromEntries(Object.entries(RULE_TYPES).map(([k, v]) => [k, { label: v.label, unit: v.unit || null, live: !!v.live, eod: !!v.eod }])) });
+        if (req.method === "GET" && !op) return reply(res, 200, out());
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown operation." });
+        const b = await readBody(req);
+        await withUserLock(async () => {
+          const cur = await readJson(rulesFile(), { rules: [] }); st.rules = cur.rules || [];
+          if (op === "save") { const prev = b.id ? st.rules.find(r => r.id === b.id) : null; const r = sanitizeRule(b, prev); if (!prev && st.rules.length >= 200) throw new Error("At most 200 alerts."); if (prev && b.active !== false) r.active = true; st.rules = prev ? st.rules.map(x => (x.id === r.id ? r : x)) : [r, ...st.rules]; }
+          else if (op === "delete") st.rules = st.rules.filter(r => r.id !== b.id);
+          else if (op === "toggle") st.rules = st.rules.map(r => (r.id === b.id ? { ...r, active: !!b.active } : r));
+          else throw new Error("Unknown operation.");
+          await writeJson(rulesFile(), st);
+        });
+        await loadRulesIndex().catch(() => {});
+        // a new price rule is checked at once against the current price
+        if (op === "save") { const r = st.rules[0]; const q = livePriceCache.get(`${r.exchange}:${r.symbol}`); if (q && !b.id) priceBus.emit("quote", `${r.exchange}:${r.symbol}`, { ...q, stale: false }); else if (!q) livePrices([{ symbol: r.symbol, exchange: r.exchange }], 0, { budgetMs: 0 }).catch(() => {}); }
+        return reply(res, 200, out());
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname === "/api/alerts" && req.method === "GET") {

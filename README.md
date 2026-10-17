@@ -1,5 +1,50 @@
 # Equity Watchlist MVP
 
+## v5.0.0: what changed — events and decisions, true returns, your own alerts, digests, backups
+
+**Swing page: a decision under each stock.** Upcoming results, dividends, bonuses and splits for each position, with
+what to do: *"Wait for the dividend: sell on or after 27 Oct"* (amount for your shares, the last day to hold, and the
+honest catch: the price drops by about the dividend on the ex-date and the dividend is taxed at your slab), *"Results in
+3 days: protect the gain"* (book part or raise the stop), *"near your stop with results due: decide before"*. Swing
+watchlist rows get small chips ("Div ₹11 in 3d", "Results in 2d").
+
+1. **Bonuses and splits handled.** On the ex-date, swing positions bought before it get their quantity, average,
+   buy lots, stop-loss and add level adjusted (once), with an alert explaining the change. A 1:1 bonus no longer looks
+   like a 50% loss or trips the stop.
+2. **Results & dividends calendar** (📅 in the menu, and a "Coming up" panel on Home): next 30 days for everything you
+   hold, swing-trade or watch, with your dividend amount. Source: NSE's corporate-action and board-meeting lists
+   (one request each for the whole market), Yahoo's calendar as a fallback. Heads-up alerts 2 days before results and
+   3 days before an ex-dividend date.
+3. **NSE end-of-day data.** Every evening the app downloads NSE's official daily price file (bhavcopy) and index closes,
+   and keeps its own price history (`DATA_DIR/eod/`), backfilled once for ~15 months. The swing scan, the ETF
+   valuation and chart alerts read it first, so they no longer depend on Yahoo; official closes reach every screen.
+4. **Returns vs index** (📈 in the menu): XIRR per stock, per account and in total from your tradebook (buys, sells and
+   dividends, dated), next to the same cash flows put into Nifty 50 / Nifty 500 / Nifty Smallcap 250. The swing book
+   gets its own XIRR.
+5. **Scanner track record** (Swing ideas): every idea scoring 50+ is remembered and judged on the prices that followed:
+   hit rate to target 1, stop-outs and average return per setup.
+6. **Swing journal:** tag a setup and reason when you add a position, review a sale (mistake tags + lesson); the
+   scorecard shows profit by setup and by mistake, and what selling before T1 left on the table.
+7. **Dividends you received** (Dividends screen): last 12 months and this financial year (shares held the day before
+   each ex-date), a 12-month forward calendar, biggest payers, and share goals (e.g. 400 SCHD).
+8. **Tax view per account:** pick the account (each PAN has its own ₹1.25 L long-term exemption); tradebook imports
+   are tagged to an account, older ones can be linked in one click.
+9. **Your own price alerts** (Alerts screen): price above / below, ±% day move, new 52-week high / low (checked on
+   every live price), volume spike, golden cross with RSI > 50, crossing the 200-DMA (checked on the daily close).
+   Once or every day; to the app, the open page and Telegram.
+10. **Telegram digests:** morning (8:45) and evening (4:00) summaries, switch on in Alerts → Daily Telegram digests;
+    preview and "send now".
+11. **Accumulate** (🪴 in the menu): long-term baskets (e.g. 20 small caps: ₹20k first, add on 10/20/30/40% dips up to
+    ₹1 L each) with progress per stock, the next add level and "buy these with ₹X this month".
+12. **Automatic daily backups** with a read-back check, 30 days kept, optional S3 copy; restore any day from
+    👤 → Backup & restore.
+13. **Code health:** new features live in their own modules (`eod`, `corpactions`, `events`, `returns`,
+    `ideastrack`, `alertrules`, `digest`, `accumulate`, `backup`, `static`); `npm run lint` checks every server and
+    browser file for names used but never defined.
+
+Fixed on the way: Telegram alerts had silently stopped sending in v4.8.0 (a helper went missing), and a new alert could
+then break the Swing page; restored and now covered by the lint check. The Swing tables no longer scroll inside a box.
+
 ## v4.9.0: what changed — speed (new price architecture)
 
 Measured with a price site that takes 3 s per answer and a 41-stock watchlist:

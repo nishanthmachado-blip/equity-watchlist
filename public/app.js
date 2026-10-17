@@ -521,7 +521,11 @@ function setReportSub(tab){
   if(tab==="advisor")renderAdvisorList();
 }
 function setView(view){
-  const v=["watchlist","reports","valuation","plan","picks","growth","integrations","thesis","portfolio","alerts","invest","dividends","focus","market","funds","networth","tax","model","us","lists","swing"].includes(view)?view:"home";
+  const v=["watchlist","reports","valuation","plan","picks","growth","integrations","thesis","portfolio","alerts","invest","dividends","focus","market","funds","networth","tax","model","us","lists","swing","returns","events","accumulate"].includes(view)?view:"home";
+  // screens added in v5 (features.js): one section each, marked data-feature-view
+  document.querySelectorAll("[data-feature-view]").forEach(sec=>{sec.hidden=sec.dataset.featureView!==v});
+  document.querySelectorAll("[data-goto]").forEach(b=>b.classList.toggle("active",b.dataset.goto===v));
+  if(window.featureOpen?.[v])window.featureOpen[v]();
   $("#homeView").hidden=v!=="home";
   $("#portfolioView").hidden=v!=="portfolio";
   $("#alertsView").hidden=v!=="alerts";

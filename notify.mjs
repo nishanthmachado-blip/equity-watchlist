@@ -29,7 +29,7 @@ export async function findChat(token, fetchImpl) {
 }
 
 export function formatAlert(e, appUrl) {
-  const icon = e.type === "swing-profit" ? "" : e.type === "swing-deploy" ? "" : e.type === "buy-zone" ? "🟢 " : "🔔 ";
+  const icon = e.type === "swing-profit" ? "" : e.type === "swing-deploy" ? "" : e.type === "buy-zone" ? "🟢 " : e.type === "rule" ? "🔔 " : String(e.type).includes("event") ? "📅 " : "🔔 ";
   return `${icon}<b>${he(e.title)}</b>${e.detail ? `\n${he(e.detail)}` : ""}${appUrl ? `\n<a href="${he(appUrl)}${String(e.type || "").startsWith("swing") ? "/#swing" : "/#alerts"}">Open Equity Watchlist</a>` : ""}`;
 }
 export async function sendTelegram(token, chatId, html, fetchImpl) {
@@ -37,7 +37,7 @@ export async function sendTelegram(token, chatId, html, fetchImpl) {
 }
 
 // cfg: { telegram: { token, chatId, scope: "all"|"swing", enabled } }. Sends up to 5 alerts one by one, then a summary line.
-export function wants(cfg, e) { const t = cfg?.telegram; if (!t?.enabled || !t.token || !t.chatId) return false; return t.scope === "swing" ? String(e.type || "").startsWith("swing") : true; }
+export function wants(cfg, e) { const t = cfg?.telegram; if (!t?.enabled || !t.token || !t.chatId) return false; return t.scope === "swing" ? String(e.type || "").startsWith("swing") || e.type === "rule" : true; } // your own price alerts always go
 export async function pushAlerts(cfg, events, { appUrl = process.env.APP_URL || process.env.PUBLIC_URL || "", fetchImpl } = {}) {
   const list = events.filter(e => wants(cfg, e)); if (!list.length) return 0;
   const t = cfg.telegram;

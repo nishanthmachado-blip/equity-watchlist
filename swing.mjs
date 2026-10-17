@@ -74,7 +74,7 @@ export function sanitizePosition(b = {}, prev = null) {
   // keep the buy lots when nothing that shapes them changed; otherwise one lot at the (new) average and date
   const same = prev && prev.qty === qty && r2(prev.avgPrice) === r2(avgPrice) && prev.openedAt === openedAt;
   const lots = same ? lotsOf(prev) : [{ qty, price: r2(avgPrice), at: openedAt }];
-  return { id: prev?.id || id(), symbol, exchange: b.exchange === "BSE" ? "BSE" : "NSE", name: txt(b.name, 80) || prev?.name || symbol, qty, avgPrice: r2(avgPrice), limit, addAmount, addBelow, targets, bookPlan, stopLoss, soldAtTargets: same ? prev.soldAtTargets || 0 : 0, lots, notes: txt(b.notes, 200) || null, openedAt, updatedAt: new Date().toISOString() };
+  return { id: prev?.id || id(), symbol, exchange: b.exchange === "BSE" ? "BSE" : "NSE", name: txt(b.name, 80) || prev?.name || symbol, qty, avgPrice: r2(avgPrice), limit, addAmount, addBelow, targets, bookPlan, stopLoss, soldAtTargets: same ? prev.soldAtTargets || 0 : 0, lots, notes: txt(b.notes, 200) || null, setup: b.setup === undefined ? prev?.setup ?? null : SETUPS[b.setup] ? b.setup : null, reason: b.reason === undefined ? prev?.reason ?? null : txt(b.reason, 300) || null, ...(prev?.adjustments ? { adjustments: prev.adjustments } : {}), openedAt, updatedAt: new Date().toISOString() };
 }
 export function sanitizeWatch(b = {}, prev = null) {
   const symbol = txt(b.symbol, 20).toUpperCase();
@@ -91,9 +91,9 @@ export function applySell(p, qty, price, at = new Date().toISOString(), { atTarg
   if (!(qty > 0) || qty > p.qty) throw new Error(`You can sell 1 to ${p.qty} shares.`);
   const lots = lotsOf(p).sort(byAt), used = []; let left = qty;
   while (left > 0 && lots.length) { const l = lots[0], n = Math.min(l.qty, left); used.push({ qty: n, price: l.price, at: l.at }); l.qty -= n; left -= n; if (!l.qty) lots.shift(); }
-  const trade = { id: id(), symbol: p.symbol, name: p.name, qty, buyAvg: p.avgPrice, sellPrice: r2(price), pnl: r2((price - p.avgPrice) * qty), pnlPct: r2((price / p.avgPrice - 1) * 100), openedAt: p.openedAt, closedAt: at, lots: used, atTarget: !!atTarget,
+  const trade = { id: id(), symbol: p.symbol, name: p.name, qty, buyAvg: p.avgPrice, sellPrice: r2(price), pnl: r2((price - p.avgPrice) * qty), pnlPct: r2((price / p.avgPrice - 1) * 100), openedAt: p.openedAt, closedAt: at, lots: used, atTarget: !!atTarget, setup: p.setup ?? null, reason: p.reason ?? null,
     // what the position looked like, so an accidental sale can be undone with its plan intact
-    plan: { exchange: p.exchange, limit: p.limit ?? null, addAmount: p.addAmount ?? null, addBelow: p.addBelow ?? null, targets: p.targets ?? null, bookPlan: p.bookPlan ?? null, notes: p.notes ?? null } };
+    plan: { exchange: p.exchange, limit: p.limit ?? null, addAmount: p.addAmount ?? null, addBelow: p.addBelow ?? null, targets: p.targets ?? null, bookPlan: p.bookPlan ?? null, notes: p.notes ?? null, setup: p.setup ?? null, reason: p.reason ?? null, stopLoss: p.stopLoss ?? null } };
   return { position: qty === p.qty ? null : { ...p, qty: p.qty - qty, lots, soldAtTargets: (p.soldAtTargets || 0) + (atTarget ? qty : 0), updatedAt: at }, trade };
 }
 
@@ -367,4 +367,26 @@ export function ltExemptionLeft(closed = [], usedElsewhere = 0, today = new Date
   const fy = fyOf(today).label;
   const booked = swingTaxRows(closed).rows.filter(r => r.fy === fy && r.term === "LTCG").reduce((s, r) => s + r.gain, 0);
   return Math.max(0, TAX_RULES.ltExemption - Math.max(0, booked) - Math.max(0, Number(usedElsewhere) || 0));
+}
+
+// ---- Trade journal: setup and reason when you buy, a short review when you sell; results by setup and by mistake ----
+export const SETUPS = { pullback: "Pullback to support", breakout: "Breakout", bounce: "Oversold bounce", "value-turn": "Value turn", "golden-cross": "Golden cross + RSI", momentum: "Momentum", "results-play": "Results play", dividend: "Dividend play", other: "Other" };
+export const MISTAKES = { "sold-early": "Sold too early", "held-long": "Held too long / ignored target", "no-stop": "No stop-loss / ignored it", oversized: "Position too big", chased: "Chased the entry", "off-plan": "Didn't follow my plan", "news-shock": "News / results surprise", none: "No mistake" };
+export function sanitizeReview(b = {}) {
+  const mistakes = (Array.isArray(b.mistakes) ? b.mistakes : []).filter(m => MISTAKES[m]).slice(0, 5);
+  return { mistakes, note: txt(b.note, 400) || null, rating: [1, 2, 3, 4, 5].includes(Number(b.rating)) ? Number(b.rating) : null, at: new Date().toISOString() };
+}
+export function journalStats(closed = []) {
+  const t = closed.filter(x => fin(x.pnl)), group = (keyOf, labels) => {
+    const m = new Map();
+    for (const x of t) for (const k of keyOf(x)) { const g = m.get(k) || { key: k, label: labels[k] || k, trades: 0, wins: 0, pnl: 0, pct: 0 }; g.trades++; if (x.pnl > 0) g.wins++; g.pnl += x.pnl; g.pct += x.pnlPct || 0; m.set(k, g); }
+    return [...m.values()].map(g => ({ ...g, pnl: Math.round(g.pnl), winRate: r2(g.wins / g.trades * 100), avgPct: r2(g.pct / g.trades) })).sort((a, b) => b.pnl - a.pnl);
+  };
+  const bySetup = group(x => [x.setup || "untagged"], { ...SETUPS, untagged: "Not tagged" });
+  // "sold before target 1 while in profit" is detected from the numbers, even without a review
+  const auto = x => { const m = [...(x.review?.mistakes || [])]; if (!x.atTarget && x.pnl > 0 && !m.includes("sold-early") && !m.includes("none")) m.push("auto-early"); return m.length ? m : ["unreviewed"]; };
+  const byMistake = group(auto, { ...MISTAKES, "auto-early": "Sold in profit before target 1 (detected)", unreviewed: "Not reviewed" }).sort((a, b) => a.pnl - b.pnl);
+  // what selling early cost: for trades sold in profit before T1, the gap to T1 on the shares sold
+  const early = t.filter(x => !x.atTarget && x.pnl > 0 && x.t1Price > x.sellPrice), missed = Math.round(early.reduce((s, x) => s + (x.t1Price - x.sellPrice) * x.qty, 0));
+  return { bySetup, byMistake, reviewed: t.filter(x => x.review).length, total: t.length, earlyExits: { trades: t.filter(x => !x.atTarget && x.pnl > 0).length, missedToT1: early.length ? missed : null } };
 }

@@ -17,6 +17,9 @@
       <button id="viewTax" class="viewTab" title="Tax view"><span class="ico" aria-hidden="true">🧾</span><span class="lbl">Tax view</span></button>
       <button id="viewPortfolio" class="viewTab" title="My holdings"><span class="ico" aria-hidden="true">📂</span><span class="lbl">My holdings</span></button>
       <button id="viewSwing" class="viewTab" title="Swing trading"><span class="ico" aria-hidden="true">⚡</span><span class="lbl">Swing trading</span></button>
+      <button id="viewReturns" class="viewTab" data-goto="returns" title="Returns vs index"><span class="ico" aria-hidden="true">📈</span><span class="lbl">Returns vs index</span></button>
+      <button id="viewEvents" class="viewTab" data-goto="events" title="Results &amp; dividends calendar"><span class="ico" aria-hidden="true">📅</span><span class="lbl">Results &amp; dividends</span></button>
+      <button id="viewAccumulate" class="viewTab" data-goto="accumulate" title="Accumulation tracker"><span class="ico" aria-hidden="true">🪴</span><span class="lbl">Accumulate (basket)</span></button>
       <button id="viewModel" class="viewTab" title="Model portfolio"><span class="ico" aria-hidden="true">🧩</span><span class="lbl">Model portfolio</span></button>
       <button id="viewFocus" class="viewTab" title="Focus list"><span class="ico" aria-hidden="true">🎯</span><span class="lbl">Focus list</span></button>
       <button id="viewInvest" class="viewTab" title="Where to invest ₹X"><span class="ico" aria-hidden="true">₹</span><span class="lbl">Where to invest ₹X</span></button>
@@ -44,6 +47,7 @@
 
     <section id="homeView">
       <div id="homeSwing" class="home-swing" role="button" tabindex="0" hidden aria-label="Open Swing trading"></div>
+      <div id="homeEvents" class="home-events" hidden></div>
       <form id="vsForm" class="vs-box" autocomplete="off">
         <label for="vsSymbol" class="vs-label">Stock to value</label>
         <div class="vs-row"><div class="vs-search"><input id="vsSymbol" placeholder="Type a company name, NSE symbol or BSE code, e.g. Titan, INDIGO, 544252" autofocus autocomplete="off" spellcheck="false"><div id="vsDrop" class="vs-drop" role="listbox" aria-label="Suggestions" hidden></div></div><button id="vsBtn" class="primary" type="submit">Get valuation</button></div>
@@ -54,9 +58,26 @@
     </section>
 
 
+    <section id="returnsView" data-feature-view="returns" hidden>
+      <p class="hint">What your money actually earned: <b>XIRR</b> (yearly return that accounts for when each rupee went in and came out, dividends included), next to what the <b>same buys and sells</b> would have earned in an index. Needs your tradebook (Tax view → Import) for the dates.</p>
+      <div class="toolbar" id="rtTools"></div>
+      <section class="metrics" id="rtCards"></section>
+      <div id="rtBody"></div>
+    </section>
+    <section id="eventsView" data-feature-view="events" hidden>
+      <p class="hint">Results, dividends, bonuses and splits for everything you hold, swing-trade or watch: next 30 days. From NSE's corporate-action and board-meeting lists (Yahoo when NSE does not answer), refreshed every few hours.</p>
+      <div class="toolbar" id="evTools"></div>
+      <div id="evBody"></div>
+    </section>
+    <section id="accView" data-feature-view="accumulate" hidden>
+      <p class="hint">Build a long-term basket in steps: a first tranche in each stock, then add on dips (each step a bit lower than your average) until each reaches its target. Uses your synced holdings for what you already own.</p>
+      <div class="toolbar"><button type="button" class="primary" id="accNew">+ New basket</button><span class="hint" id="accStatus"></span></div>
+      <div id="accBody"></div>
+    </section>
     <section id="alertsView" hidden>
       <p class="hint">Logged whenever a stock enters its buy zone or its verdict changes class. Checked after every price refresh (every 15 minutes while the market is open and this server is running) and whenever you open the app. A stock is not alerted twice for the same thing within 24 hours.</p>
       <section class="toolbar"><button id="alMarkAll" type="button" class="primary">Mark all read</button><button id="alNotify" type="button" class="ghost">Enable browser notifications</button><button id="alPhone" type="button" class="ghost">📱 Phone alerts (Telegram)</button><span id="alStatus" class="hint"></span></section>
+      <details class="report-card rl-box" id="rlBox" open><summary><b>🔔 My price alerts</b> <span class="hint" id="rlSum"></span></summary><div id="rlBody"></div></details>
       <div id="alList"></div>
     </section>
 
@@ -79,6 +100,7 @@
       <p class="hint">Plan the income your dividend stocks pay. Dividend per share is the last 12 months of payouts (Yahoo history, refreshed weekly); edit it if you expect a different payout. Payment months come from the last three years. Figures are before tax and are estimates, not promises: companies can cut dividends.</p>
       <nav class="views sub dv-tabs" aria-label="Dividend planner"><button type="button" class="viewTab active" data-dvtab="mine">My dividend income</button><button type="button" class="viewTab" data-dvtab="goal">Goal planner</button></nav>
       <div id="dvMine">
+      <div id="dvReceived" class="dv-received"></div>
       <section class="metrics" id="dvCards" aria-label="Dividend income summary"></section>
       <section class="dv-target" id="dvTarget"></section>
       <section class="toolbar dv-settings" aria-label="Planner settings">
@@ -164,6 +186,7 @@
           <label class="hint">From <select class="ui-input" id="swIdeasSrc"><option value="">Market + my lists</option><option value="mine">Only my watchlists</option></select></label>
           <button type="button" class="ghost" id="swIdeasScan">⟳ Scan now</button></div>
         <div id="swIdeas" class="sw-ideas-grid"></div>
+        <details class="sw-track" id="swTrack" hidden><summary>📈 <b>Scanner track record</b> <span class="hint" id="swTrackSum"></span></summary><div id="swTrackBody"></div></details>
         <p class="vs-fine">Rule-based setups from daily prices: <b>pullback</b> (uptrend that dipped to its 20/50-day average, RSI 38–55), <b>breakout</b> (close above the 55-day high on 1.5× volume, not stretched), <b>oversold bounce</b> (above the 200-day average, RSI ≤ 35) and <b>value turning up</b> (the app's buy zone + price back above its 20-day average). Score adds trend, strength vs Nifty, risk:reward, valuation and liquidity. Size = no more than your max per trade, and a stop-out costs at most your risk % of swing cash. A screen to find candidates, not advice: check the chart and news before you buy, and always use the stop.</p>
       </section>
       <section class="report-card sw-scorecard" id="swScore" hidden><div class="nw-head"><h3>Swing scorecard</h3><span class="hint">from your closed trades</span></div><div id="swScoreBody"></div></section>
@@ -209,6 +232,7 @@
     <section id="taxView" hidden>
       <p class="hint">Long- vs short-term gains on what you hold and what you sold this financial year, from your Zerodha Console tradebook (first in, first out, like the tax rules). Listed shares and equity funds: <b>long term after 12 months</b>, taxed 12.5% above ₹1.25 lakh a year; short term taxed 20% (Finance Act 2024 rates, unchanged in Budget 2026). An estimate to plan with, not tax advice: confirm with your CA or Console's Tax P&amp;L.</p>
       <section class="toolbar"><button type="button" class="primary" id="txPick">⬆ Import tradebook (CSV / Excel)</button><button type="button" class="ghost" id="txClear">Clear tradebook</button><input type="file" id="txFile" accept=".csv,.xlsx,.txt" hidden><span id="txStatus" class="hint" role="status"></span></section>
+      <div id="txAcct" class="tx-acct"></div>
       <div id="txImports"></div>
       <div id="txEmpty" class="fd-empty"><div class="fd-empty-ico">🧾</div><h2>Import your tradebook to see your tax position</h2>
         <p>Zerodha Console → <b>Reports → Tradebook</b> → segment <b>Equity</b> → pick a date range from your first purchase (one financial year at a time) → <b>Download CSV</b>. Repeat for each year, and for segment <b>Mutual funds</b> if you hold Coin funds. Drop the files here.</p>
@@ -495,6 +519,7 @@
   <script src="model.js"></script>
   <script src="swing.js"></script>
   <script src="us.js"></script>
+  <script src="features.js"></script>
   <script src="prices.js" defer></script>
 <script src="freshness.js"></script>
 </body></html>

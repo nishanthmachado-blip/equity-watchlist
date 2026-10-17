@@ -504,6 +504,7 @@
 
   // ---- Alerts -------------------------------------------------------------------------------------------------------
   let lastNotified = null;
+  window.pollAlerts = () => pollAlerts(!$("#alertsView").hidden); // a live alert arrived (prices.js)
   async function pollAlerts(render = false) {
     try {
       const a = await get("/api/alerts");

@@ -43,7 +43,7 @@ export function parseTradebook(rows) {
 }
 // Merge new trades into saved ones without double-counting the same row (re-importing the same file is safe).
 export function mergeTrades(saved = [], incoming = []) {
-  const sig = t => `${t.key}|${t.date}|${t.side}|${t.qty}|${t.price}`;
+  const sig = t => `${t.account || ""}|${t.key}|${t.date}|${t.side}|${t.qty}|${t.price}`; // the same trade in two accounts is two trades
   const counts = new Map(); for (const t of saved) counts.set(sig(t), (counts.get(sig(t)) || 0) + 1);
   const inc = new Map(); for (const t of incoming) inc.set(sig(t), (inc.get(sig(t)) || 0) + 1);
   const out = [...saved];

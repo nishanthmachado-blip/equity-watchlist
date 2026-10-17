@@ -176,3 +176,9 @@ export async function yahooQuotes(items, { fetchImpl = fetch } = {}) {
   }
   return out;
 }
+
+// quoteSummary modules for one stock (calendar events: results date, ex-dividend date)
+export async function yahooSummary(symbol, modules, { exchange = "NSE", fetchImpl = fetch } = {}) {
+  const ysym = `${symbol}${exchange === "BSE" ? ".BO" : ".NS"}`;
+  return yget(fetchImpl, `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ysym)}?modules=${modules.join(",")}`);
+}

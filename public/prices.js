@@ -37,6 +37,7 @@
     es = new EventSource("/api/events");
     es.addEventListener("hello", e => { live = true; const h = JSON.parse(e.data); st = { ...(st || {}), marketOpen: h.marketOpen, intervalSec: h.intervalSec }; total = h.symbols || 0; stopPolling(); paint(); });
     es.addEventListener("prices", e => { const x = JSON.parse(e.data); lastQuoteAt = Date.now(); if (got) for (const k of Object.keys(x.quotes)) got.add(k); window.liveQuotes = { ...(window.liveQuotes || {}), ...x.quotes }; window.dispatchEvent(new CustomEvent("prices:quotes", { detail: x.quotes })); schedule(); paint(); });
+    es.addEventListener("alert", e => { const x = JSON.parse(e.data); window.toast?.(`🔔 ${x.titles.join(" · ")}${x.count > x.titles.length ? ` +${x.count - x.titles.length} more` : ""}`, { kind: "ok", ms: 8000 }); window.dispatchEvent(new CustomEvent("prices:alert", { detail: x })); window.pollAlerts?.(); });
     es.addEventListener("refresh", e => { const x = JSON.parse(e.data); if (refreshWait) { refreshWait(x); refreshWait = null; } });
     es.onerror = () => { live = false; paint(); if (es.readyState === EventSource.CLOSED) { startPolling(); setTimeout(connect, 15e3); } else startPolling(); };
   }

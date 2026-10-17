@@ -253,3 +253,91 @@
 /* v4.8.4: totals that leave out or estimate a position */
 .sw-cards small.sw-miss{display:block;color:#b45309;font-weight:600;font-size:11.5px;margin-top:2px}
 [data-theme="dark"] .sw-cards small.sw-miss{color:#fbbf24}
+
+/* v5.0: results / dividend / bonus decision under each swing position */
+.sw-ev-row td{padding:0 14px 12px!important;border-top:0!important;background:inherit}
+tr.sw-row:has(+ .sw-ev-row) td{border-bottom:0!important}
+.sw-ev{border-radius:10px;padding:8px 12px;font-size:13px;line-height:1.45;background:var(--sw-ev-bg,#f1f4ff);border:1px solid var(--sw-ev-bd,#d8defa)}
+.sw-ev summary{cursor:pointer;list-style:none;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+.sw-ev summary::-webkit-details-marker{display:none}
+.sw-ev summary::before{content:"📅";margin-right:2px}
+.sw-ev[open] summary{margin-bottom:6px}
+.sw-ev ul{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+.sw-ev li{display:flex;gap:8px}.sw-ev li>span{flex:none}
+.sw-ev.good{--sw-ev-bg:#ecfdf3;--sw-ev-bd:#b7ebc9}.sw-ev.good summary b{color:#15803d}
+.sw-ev.warn{--sw-ev-bg:#fff8e6;--sw-ev-bd:#f5dc9a}.sw-ev.warn summary b{color:#a15c00}
+.sw-ev.bad{--sw-ev-bg:#fff0f0;--sw-ev-bd:#f4c2c2}.sw-ev.bad summary b{color:#b91c1c}
+[data-theme="dark"] .sw-ev{--sw-ev-bg:#1b2140;--sw-ev-bd:#2c3566}
+[data-theme="dark"] .sw-ev.good{--sw-ev-bg:#10291c;--sw-ev-bd:#1f5136}[data-theme="dark"] .sw-ev.good summary b{color:#4ade80}
+[data-theme="dark"] .sw-ev.warn{--sw-ev-bg:#2b2310;--sw-ev-bd:#5c4614}[data-theme="dark"] .sw-ev.warn summary b{color:#fbbf24}
+[data-theme="dark"] .sw-ev.bad{--sw-ev-bg:#2e1416;--sw-ev-bd:#5e2328}[data-theme="dark"] .sw-ev.bad summary b{color:#f87171}
+.sw-up{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.sw-up-chip{font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;background:#eef1fb;color:#3b4270;white-space:nowrap}
+.sw-up-chip.dividend{background:#e6f7ee;color:#166534}.sw-up-chip.results{background:#fff3db;color:#8a5300}
+[data-theme="dark"] .sw-up-chip{background:#252c52;color:#c9cff5}
+
+/* ---- v5.0: events, returns, accumulate, price alerts, dividends received, journal ---- */
+.home-events{margin:0 auto 16px;max-width:1180px;background:var(--card,#fff);border:1px solid var(--line,#e3e6f2);border-radius:16px;padding:12px 16px}
+.he-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.home-events ul{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.home-events li{display:grid;grid-template-columns:110px 1fr auto;gap:10px;align-items:baseline;font-size:14px;padding:4px 0;border-top:1px dashed var(--line,#e3e6f2)}
+.home-events li:first-child{border-top:0}.he-day{font-weight:700;color:var(--muted,#5d6280);font-size:13px}
+@media (max-width:640px){.home-events li{grid-template-columns:1fr}.home-events li .hint{display:none}}
+.ev-income{background:#ecfdf3;border:1px solid #b7ebc9;border-radius:12px;padding:10px 14px;margin:0 0 12px}
+[data-theme="dark"] .ev-income{background:#10291c;border-color:#1f5136}
+.ev-cal{display:grid;gap:12px}
+.ev-day{background:var(--card,#fff);border:1px solid var(--line,#e3e6f2);border-radius:14px;padding:10px 14px}
+.ev-day.today{border-color:#f5b400;box-shadow:0 0 0 2px rgba(245,180,0,.18)}.ev-day.past{opacity:.7}
+.ev-day h4{margin:0 0 6px;font-size:14px}
+.ev-day ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.ev-day li{display:grid;grid-template-columns:28px 1fr auto;gap:8px;align-items:start;font-size:14px}
+.ev-ico{font-size:18px;line-height:1.2}.ev-tags{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+.ev-where{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:#eef1fb;color:#3b4270;white-space:nowrap}
+.ev-where.holding{background:#e6f7ee;color:#166534}.ev-where.swing{background:#fff3db;color:#8a5300}
+[data-theme="dark"] .ev-where{background:#252c52;color:#c9cff5}[data-theme="dark"] .ev-where.holding{background:#12301f;color:#86efac}[data-theme="dark"] .ev-where.swing{background:#33270c;color:#fcd34d}
+@media (max-width:640px){.ev-day li{grid-template-columns:24px 1fr}.ev-tags{grid-column:2;justify-content:flex-start}}
+.rt-table{width:100%;min-width:860px}.rt-table tr.rt-closed td{opacity:.75}
+.rt-undated{margin:12px 0}.rt-undated summary{cursor:pointer;color:var(--muted,#5d6280)}
+.acc-card{margin-bottom:18px}.acc-card .metrics{margin:8px 0 12px}
+.acc-plan{background:#f6f8ff;border:1px solid #dfe4fb;border-radius:12px;padding:10px 14px;margin-bottom:12px}
+.acc-plan h4{margin:0 0 6px}.acc-plan ol{margin:0;padding-left:20px;display:grid;gap:4px}
+[data-theme="dark"] .acc-plan{background:#1b2140;border-color:#2c3566}
+.acc-table{width:100%;min-width:760px}.acc-table tr.acc-add td{background:rgba(22,163,74,.06)}.acc-table tr.acc-full td{opacity:.75}
+.rl-box{margin:0 0 16px}.rl-box summary{cursor:pointer}
+.rl-form{display:grid;grid-template-columns:150px minmax(200px,1.6fr) 120px 150px minmax(120px,1fr) auto;gap:8px;margin:10px 0}
+@media (max-width:900px){.rl-form{grid-template-columns:1fr 1fr}.rl-form button{grid-column:1/-1}}
+.rl-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.rl-list li{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line,#e3e6f2);border-radius:10px}
+.rl-list li.off{opacity:.6}
+.rl-tog{position:relative;width:36px;height:20px;display:inline-block}.rl-tog input{opacity:0;width:0;height:0}
+.rl-tog span{position:absolute;inset:0;border-radius:999px;background:#c8cde3;transition:.2s}.rl-tog span::after{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;border-radius:50%;background:#fff;transition:.2s}
+.rl-tog input:checked+span{background:#16a34a}.rl-tog input:checked+span::after{transform:translateX(16px)}
+.dg-preview{white-space:pre-wrap;font:13px/1.5 var(--font,system-ui);background:#f6f8ff;border:1px solid #dfe4fb;border-radius:10px;padding:10px 12px;max-height:320px;overflow:auto}
+[data-theme="dark"] .dg-preview{background:#1b2140;border-color:#2c3566}
+.dv-received{margin-bottom:16px}
+.dv-months{display:flex;align-items:flex-end;gap:6px;height:110px;margin:6px 0 14px;overflow-x:auto}
+.dv-months>div{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:38px;gap:3px;font-size:11px}
+.dv-months i{display:block;width:22px;border-radius:5px 5px 2px 2px;background:#9fb4f5}.dv-months i.sure{background:#16a34a}
+.dv-months b{font-size:10.5px;color:var(--muted,#5d6280)}
+.dv-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media (max-width:820px){.dv-cols{grid-template-columns:1fr}}
+.dv-cols h4,.dv-goals h4{margin:6px 0}
+.dv-goals{margin-top:12px}.dv-goal{display:grid;grid-template-columns:minmax(120px,1fr) 2fr minmax(160px,1.2fr);gap:12px;align-items:center;padding:6px 0;border-top:1px dashed var(--line,#e3e6f2)}
+@media (max-width:640px){.dv-goal{grid-template-columns:1fr}}
+.dg-row{display:grid;grid-template-columns:1.2fr .8fr 1fr 1fr 1.4fr;gap:6px;margin-bottom:6px}@media (max-width:640px){.dg-row{grid-template-columns:1fr 1fr}}
+.sw-review{margin-top:10px;border-top:1px solid var(--line,#e3e6f2);padding-top:8px}.sw-review summary{cursor:pointer;font-weight:600}
+.sw-mist{display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;margin:8px 0}.ui-opt.sm{font-size:13px;padding:4px 0}
+@media (max-width:640px){.sw-mist{grid-template-columns:1fr}}
+.sw-journal{margin-top:14px}.sw-journal summary{cursor:pointer;font-weight:700}
+.sw-jgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:8px}@media (max-width:820px){.sw-jgrid{grid-template-columns:1fr}}
+.sw-jgrid h4{margin:4px 0}.sw-jt{width:100%}
+.sw-track{margin-top:12px;border-top:1px solid var(--line,#e3e6f2);padding-top:8px}.sw-track summary{cursor:pointer}
+.sw-track-list{margin:4px 0;padding-left:18px;font-size:13.5px;display:grid;gap:3px}
+button.reviewed{color:#15803d}
+.tx-acct{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 10px}.tx-untag{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;color:#a15c00}
+.bk-list{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 10px;font-size:13.5px}
+
+/* swing tables grow with the page (decision lines make rows taller; an inner scroll box hid positions) */
+#swingView .table-wrap{max-height:none;overflow-y:visible}
+.sw-ev{position:sticky;left:14px;max-width:calc(100vw - 190px)}
+@media (max-width:1100px){.sw-ev{max-width:calc(100vw - 70px)}}
+@media (max-width:640px){.sw-ev{max-width:calc(100vw - 48px)}}

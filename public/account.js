@@ -149,9 +149,22 @@
         <div class="bk-box"><b>Restore from a backup</b>
           <p class="ui-hint" style="margin:4px 0 10px">Files in the backup replace the same files here. What is here now is saved first, so a restore can be undone by the server admin.</p>
           <label class="ui-opt"><input type="checkbox" name="replace"><span><b>Remove data that is not in the backup</b><small>Off: keeps anything newer that the backup does not have.</small></span></label>
-          <input type="file" accept=".json,application/json" name="file" hidden><button type="button" class="ghost" data-pick>⬆ Choose backup file…</button> <span class="ui-hint" data-st></span></div>`,
+          <input type="file" accept=".json,application/json" name="file" hidden><button type="button" class="ghost" data-pick>⬆ Choose backup file…</button> <span class="ui-hint" data-st></span></div>
+        <div class="bk-box" data-auto><b>Automatic daily backups</b><p class="ui-hint">Loading…</p></div>`,
       onOpen: (box, { setError }) => {
         box.querySelector("[data-dl]").onclick = () => { const a = document.createElement("a"); a.href = `/api/backup?secrets=${box.querySelector("[name=secrets]").checked ? 1 : 0}`; a.download = ""; document.body.appendChild(a); a.click(); a.remove(); window.toast?.("Backup downloaded.", { kind: "ok", ms: 3000 }); };
+        // automatic backups: list, restore one, (owner) run now
+        const autoBox = box.querySelector("[data-auto]");
+        const paintAuto = async () => {
+          let x; try { x = await api("/api/backups"); } catch (e) { autoBox.innerHTML = `<b>Automatic daily backups</b><p class="ui-hint">${esc(e.message)}</p>`; return; }
+          const s = x.status, mine = s?.mine;
+          autoBox.innerHTML = `<b>Automatic daily backups</b><p class="ui-hint" style="margin:4px 0 8px">Every night at about 2:30 am the server saves a copy of every account (broker logins left out), keeps ${x.keepDays} days${x.s3 ? " and copies them to S3" : ""}, and checks each file opens.${s ? ` Last run ${new Date(s.at).toLocaleString("en-IN")}: ${mine ? `${mine.files} files${mine.checked ? ", checked ✓" : ""}${mine.s3 ? ", copied to S3 ✓" : mine.s3Error ? `, S3 failed: ${esc(mine.s3Error)}` : ""}` : "your account was not included"}.` : " No automatic backup has run yet."}${x.owner && s?.errors?.length ? ` <span class="avoid">Problems: ${esc(s.errors.join("; "))}</span>` : ""}</p>
+            ${x.list.length ? `<div class="bk-list">${x.list.slice(0, 10).map(b => `<span>${esc(b.day)} <small>${Math.round(b.bytes / 1024)} KB</small> <button type="button" class="linklike" data-restore-day="${esc(b.day)}">Restore</button></span>`).join("")}</div>` : ""}
+            ${x.owner ? `<button type="button" class="ghost" data-run-backup>Back up every account now</button>${s?.dir ? ` <span class="ui-hint">Folder: ${esc(s.dir)}</span>` : ""}` : ""}`;
+          autoBox.querySelector("[data-run-backup]")?.addEventListener("click", async e => { e.target.disabled = true; e.target.textContent = "Backing up…"; try { await api("/api/backups/run", {}); } catch (err) { setError(err.message); } paintAuto(); });
+          autoBox.querySelectorAll("[data-restore-day]").forEach(b => { b.onclick = async () => { if (!(await window.ui.confirm({ title: `Restore the backup of ${b.dataset.restoreDay}?`, message: "Your account goes back to that day. What is here now is saved first, so this can be undone by the server admin.", okText: "Restore", danger: true }))) return; try { const r = await api("/api/backups/restore", { day: b.dataset.restoreDay }); clearLocal(); window.toast?.(`Restored ${r.restored} files from ${r.day}. Reloading…`, { kind: "ok" }); setTimeout(() => location.reload(), 900); } catch (err) { setError(err.message); } }; });
+        };
+        paintAuto();
         const file = box.querySelector("[name=file]"), st = box.querySelector("[data-st]");
         box.querySelector("[data-pick]").onclick = () => file.click();
         file.onchange = async () => {
