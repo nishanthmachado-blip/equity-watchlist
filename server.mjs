@@ -11,7 +11,7 @@ import { fetchFundamentalsForStock, yahooCooldown, yahooQuotes, yahooSummary } f
 import { MODEL, computeAll, computeValuation, sanitizeEntry, parseCsv, FIELDS } from "./valuation.mjs";
 import { fetchScreener, screenerCooldown, screenerConfig, fetchScreenerExtras, searchScreener, resetScreener, fetchScreenerPrice } from "./screener.mjs";
 import { readXlsx, parseDelimited, extractHoldings, fundSummary } from "./funds.mjs";
-import { fetchNseQuote, mergeNse, refreshFromNse, nseCooldown, fetchNseJson, fetchNseHistory, resetNse, lastNseStatus } from "./nse.mjs";
+import { fetchNseQuote, mergeNse, refreshFromNse, nseCooldown, fetchNseJson, fetchNseHistory, resetNse, lastNseStatus, NSE_ARCHIVE_BASE } from "./nse.mjs";
 import { LADDERS, DEFAULT_SETTINGS, sanitizeBuy, positionRow, stress, exposure } from "./plan.mjs";
 import { addSnapshots, performance, compare } from "./tracker.mjs";
 import { fetchGoogleQuote, googleCooldown, googleConfig, resetGoogle } from "./googlefinance.mjs";
@@ -33,7 +33,7 @@ import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { PROFILES, STYLES, buildModel, assetMix } from "./model.mjs";
-import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, SETUPS, MISTAKES, sanitizeReview, journalStats, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
+import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, parseDipText, DIP_ALIASES, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, SETUPS, MISTAKES, sanitizeReview, journalStats, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
 import { buildXlsx } from "./xlsx.mjs";
 import { isEtf, indexFor, parseAllIndices, etfLens, etfType } from "./etf.mjs";
 import { parseNseActions, parseYahooEvents, mergeActions, adjustPosition, adjustWatch } from "./corpactions.mjs";
@@ -45,6 +45,7 @@ import { morningDigest, eveningDigest } from "./digest.mjs";
 import { DEFAULT_BASKET, sanitizeBasket, basketView } from "./accumulate.mjs";
 import { backupConfig, gz, gunz, verifyBackup, writeLocal, listLocal, readLocal, pruneLocal, s3Put } from "./backup.mjs";
 import { staticAsset, sendStatic } from "./static.mjs";
+import { decideHoldSell, dailyVol } from "./decide.mjs";
 import { fetchBhavcopy, fetchIndexCloses, mergeBars, weekdaysBack, dayToT, INDEX_KEYS } from "./eod.mjs";
 import { snapshot as swingSnapshot, rankIdeas, positionHealth } from "./swingideas.mjs";
 import { validToken, maskToken, botInfo, findChat, sendTelegram, pushAlerts } from "./notify.mjs";
@@ -53,6 +54,10 @@ import { US_POPULAR, cleanUsSymbol, parseSecTickers, searchTickers, seriesFromFa
 import { LISTS as MARKET_LISTS, parseNseList, rankFromQuotes } from "./market.mjs";
 import { ensureLists, createList, renameList, deleteList, setMembers, prune, DEFAULT_ID } from "./lists.mjs";
 import { METRICS, OPS, PRESETS, sanitizeThesis, evaluateThesis, trackBreaks } from "./thesis.mjs";
+import { AI_MODELS, AI_DEFAULTS, PRIVACY as AI_PRIVACY, sealKey, openKey, looksLikeKey, buildContext, SYSTEM as AI_SYSTEM, TOOLS as AI_TOOLS, sseParser, messageCollector, monthKey, friendlyApiError } from "./ai.mjs";
+import { addMarketDay, movers as marketMovers, indexChanges } from "./movers.mjs";
+import { SMART_INDICES, normIndex, parseAllIndices as parseIndexList, parseIndexStocks, parseIndexCsv, fillFromBars, smartRows, indexSummary } from "./indices.mjs";
+import { parseUsHoldings, usHoldingsView, cleanUsTicker, parseAmfiNav, searchAmfi, pdfLines, parseCas, parseMfRows, valueFund } from "./holdings-extra.mjs";
 
 // ---- Debug log: the last 1500 console lines kept in memory (owner can read them at /api/debug/log) ----
 const DEBUG_LOG = [];
@@ -430,7 +435,7 @@ async function logVerdicts(rows) { const log = await readJson(U.valuationLogFile
 // full source fails and NSE answers. Each source has its own cooldown after a 403/429 and is skipped while it is cooling.
 async function runFundamentalsFetch(targets, force = false, source = process.env.FUNDAMENTALS_SOURCE || "auto") {
   const map = await readFundamentals();
-  const fresh = e => e?.asOf && !(e.profile === "etf" && e.thin) && Date.now() - new Date(e.asOf).getTime() < (e.profile === "etf" ? 864e5 : 7 * 864e5); // ETFs: daily; a range-only ETF is always retried
+  const fresh = e => e?.asOf && !(e.profile === "etf" && e.thin) && !(e.profile !== "etf" && !(e.pe > 0) && !(e.salesTtm > 0)) /* loss-maker saved before v5.2: fetch the sales figures */ && Date.now() - new Date(e.asOf).getTime() < (e.profile === "etf" ? 864e5 : 7 * 864e5); // ETFs: daily; a range-only ETF is always retried
   const order = source === "auto" ? ["screener", "yahoo", "nse"] : [source];
   const results = await mapLimit(targets, 1, async stock => {
     const symbol = symOf(stock);
@@ -568,7 +573,11 @@ async function kiteHoldingsView() {
   // for the same symbol, else at the watchlist price, and say so.
   const livePrice = new Map();
   for (const [, acct] of accounts) for (const h of acct.holdings || []) if (Number.isFinite(h.lastPrice) && !livePrice.has(h.symbol)) livePrice.set(h.symbol, h.lastPrice);
-  for (const [userId, acct] of accounts) for (const h0 of acct.holdings || []) {
+  for (const [userId, acct] of accounts) for (const h00 of acct.holdings || []) {
+    // invested / value / P/L from quantity × average cost and × price when a broker or an import did not supply them
+    const inv0 = Number.isFinite(h00.invested) ? h00.invested : Number.isFinite(h00.avgPrice) ? h00.avgPrice * h00.qty : null;
+    const val0 = Number.isFinite(h00.value) ? h00.value : Number.isFinite(h00.lastPrice) ? h00.lastPrice * h00.qty : null;
+    const h0 = { ...h00, invested: inv0, value: val0, pnl: Number.isFinite(h00.pnl) ? h00.pnl : inv0 !== null && val0 !== null ? val0 - inv0 : null };
     let h = h0, priceFromWatchlist = false;
     const lp = livePrice.get(h.symbol);
     if (!Number.isFinite(h.lastPrice) && Number.isFinite(lp)) { const value = lp * h.qty; h = { ...h, lastPrice: lp, value, pnl: Number.isFinite(h.invested) ? value - h.invested : null }; }
@@ -639,7 +648,7 @@ async function syncKiteSlot(kc, slotId, slotLabel, label) {
 }
 
 // ---- Backup / restore: one JSON file with every file in your private folder ----
-const BACKUP_SECRET_FILES = /^(kite-session(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp|notify)\.json$/;
+const BACKUP_SECRET_FILES = /^(kite-session(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp|notify|ai-key)\.json$/;
 const BACKUP_NAME_RE = /^[a-z0-9][\w-]{0,60}\.json$/i;
 async function makeBackup(includeSecrets) {
   const dir = userDir(), files = {};
@@ -753,14 +762,23 @@ async function taxPage(account = "all") {
 // Index history: our NSE end-of-day files, topped up for older years from Yahoo (shared cache, weekly).
 const indexHistFile = path.join(DATA_DIR, "index-history.json");
 const BENCH = { NIFTY50: { label: "Nifty 50", yahoo: "^NSEI" }, NIFTY500: { label: "Nifty 500", yahoo: "^CRSLDX" }, SMALLCAP250: { label: "Nifty Smallcap 250", yahoo: "^CNXSC", yahooLabel: "Nifty Smallcap 100 (older years)" } };
+const indexFetch = new Map(); // index key -> { at: last try, p: running fetch }
 async function indexBars(key) {
   const own = await eodBars(`_index-${key}`), cache = await readJson(indexHistFile, {}), c = cache[key];
-  if ((!c || Date.now() - c.at > 7 * 864e5) && BENCH[key]?.yahoo && !(barSources.yahoo > Date.now())) {
-    try { const { bars } = await fetchChart(BENCH[key].yahoo, { raw: true, range: "10y" }); if (bars.length > 200) { cache[key] = { at: Date.now(), bars: bars.map(b => ({ t: b.t, c: b.c })) }; await writeJson(indexHistFile, cache); } }
-    catch (e) { if (e.rateLimited) barSources.yahoo = Date.now() + 15 * 60e3; }
+  // Yahoo's 10-year history, refreshed weekly in the background (pages never wait for it, except a first-ever fetch for up
+  // to 3 s); a failed try is not repeated for 30 minutes
+  const job = indexFetch.get(key);
+  if ((!c || Date.now() - c.at > 7 * 864e5) && BENCH[key]?.yahoo && !(barSources.yahoo > Date.now()) && !job?.p && !(job?.at > Date.now() - 30 * 60e3)) {
+    const p = (async () => {
+      try { const { bars } = await fetchChart(BENCH[key].yahoo, { raw: true, range: "10y" }); if (bars.length > 200) { const cc = await readJson(indexHistFile, {}); cc[key] = { at: Date.now(), bars: bars.map(b => ({ t: b.t, c: b.c })) }; await writeJson(indexHistFile, cc); } }
+      catch (e) { if (e.rateLimited) barSources.yahoo = Date.now() + 15 * 60e3; }
+      finally { indexFetch.set(key, { at: Date.now(), p: null }); }
+    })();
+    indexFetch.set(key, { at: Date.now(), p });
+    if (!c && !own.length && !job) await Promise.race([p, new Promise(r => setTimeout(r, 2000))]);
   }
   // Yahoo for the years before our own data starts; ours from then on (scaled to Yahoo's level when the index differs)
-  const yb = cache[key]?.bars || [];
+  const yb = (c ? cache : await readJson(indexHistFile, {}))[key]?.bars || [];
   if (!own.length) return yb;
   const start = own[0].t, older = yb.filter(b => b.t < start - 43200);
   if (!older.length) return own;
@@ -1158,6 +1176,20 @@ if (!process.env.NODE_TEST_CONTEXT) setTimeout(() => refreshCorpEvents().catch((
 let ceMem = { at: 0, data: null };
 async function corpEvents() { if (!ceMem.data || Date.now() - ceMem.at > 60e3) ceMem = { at: Date.now(), data: await readJson(corpEventsFile, { actions: [], events: [] }) }; return ceMem.data; }
 
+// "Hold or sell?" for one swing position (by id or symbol): used by the ⚖ dialog and by Ask AI
+async function decideFor(b) {
+  const view = await swingView({ alerts: false }), st = await readJson(swingFile(), {});
+  const r = view.positions.find(x => x.id === b.id || (b.symbol && x.symbol === b.symbol)), p = r && (st.positions || []).find(x => x.id === r.id);
+  if (!r || !p) throw Object.assign(new Error("That position no longer exists."), { status: 404 });
+  if (!(r.price > 0)) throw Object.assign(new Error("No price for this stock right now."), { status: 400 });
+  const ce = await corpEvents(), today = istDay(), evs = eventsFor(r.symbol, { events: ce.events || [], actions: ce.actions || [], today, pastDays: 0, aheadDays: 30 });
+  const div = evs.find(e => e.kind === "dividend" && e.amount > 0), res2 = evs.find(e => e.kind === "results" || e.kind === "board-dividend");
+  const bars = await eodBars(r.symbol), snap = (await readJson(swingScanFile, { snaps: {} })).snaps?.[r.symbol]?.s;
+  const vol = dailyVol(bars.filter(x => Date.now() / 1000 - x.t < 120 * 86400).map(x => x.c)) ?? (snap?.atrPct ? snap.atrPct / 100 / 1.25 : null);
+  const slabPct = b.slabPct !== undefined && b.slabPct !== "" ? Math.min(42.74, Math.max(0, Number(b.slabPct) || 0)) : st.settings?.slabPct ?? 30;
+  const out = decideHoldSell({ qty: p.qty, avgPrice: p.avgPrice, price: r.price, lots: lotsOf(p), today, dividend: div ? { amount: div.amount, date: div.date, days: div.days } : null, results: res2 ? { date: res2.date, days: res2.days } : null, vol, health: r.health || (snap ? positionHealth(snap, p.avgPrice) : null), targets: r.targets || [], planQty: r.sellNow || r.targets?.find(t => !t.done && t.sellQty)?.sellQty || null, slabPct, exemptLeft: ltExemptionLeft(st.closed || [], st.settings?.ltUsedElsewhere || 0), charges: { ...CHARGE_DEFAULTS, ...(st.settings?.charges || {}) } });
+  return { ...out, symbol: r.symbol, name: r.name, priceSource: r.priceSource || null };
+}
 async function swingView({ alerts = true, fresh = false } = {}) {
   const st = await readJson(swingFile(), {}); let watch = st.watch || [];
   const dd = dedupePositions(st.positions || []); let positions = dd.list; // older versions could hold one stock twice: merge them
@@ -1347,7 +1379,9 @@ async function eodIngest(day, universe) {
   for (const [sym, b] of got.bars) await eodSave(sym, [b]);
   for (const [k, b] of got.idxBars) await eodSave(`_index-${k}`, [b]);
   // the full day's closes (every listed stock) for quick lookups, and the official close into the live store
-  await writeJson(eodLatestFile, { day: got.day, prices: Object.fromEntries(got.all.map(r => [r.symbol, { c: r.close, p: r.prev, h: r.high, l: r.low, v: r.volume }])) });
+  const prevLatest = await readJson(eodLatestFile, { day: "" });
+  if (!prevLatest.day || got.day >= prevLatest.day) await writeJson(eodLatestFile, { day: got.day, prices: Object.fromEntries(got.all.map(r => [r.symbol, { c: r.close, p: r.prev, h: r.high, l: r.low, v: r.volume }])) }); // a backfilled older day must not replace it
+  await recordMarketDay(got.day, got.all).catch(() => {});
   const asOf = new Date(`${got.day}T10:00:00Z`).toISOString();
   for (const [sym, b] of got.bars) { const k = `NSE:${sym}`, c = livePriceCache.get(k); if (!c || (Date.parse(c.asOf || "") || 0) < Date.parse(asOf) || /saved/.test(c.source || "")) setLive(k, { price: b.c, prevClose: b.p, low: null, high: null, source: "NSE close", asOf }); }
   return got;
@@ -1513,6 +1547,30 @@ async function swingIdeas() {
   const track = await trackIdeas(ideas).catch(e => { console.error(`[ideas-track] ${e.message}`); return null; });
   return { ideas, sizing, track, scan: { running: scanState.running, done: scanState.done, total: scanState.total, scanned, failed, universe: items.length, lastRun: cache.lastRun || null, error: scanState.lastError, pausedUntil: scanState.pausedUntil > Date.now() ? scanState.pausedUntil : null, sources: scanState.sources || {}, kite: !!scanState.kite } };
 }
+// Resolve names typed in a dip list: short names traders use (HDFC → HDFCBANK, HCL → HCLTECH), exact NSE symbols, then the company list
+async function resolveDipNames(names) {
+  const master = await scripMaster(), bySym = new Map(master.list.filter(x => x.exchange === "NSE").map(x => [x.symbol, x]));
+  const rest = [], out = names.map((n, i) => {
+    const k = String(n).toUpperCase().replace(/\s+/g, " ").replace(/\s+(LTD|LIMITED)\.?$/, "").trim(), alias = DIP_ALIASES[k], sym = alias || k.replace(/\s+/g, "");
+    const hit = bySym.get(sym) || (alias ? { symbol: alias, name: alias, exchange: "NSE" } : null);
+    if (hit) return { symbol: hit.symbol, name: hit.name, exchange: "NSE", how: alias ? "short name" : "NSE symbol", options: [] };
+    rest.push(i); return null;
+  });
+  if (rest.length) { const found = await resolveNames(rest.map(i => names[i])); rest.forEach((i, j) => { out[i] = { ...found[j], options: searchMaster(master.list, names[i], 4).filter(x => x.exchange === "NSE").map(x => ({ symbol: x.symbol, name: x.name })) }; }); }
+  return out;
+}
+// A swing-watchlist (or buy-the-dip) stock was bought: it becomes a swing position, or adds to the one you hold
+function promoteWatch(st, w, b) {
+  const bp = Number(b.price), ideaT = w.idea && bp > 0 ? [w.idea.t1, w.idea.t2].filter(t => t > bp * 1.005).map(t => Math.round((t / bp - 1) * 1000) / 10) : [];
+  const p = sanitizePosition({ symbol: w.symbol, exchange: w.exchange, name: w.name, qty: b.qty, avgPrice: b.price, limit: b.limit ?? w.amount, notes: [w.notes, w.idea && !String(w.notes || "").includes(w.idea.label) ? `From swing idea: ${w.idea.label}` : "", w.list === "dip" ? `Bought the dip (level ₹${w.buyBelow})` : ""].filter(Boolean).join(" · ") || null, boughtOn: b.date || undefined, stopLoss: w.stopLoss ?? null, targets: ideaT.length ? ideaT.join(",") : undefined, setup: b.setup });
+  if (!b.keep) st.watch = st.watch.filter(x => x.id !== w.id);
+  let notice = null;
+  const held = st.positions.find(x => x.symbol === p.symbol && (x.exchange || "NSE") === p.exchange);
+  if (held) { const m = mergePositions(held, p); st.positions = st.positions.map(x => (x.id === held.id ? m : x)); notice = `${p.name}: added to your existing position. Now ${m.qty} shares at an average of ₹${m.avgPrice.toLocaleString("en-IN")}.`; }
+  else { if (st.positions.length >= 100) throw new Error("At most 100 swing positions."); st.positions.push(p); }
+  moveCash(st, -p.qty * p.avgPrice, `Bought ${p.qty} ${p.symbol} @ ₹${p.avgPrice}`);
+  return notice;
+}
 async function resolveNames(names) {
   const [master, stocks] = await Promise.all([scripMaster(), readWatchlist()]);
   const norm = x => String(x).toLowerCase().replace(/\b(ltd|limited|the|india|co)\b|[^a-z0-9&]/g, "");
@@ -1589,9 +1647,21 @@ async function usPrices(symbols, force = false) {
   }
   return { prices: usPriceMem, errors };
 }
+// Prices for pages: saved prices at once, a refresh in the background; waits (at most budgetMs) only for never-priced symbols
+let usPricesPending = null; const usTried = new Set();
+async function usPricesFast(symbols, budgetMs = 1500) {
+  usPriceMem ||= await readJson(usPricesFile, {});
+  const stale = symbols.filter(s => !usPriceMem[s] || Date.now() - usPriceMem[s].at > 20 * 60e3);
+  if (!stale.length) return { prices: usPriceMem, errors: [] };
+  const run = usPricesPending ||= usPrices(stale).catch(e => ({ prices: usPriceMem, errors: [e.message] })).finally(() => { usPricesPending = null; });
+  // wait (once) only for symbols that were never priced or tried
+  const fresh = stale.filter(s => !usPriceMem[s] && !usTried.has(s)); for (const s of stale) usTried.add(s);
+  if (!fresh.length) return { prices: usPriceMem, errors: [] };
+  return Promise.race([run, new Promise(r => setTimeout(() => r({ prices: usPriceMem, errors: [] }), budgetMs))]);
+}
 async function usRows(symbols) {
   const [cache, ov] = await Promise.all([readJson(usCacheFile, {}), readJson(usGrowthFile(), {})]);
-  const { prices, errors } = await usPrices(symbols);
+  const { prices, errors } = await usPricesFast(symbols);
   const rows = symbols.map(sym => {
     const c = cache[sym], p = prices[sym];
     if (!c?.series) return { symbol: sym, name: c?.name || null, price: p?.price ?? null, pending: !c || (!c.series && !c.error) || usQueue.has(sym), error: c?.error || null };
@@ -1601,18 +1671,370 @@ async function usRows(symbols) {
   return { rows, priceErrors: errors };
 }
 
+// ---- Holdings outside Indian brokers: US stocks (INDmoney sync, Vested import) and mutual funds (CAS / CSV / by hand) ----
+const otherFile = () => userFile("other-holdings.json");
+const fxFile = path.join(DATA_DIR, "fx.json"), amfiFile = path.join(DATA_DIR, "amfi-nav.json");
+let fxMem = null, fxPending = null, fxTried = false;
+// Rupees per US dollar (Yahoo USDINR=X), refreshed every 30 minutes; the last rate is kept for when Yahoo does not answer.
+async function usdInr() {
+  fxMem ||= await readJson(fxFile, {});
+  if (fxMem.rate > 0 && Date.now() - (fxMem.at || 0) < 30 * 60e3) return fxMem;
+  fxPending ||= (async () => {
+    try {
+      const base = (process.env.YAHOO_CHART_BASE || "https://query1.finance.yahoo.com").replace(/\/+$/, "");
+      const r = await fetch(`${base}/v8/finance/chart/USDINR%3DX?range=5d&interval=1d`, { signal: AbortSignal.timeout(8000), headers: { "User-Agent": "Mozilla/5.0" } });
+      const m = r.ok ? (await r.json())?.chart?.result?.[0]?.meta : null;
+      if (m?.regularMarketPrice > 50 && m.regularMarketPrice < 200) { fxMem = { rate: Math.round(m.regularMarketPrice * 1e4) / 1e4, at: Date.now(), source: "Yahoo USDINR" }; await writeJson(fxFile, fxMem); }
+    } catch { /* keep the last rate */ } finally { fxPending = null; }
+    return fxMem;
+  })();
+  // answer with the saved rate at once when there is one; the very first time wait at most 1.5 s
+  if (fxMem.rate > 0 || fxTried) return fxMem;
+  fxTried = true; return Promise.race([fxPending, new Promise(r => setTimeout(() => r(fxMem), 1500))]);
+}
+let amfiMem = null, amfiPending = null;
+// AMFI's daily NAV file for every scheme (about 2 MB), shared by all users; refreshed every 6 hours when funds are viewed.
+async function amfiNav({ wait = false } = {}) {
+  amfiMem ||= await readJson(amfiFile, { at: 0, byIsin: {} });
+  const fresh = Date.now() - (amfiMem.at || 0) < 6 * 3600e3;
+  if (!fresh && !amfiPending) amfiPending = (async () => {
+    try {
+      const r = await fetch(process.env.AMFI_NAV_URL || "https://www.amfiindia.com/spages/NAVAll.txt", { signal: AbortSignal.timeout(25000), headers: { "User-Agent": "Mozilla/5.0" } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const byIsin = parseAmfiNav(await r.text());
+      if (Object.keys(byIsin).length > 10) { amfiMem = { at: Date.now(), byIsin }; await writeJson(amfiFile, amfiMem); console.log(`[amfi] NAVs for ${Object.keys(byIsin).length} ISINs`); }
+    } catch (e) { console.warn(`[amfi] ${e.message}`); amfiMem.at = Date.now() - 5 * 3600e3; /* retry in an hour */ } finally { amfiPending = null; }
+  })();
+  // pages never wait for AMFI: they use the last NAVs (or the statement / sync NAV) while the file downloads in the background;
+  // only a search / import (which needs the list) waits, up to 15 s
+  if (wait && amfiPending) await Promise.race([amfiPending, new Promise(r => setTimeout(r, 15000))]);
+  return amfiMem.byIsin;
+}
+// US holdings: INDmoney (from its sync: its values are in rupees) + statements you imported (Vested, any broker) + by hand
+async function usHoldingItems() {
+  const [store, other] = await Promise.all([readJson(U.kiteHoldingsFile, { accounts: {} }), readJson(otherFile(), {})]);
+  const items = [];
+  const hidden = new Set(other.hiddenUs || []);
+  for (const [id, a] of Object.entries(store.accounts || {})) for (const [i, u] of (a.us || []).entries()) {
+    if (hidden.has(id)) continue; // removed by the user: the sync keeps them out until shown again
+    const sym = cleanUsTicker(u.symbol) || null;
+    items.push({ key: `${id}:${sym || i}`, id: null, source: "sync", accountId: id, account: a.label || id, symbol: sym, name: u.name || sym, qty: Number.isFinite(u.qty) ? u.qty : null, avgUsd: null, investedUsd: null, investedInr: Number.isFinite(u.invested) ? u.invested : null, valueInr: Number.isFinite(u.value) ? u.value : null, syncedAt: a.syncedAt || null });
+  }
+  for (const u of other.us || []) items.push({ key: `us:${u.id}`, ...u, source: u.source || "import", syncedAt: u.importedAt || null });
+  return items;
+}
+async function usHoldings() {
+  const items = await usHoldingItems(), syms = [...new Set(items.map(i => i.symbol).filter(Boolean))];
+  const [{ prices, errors }, fx] = await Promise.all([syms.length ? usPricesFast(syms) : { prices: {}, errors: [] }, items.length ? usdInr() : null]);
+  const v = usHoldingsView(items, prices, fx?.rate || null);
+  const groupKey = i => (i.source === "sync" ? `sync|${i.accountId}` : `own|${i.account}`);
+  const accounts = [...new Map(items.map(i => [groupKey(i), { key: groupKey(i), source: i.source === "sync" ? "sync" : "own", accountId: i.accountId || null, account: i.account, count: items.filter(x => groupKey(x) === groupKey(i)).length, valueInr: Math.round(v.rows.filter(r => groupKey(r) === groupKey(i)).reduce((a, r) => a + (r.valueInr || 0), 0)), at: i.syncedAt }])).values()];
+  const [store, other] = await Promise.all([readJson(U.kiteHoldingsFile, { accounts: {} }), readJson(otherFile(), {})]);
+  const hiddenAccounts = (other.hiddenUs || []).map(id => ({ accountId: id, account: store.accounts?.[id]?.label || id, count: (store.accounts?.[id]?.us || []).length }));
+  return { ...v, fxAt: fx?.at || null, accounts, hiddenAccounts, priceErrors: errors.slice(0, 3) };
+}
+// Imported / hand-entered funds, valued at the latest AMFI NAV; funds a broker sync already brings are skipped (no double count)
+const fundKeyName = n => String(n || "").toLowerCase().replace(/\b(plan|option|fund|scheme|the|direct|regular|growth|idcw|dividend|payout|reinvestment)\b|[^a-z0-9]/g, "");
+async function importedFunds(syncedRaw = null) {
+  const [other, amfi] = await Promise.all([readJson(otherFile(), {}), amfiNav()]);
+  const synced = syncedRaw || Object.values((await readJson(U.kiteHoldingsFile, { accounts: {} })).accounts || {}).flatMap(a => a.mf || []);
+  const syncedIsins = new Set(synced.map(f => f.isin).filter(i => /^INF/.test(i || ""))), syncedNames = new Set(synced.map(f => fundKeyName(f.name)));
+  return (other.mf || []).map(f => {
+    const v = valueFund(f, amfi), dup = syncedIsins.has(f.isin) || (!!f.name && syncedNames.has(fundKeyName(v.amfiName || f.name)));
+    return { ...v, name: f.name || v.amfiName || f.isin, invested: Number.isFinite(f.cost) ? f.cost : null, avgNav: Number.isFinite(f.cost) && f.units > 0 ? Math.round(f.cost / f.units * 1e4) / 1e4 : null, pnl: Number.isFinite(f.cost) && Number.isFinite(v.value) ? Math.round((v.value - f.cost) * 100) / 100 : null, duplicate: dup };
+  });
+}
+
+// ---- This week: key indices and top gainers / losers (whole market, from NSE's daily files) ----
+const eodMarketFile = path.join(DATA_DIR, "eod-market.json");
+let mktMem = null, mktBackfill = { running: false, at: 0, done: 0, error: null };
+async function marketStore() { return (mktMem ||= await readJson(eodMarketFile, { days: [], closes: {} })); }
+async function recordMarketDay(day, rows) { mktMem = addMarketDay(await marketStore(), day, rows); await writeJson(eodMarketFile, mktMem); }
+// The last ~5 weeks of whole-market closes, fetched once in the background (one file every 1.5 s); never waited for
+async function ensureMarketDays() {
+  const st = await marketStore();
+  if (mktBackfill.running || st.days.length >= 22 || Date.now() - mktBackfill.at < 3 * 3600e3) return;
+  mktBackfill = { running: true, at: Date.now(), done: 0, error: null };
+  (async () => {
+    const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+    for (const day of weekdaysBack(today, 34)) {
+      if ((await marketStore()).days.includes(day)) continue;
+      try { const b = await fetchBhavcopy(day); if (b?.rows?.length) { await recordMarketDay(b.day || day, b.rows); mktBackfill.done++; } }
+      catch (e) { mktBackfill.error = e.message; if (e.rateLimited) break; }
+      if ((await marketStore()).days.length >= 23) break;
+      await new Promise(r => setTimeout(r, Number(process.env.EOD_SPACING_MS) || 1500));
+    }
+  })().finally(() => { mktBackfill.running = false; });
+}
+const KEY_INDICES = [["NIFTY 50", "NIFTY50", "^NSEI"], ["SENSEX", null, "^BSESN"], ["NIFTY BANK", "BANKNIFTY", "^NSEBANK"], ["NIFTY NEXT 50", "NEXT50", "^NSMIDCP"], ["NIFTY MIDCAP 150", "MIDCAP150", null], ["NIFTY SMALLCAP 250", "SMALLCAP250", null], ["NIFTY 500", "NIFTY500", "^CRSLDX"], ["NIFTY IT", "NIFTYIT", "^CNXIT"]];
+const yIdxFile = path.join(DATA_DIR, "yahoo-index.json"); let yIdxMem = null; const yIdxJobs = new Map();
+// Yahoo daily history for an index (Sensex, or an NSE index before our own daily files cover a month): background, 6-hourly
+async function yahooIndexBars(ysym) {
+  yIdxMem ||= await readJson(yIdxFile, {});
+  const c = yIdxMem[ysym], job = yIdxJobs.get(ysym);
+  if ((!c || Date.now() - c.at > 6 * 3600e3) && !job?.p && !(job?.at > Date.now() - 30 * 60e3) && !(barSources.yahoo > Date.now())) {
+    const p = fetchChart(ysym, { raw: true, range: "2y" }).then(async ({ bars }) => { if (bars?.length > 20) { yIdxMem[ysym] = { at: Date.now(), bars: bars.map(b => ({ t: b.t, c: b.c })) }; await writeJson(yIdxFile, yIdxMem); } })
+      .catch(e => { if (e.rateLimited) barSources.yahoo = Date.now() + 15 * 60e3; }).finally(() => yIdxJobs.set(ysym, { at: Date.now(), p: null }));
+    yIdxJobs.set(ysym, { at: Date.now(), p });
+  }
+  return yIdxMem[ysym]?.bars || [];
+}
+async function weekView({ period = "week", universe = "nifty500" } = {}) {
+  ensureMarketDays().catch(() => {});
+  const [store, idx, live, master] = await Promise.all([marketStore(), idxStore(), allIndexNames().catch(() => []), scripMaster().catch(() => ({ list: [] }))]);
+  const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10), liveBy = new Map(live.map(x => [normIndex(x.name), x]));
+  const indices = [];
+  for (const [name, key, ysym] of KEY_INDICES) {
+    const own = key ? await eodBars(`_index-${key}`) : [], yb = ysym ? await yahooIndexBars(ysym) : [];
+    const bars = own.length >= 22 || !yb.length ? own : yb;
+    const lastDay = bars.length ? new Date(bars.at(-1).t * 1000 + 5.5 * 3600e3).toISOString().slice(0, 10) : "";
+    const l = liveBy.get(normIndex(name)), useLive = l?.last > 0 && lastDay < today && marketIsOpen();
+    const ch = indexChanges(bars, useLive ? { last: l.last, pChange: l.pChange } : null);
+    indices.push({ name, ...(ch || { last: l?.last ?? null, day: l?.pChange ?? null }), source: useLive ? "NSE live" : own.length >= 22 || !yb.length ? "NSE daily" : "Yahoo" });
+  }
+  // which stocks: an index's constituents (from Smart indices), your own, or every liquid stock
+  let set = null, label = "All stocks trading ₹5 Cr+ a day";
+  if (universe === "nifty500" || universe === "nifty50") {
+    const nm = universe === "nifty500" ? "NIFTY 500" : "NIFTY 50", c = idx.lists[normIndex(nm)];
+    if (c?.rows?.length) { set = new Set(c.rows.map(r => r.symbol)); label = universe === "nifty500" ? "Nifty 500" : "Nifty 50"; } else { indexData(nm).catch(() => {}); label += ` (the ${nm} list is still loading)`; }
+  } else if (universe === "mine") {
+    const [stocks, hold, sw] = await Promise.all([readWatchlist(), readJson(U.kiteHoldingsFile, { accounts: {} }), readJson(swingFile(), {})]);
+    set = new Set([...stocks.map(symOf), ...Object.values(hold.accounts || {}).flatMap(a => (a.holdings || []).map(h => String(h.symbol).toUpperCase())), ...(sw.positions || []).map(p => p.symbol), ...(sw.watch || []).map(w => w.symbol)]);
+    label = "My watchlist, holdings and swing";
+  }
+  const names = new Map((master.list || []).filter(x => x.exchange === "NSE").map(x => [x.symbol, x.name]));
+  const m = marketMovers(store, { period, universe: set, names });
+  const watch = new Set((await readWatchlist()).map(symOf));
+  for (const r of [...(m.gainers || []), ...(m.losers || [])]) r.watching = watch.has(r.symbol);
+  return { indices, movers: m, universe, universeLabel: label, backfill: { ...mktBackfill, days: store.days.length } };
+}
+
+// ---- Smart indices: the stocks inside any NSE index, valued and scored (shared public cache) ----
+const indexCacheFile = path.join(DATA_DIR, "index-cache.json");
+let idxMem = null; const idxJobs = new Map(); // index key -> { p, at, error }
+let idxValueJob = { running: false, name: null, done: 0, total: 0, failed: 0, at: null };
+async function idxStore() { return (idxMem ||= await readJson(indexCacheFile, { lists: {}, all: null })); }
+const idxTtl = () => (marketIsOpen() ? 15 * 60e3 : 6 * 3600e3);
+// best-effort file names of the constituents CSV on NSE's archive (niftyindices format), tried when the live API is blocked
+const idxCsvUrls = name => { const k = String(name).toLowerCase().replace(/[^a-z0-9]/g, ""); const camel = String(name).replace(/^NIFTY\s*/i, "nifty").replace(/\s+([A-Za-z])/g, (m, c) => c.toUpperCase()).replace(/\s+/g, "").replace(/-/g, ""); return [`${NSE_ARCHIVE_BASE()}/content/indices/ind_${k}list.csv`, `${NSE_ARCHIVE_BASE()}/content/indices/ind_${camel.charAt(0).toLowerCase() + camel.slice(1)}_list.csv`]; };
+async function fetchIndexNow(name) {
+  let err = null;
+  try { const j = parseIndexStocks(await fetchNseJson(`/api/equity-stockIndices?index=${encodeURIComponent(name)}`, { referer: "https://www.nseindia.com/market-data/live-equity-market" })); if (j.rows.length) return { ...j, source: "NSE live", at: Date.now() }; err = "NSE returned no stocks for this index"; }
+  catch (e) { err = e.message; }
+  for (const u of idxCsvUrls(name)) {
+    try {
+      const r = await fetch(u, { signal: AbortSignal.timeout(8000), headers: { "User-Agent": "Mozilla/5.0" } }); if (!r.ok) continue;
+      const rows = parseIndexCsv(await r.text()); if (!rows.length) continue;
+      const filled = []; for (const row of rows) filled.push(fillFromBars(row, await eodBars(row.symbol)));
+      return { index: null, rows: filled, source: "NSE index file + daily closes", at: Date.now() };
+    } catch { /* next */ }
+  }
+  throw new Error(err || "not available");
+}
+// Cached constituents; refreshed in the background. Waits (up to 4 s) only the first time an index was never loaded.
+async function indexData(name, { force = false } = {}) {
+  const st = await idxStore(), key = normIndex(name), c = st.lists[key], job = idxJobs.get(key);
+  if ((force || !c || Date.now() - c.at > idxTtl()) && !job?.p && !(job?.at > Date.now() - (force ? 0 : 5 * 60e3))) {
+    const p = fetchIndexNow(name).then(async d => { const s2 = await idxStore(); s2.lists[key] = { name, ...d }; await writeJson(indexCacheFile, s2); idxJobs.set(key, { at: Date.now(), p: null }); })
+      .catch(e => { idxJobs.set(key, { at: Date.now(), p: null, error: e.message }); console.warn(`[index] ${name}: ${e.message}`); });
+    idxJobs.set(key, { at: Date.now(), p });
+    if (!c && !job) await Promise.race([p, new Promise(r => setTimeout(r, 4000))]);
+  }
+  return { cached: (await idxStore()).lists[key] || null, pending: !!idxJobs.get(key)?.p, error: idxJobs.get(key)?.error || null };
+}
+async function allIndexNames() {
+  const st = await idxStore();
+  if ((!st.all || Date.now() - st.all.at > 24 * 3600e3) && !idxJobs.get("__all")?.p && !(idxJobs.get("__all")?.at > Date.now() - 30 * 60e3)) {
+    const p = fetchNseJson("/api/allIndices", { referer: "https://www.nseindia.com/market-data/live-market-indices" }).then(async j => { const list = parseIndexList(j); if (list.length) { const s2 = await idxStore(); s2.all = { at: Date.now(), list }; await writeJson(indexCacheFile, s2); } })
+      .catch(() => {}).finally(() => idxJobs.set("__all", { at: Date.now(), p: null }));
+    idxJobs.set("__all", { at: Date.now(), p });
+  }
+  return st.all?.list || [];
+}
+async function indicesHome() {
+  const all = await allIndexNames(), st = await idxStore(), byKey = new Map(all.map(x => [normIndex(x.name), x]));
+  const curated = SMART_INDICES.map(x => { const live = byKey.get(normIndex(x.name)), c = st.lists[normIndex(x.name)]; return { ...x, last: live?.last ?? c?.index?.last ?? null, pChange: live?.pChange ?? c?.index?.pChange ?? null, count: c?.rows?.length ?? null }; });
+  const known = new Set(SMART_INDICES.map(x => normIndex(x.name)));
+  return { curated, others: all.filter(x => !known.has(normIndex(x.name))).map(x => ({ name: x.name, category: x.category, last: x.last, pChange: x.pChange })), valueJob: idxValueJob };
+}
+async function indexView(name, opts = {}) {
+  const meta = SMART_INDICES.find(x => normIndex(x.name) === normIndex(name)) || { name, group: "NSE index", blurb: null };
+  const { cached, pending, error } = await indexData(meta.name, opts);
+  if (!cached) return { name: meta.name, meta, rows: [], summary: null, pending, error, valueJob: idxValueJob };
+  const [fundamentals, stocks, hold, sw, scan] = await Promise.all([readFundamentals(), readWatchlist(), readJson(U.kiteHoldingsFile, { accounts: {} }), readJson(swingFile(), {}), readJson(swingScanFile, { snaps: {} })]);
+  const live = new Map(); for (const r of cached.rows) { const q = livePriceCache.get(`NSE:${r.symbol}`); if (q?.price > 0 && (!r.price || (q.at || 0) > cached.at)) live.set(r.symbol, q.price); }
+  const rows0 = cached.rows.map(r => (live.has(r.symbol) ? { ...r, price: live.get(r.symbol) } : r));
+  // this app's valuation for every constituent whose fundamentals are known (fetched for anyone's watchlist, or by "Value this index")
+  const withF = rows0.filter(r => fundamentals[r.symbol]);
+  const vrows = withF.length ? computeAll(withF.map((r, i) => ({ id: `idx${i}`, company: r.name, ticker: r.symbol, marketSymbol: r.symbol, price: r.price, low: r.low52, high: r.high52 })), fundamentals) : [];
+  const val = new Map(vrows.filter(v => v.view && v.view !== "No fundamentals").map(v => { v.verdict = classify(v); return [String(v.symbol).toUpperCase(), v]; }));
+  const tech = new Map(Object.entries(scan.snaps || {}).filter(([, v]) => v?.s).map(([k, v]) => [k, v.s]));
+  const held = new Set([...Object.values(hold.accounts || {}).flatMap(a => (a.holdings || []).map(h => String(h.symbol).toUpperCase())), ...(sw.positions || []).map(p => p.symbol)]);
+  const watch = new Set(stocks.map(symOf));
+  const rows = smartRows(rows0, { val, tech, held, watch });
+  return { name: meta.name, meta, index: cached.index, rows, summary: indexSummary(rows), source: cached.source, at: cached.at, pending, error, valueJob: idxValueJob, fundamentalsMissing: rows.filter(r => !fundamentals[r.symbol]).length };
+}
+// Fetch fundamentals for an index's stocks that have none (largest weight first), one at a time, in the background
+function startIndexValuation(view, limit = 120) {
+  if (idxValueJob.running) return idxValueJob;
+  const targets = view.rows.filter(r => !r.valuation).sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0)).slice(0, limit).map((r, i) => ({ id: `idx-${i}`, company: r.name, ticker: r.symbol, marketSymbol: r.symbol }));
+  idxValueJob = { running: true, name: view.name, done: 0, total: targets.length, failed: 0, at: Date.now() };
+  (async () => {
+    for (const t of targets) {
+      try { const [r] = await runFundamentalsFetch([t], false); if (!r?.entry && !r?.skipped) idxValueJob.failed++; if (r?.rateLimited) { idxValueJob.note = "Data sites are rate-limiting: paused; press again later to continue."; break; } }
+      catch { idxValueJob.failed++; }
+      idxValueJob.done++;
+    }
+  })().finally(() => { idxValueJob.running = false; idxValueJob.endedAt = Date.now(); });
+  return idxValueJob;
+}
+
+// ---- Ask AI: Claude with the user's own Anthropic key ----
+// The key is stored per user, encrypted (AES-256-GCM) with AI_KEY_SECRET or a random server secret, never sent to the
+// browser and left out of backups. Only the owner may fall back to the server's ANTHROPIC_API_KEY.
+const aiFile = () => userFile("ai.json"), aiKeyFile = () => userFile("ai-key.json"), aiChatsFile = () => userFile("ai-chats.json");
+const ANTHROPIC_BASE = () => (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/+$/, "");
+let aiSecretMem = null;
+async function aiSecret() {
+  if (process.env.AI_KEY_SECRET) return process.env.AI_KEY_SECRET;
+  if (aiSecretMem) return aiSecretMem;
+  const f = path.join(DATA_DIR, "ai-secret.json"); let v = await readJson(f, null);
+  if (!v?.secret) { v = { secret: Buffer.from(globalThis.crypto.getRandomValues(new Uint8Array(32))).toString("base64") }; await writeJson(f, v); }
+  return (aiSecretMem = v.secret);
+}
+async function aiSettings() { const st = await readJson(aiFile(), {}); return { ...AI_DEFAULTS, ...st, usage: st.usage?.month === monthKey() ? st.usage : { month: monthKey(), input: 0, output: 0, questions: 0 } }; }
+async function aiKey() {
+  const own = openKey(await readJson(aiKeyFile(), null), await aiSecret());
+  if (own) return { key: own, source: "yours" };
+  if (currentUser().role === "owner" && process.env.ANTHROPIC_API_KEY) return { key: process.env.ANTHROPIC_API_KEY, source: "server" };
+  return { key: null, source: null };
+}
+async function aiStatus() {
+  const [st, k, sealed] = await Promise.all([aiSettings(), aiKey(), readJson(aiKeyFile(), null)]);
+  return { configured: !!k.key, keySource: k.source, keyHint: sealed?.hint || null, model: st.model, models: AI_MODELS, privacy: st.privacy, privacyOptions: AI_PRIVACY, monthlyTokens: st.monthlyTokens, usage: st.usage };
+}
+// Everything the AI sees, gathered from the same views the pages use (no outside calls beyond what pages make)
+async function aiSnapshot() {
+  const [hv, sw, nw, us, mf, ev] = await Promise.all([kiteHoldingsView(), swingView({ alerts: false }), networthView().catch(() => null), usHoldings().catch(() => null), syncedMutualFunds().catch(() => []), upcomingEvents().catch(() => ({ events: [] }))]);
+  const holdings = hv.holdings.map(h => ({ symbol: h.symbol, qty: h.qty, avgPrice: h.avgPrice, price: h.qty && h.value > 0 ? h.value / h.qty : null, invested: h.invested, value: h.value > 0 ? h.value : null, pnlPct: h.invested && h.value > 0 ? (h.value / h.invested - 1) * 100 : null,
+    view: h.valuation?.view || null, fair: h.valuation?.fairValue?.base ?? null, zone: h.valuation?.zoneLow ? `${h.valuation.zoneLow}-${h.valuation.zoneHigh}` : null, pe: h.valuation?.pe ?? null, sectorPe: h.valuation?.fairMultiple ?? null, stance: h.stance ? `${h.stance.action}: ${h.stance.summary || ""}` : null }));
+  const mistakes = (sw.journal?.byMistake || []).filter(g => g.trades && !/unreviewed|none/i.test(g.key || g.label || "")).sort((a, b) => b.trades - a.trades).slice(0, 3).map(g => `${g.label || g.key} (${g.trades} trades, ₹${g.pnl})`).join(", ");
+  return {
+    today: istDay(), holdings,
+    swing: { positions: sw.positions, watch: sw.watch, totals: sw.totals, score: sw.score ? { trades: sw.score.trades, winRate: sw.score.winRate, avgWinPct: sw.score.avgWinPct, avgLossPct: sw.score.avgLossPct, avgHoldDays: sw.score.avgHoldDays } : null, realised: sw.realised?.pnl, mistakes },
+    networth: nw ? { assets: nw.totals?.assets, liabilities: nw.totals?.liabilities, mix: (nw.classes || []).map(c => ({ label: c.label, pct: c.pct })) } : null,
+    us, mf: mf.map(f => ({ name: f.name, invested: f.invested, value: f.value })),
+    events: (ev.events || []).filter(e => e.days >= 0).map(e => ({ date: e.date, symbol: e.symbol, label: e.label, amount: e.amount }))
+  };
+}
+async function aiTool(name, input = {}) {
+  const sym = String(input.symbol || "").toUpperCase().replace(/[^A-Z0-9&-]/g, "").slice(0, 20);
+  if (name === "stock_detail") {
+    if (!sym) return { error: "symbol needed" };
+    const [{ rows }, scan, ce, bars] = await Promise.all([computeRows(), readJson(swingScanFile, { snaps: {} }), corpEvents(), eodBars(sym)]);
+    const r = rows.find(x => String(x.symbol || "").toUpperCase() === sym);
+    let tech = scan.snaps?.[sym]?.s || null; if (!tech && bars.length >= 60) tech = swingSnapshot(bars);
+    const ev = eventsFor(sym, { events: ce.events || [], actions: ce.actions || [], today: istDay(), pastDays: 5, aheadDays: 45 }).map(e => ({ kind: e.kind, label: e.label, date: e.date, days: e.days, amount: e.amount ?? null }));
+    if (!r && !tech) return { symbol: sym, note: "Not in the user's watchlist and no price history here: no valuation available. Suggest adding it to the watchlist in the app." , events: ev };
+    const pick = r ? Object.fromEntries(["company", "price", "view", "status", "ratio", "pe", "fairMultiple", "basis", "fairValue", "upsideToBase", "zoneLow", "zoneHigh", "gapToZone", "confidence", "roce", "roe", "promoter", "salesCagr3", "profitCagr3", "debtToEquity", "dividendYield", "low", "high", "rangePos", "sector", "industry", "growthStage"].map(k => [k, r[k]]).filter(([, v]) => v !== undefined && v !== null)) : null;
+    if (pick?.reasons === undefined && r?.reasons) pick.reasons = r.reasons.slice(0, 6);
+    return { symbol: sym, valuation: pick, technicals: tech && { price: tech.price, changePct: tech.changePct, sma20: tech.sma20, sma50: tech.sma50, sma200: tech.sma200, rsi: tech.rsi, atrPct: tech.atrPct, high52: tech.high52, low52: tech.low52, ret1m: tech.ret1m, ret3m: tech.ret3m, rs3mVsNifty: tech.rs3m ?? null, volRatio: tech.volRatio }, events: ev };
+  }
+  if (name === "hold_or_sell") {
+    if (!sym) return { error: "symbol needed" };
+    try { const d = await decideFor({ symbol: sym }); return { symbol: sym, headline: d.headline, lean: d.lean, why: d.why, scenarios: d.scenarios.map(x => ({ title: x.title, keep: x.keep, worst: x.worst, typical: x.typical, best: x.best, keepNow: x.keepNow, saved: x.saved, notes: x.notes })), facts: d.facts }; }
+    catch (e) { return { symbol: sym, error: e.message }; }
+  }
+  if (name === "index_stocks") {
+    const v = await indexView(String(input.index || "NIFTY 50").slice(0, 80)), f = input.filter || "all";
+    if (!v.rows.length) return { index: v.name, error: v.error || "The index list is not available yet (NSE did not answer)." };
+    const rows = v.rows.filter(r => f === "all" || (f === "top" ? r.score >= 65 : f === "not-watching" ? !r.watching : r.tags.includes(f))).sort((a, b) => (b.score ?? -1) - (a.score ?? -1)).slice(0, 40);
+    return { index: v.name, about: v.meta?.blurb || null, summary: v.summary, stocks: rows.map(r => ({ symbol: r.symbol, industry: r.industry, price: r.price, ch1m: r.ch30d, ch1y: r.ch365d, fromHigh: r.fromHigh, weight: r.weight, valuation: r.valuation ? `${r.valuation.view}${r.valuation.upside != null ? ` (${r.valuation.upside}% to fair)` : ""}${r.valuation.pe ? `, P/E ${r.valuation.pe}` : ""}` : "not valued", score: r.score, partial: r.partial, tags: r.tags, held: r.held, watching: r.watching })) };
+  }
+  if (name === "swing_ideas") {
+    const x = await swingIdeas(), want = input.setup && input.setup !== "any" ? input.setup : null;
+    return { ideas: x.ideas.filter(i => !want || i.setup === want).slice(0, 12).map(i => ({ symbol: i.symbol, setup: i.label || i.setup, entry: `${i.entryLow ?? i.entry}-${i.entryHigh ?? i.entry}`, stop: i.stop, t1: i.t1, t2: i.t2, score: i.score, verdict: i.verdict, rsi: i.snap?.rsi, rs3m: i.snap?.rs3m, watching: i.watching })), trackRecord: x.track?.summary || null, scannedAt: x.scan?.lastRun || null };
+  }
+  return { error: `unknown tool ${name}` };
+}
+// One call to the Messages API, streamed. onText gets text as it arrives.
+async function anthropicStream({ key, model, system, messages, tools, maxTokens, signal, onText }) {
+  const r = await fetch(`${ANTHROPIC_BASE()}/v1/messages`, { method: "POST", signal, headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({ model, max_tokens: maxTokens, system, messages, tools, stream: true }) });
+  if (!r.ok) { const body = await r.json().catch(() => ({})); throw Object.assign(new Error(friendlyApiError(r.status, body)), { status: r.status }); }
+  const col = messageCollector(onText), feed = sseParser(col.on), dec = new TextDecoder();
+  for await (const chunk of r.body) feed(dec.decode(chunk, { stream: true }));
+  const out = col.result(); if (out.error) throw new Error(`Anthropic: ${out.error}`);
+  return out;
+}
+async function aiChat(req, res, b) {
+  const send = (event, data) => { try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* closed */ } };
+  res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  const ac = new AbortController(); res.on("close", () => ac.abort());
+  try {
+    const [st, k] = await Promise.all([aiSettings(), aiKey()]);
+    if (!k.key) throw new Error("Add your Anthropic API key first (Ask AI → Settings).");
+    if (st.usage.input + st.usage.output >= st.monthlyTokens) throw new Error(`This month's AI limit (${st.monthlyTokens.toLocaleString("en-IN")} tokens) is used up. Raise it in Ask AI → Settings.`);
+    const question = String(b.message || "").trim().slice(0, 4000); if (!question) throw new Error("Type a question.");
+    const chats = await readJson(aiChatsFile(), { chats: [] });
+    let chat = chats.chats.find(c => c.id === b.chatId);
+    if (!chat) { chat = { id: Buffer.from(globalThis.crypto.getRandomValues(new Uint8Array(6))).toString("hex"), title: question.slice(0, 70), at: new Date().toISOString(), messages: [] }; chats.chats.unshift(chat); }
+    send("chat", { id: chat.id, title: chat.title });
+    send("status", { text: "Reading your portfolio…" });
+    const context = buildContext(await aiSnapshot(), { privacy: st.privacy });
+    const focus = b.focus?.symbol ? `\n\nThe user asked this from the ${String(b.focus.where || "app").slice(0, 30)} screen about ${String(b.focus.symbol).toUpperCase().slice(0, 20)}.` : "";
+    const system = [{ type: "text", text: AI_SYSTEM }, { type: "text", text: `# The user's portfolio now\n${context}`, cache_control: { type: "ephemeral" } }];
+    const messages = [...chat.messages.slice(-16).map(m => ({ role: m.role, content: m.text })), { role: "user", content: question + focus }];
+    const usage = { input: 0, output: 0, cacheRead: 0 }, tools = [];
+    let answer = "";
+    for (let round = 0; round < 6; round++) {
+      send("status", { text: round ? "Thinking it through…" : "Asking Claude…" });
+      const out = await anthropicStream({ key: k.key, model: st.model, system, messages, tools: AI_TOOLS, maxTokens: st.maxAnswerTokens, signal: ac.signal, onText: t => { answer += t; send("delta", { text: t }); } });
+      usage.input += out.usage.input + out.usage.cacheWrite; usage.cacheRead += out.usage.cacheRead; usage.output += out.usage.output;
+      const calls = out.content.filter(c => c.type === "tool_use");
+      if (out.stop_reason !== "tool_use" || !calls.length) break;
+      messages.push({ role: "assistant", content: out.content });
+      const results = [];
+      for (const c of calls) {
+        send("tool", { name: c.name, symbol: c.input?.symbol || null }); tools.push(`${c.name}${c.input?.symbol ? ` ${c.input.symbol}` : ""}`);
+        const r = await aiTool(c.name, c.input).catch(e => ({ error: e.message }));
+        results.push({ type: "tool_result", tool_use_id: c.id, content: JSON.stringify(r).slice(0, 12000) });
+      }
+      messages.push({ role: "user", content: results });
+      if (answer && !answer.endsWith("\n")) { answer += "\n\n"; send("delta", { text: "\n\n" }); }
+    }
+    chat.messages.push({ role: "user", text: question, at: new Date().toISOString() }, { role: "assistant", text: answer || "(no answer)", at: new Date().toISOString(), model: st.model, tools });
+    chat.messages = chat.messages.slice(-40); chat.at = new Date().toISOString();
+    chats.chats = chats.chats.slice(0, 30); await writeJson(aiChatsFile(), chats);
+    const cur = await readJson(aiFile(), {}), u = cur.usage?.month === monthKey() ? cur.usage : { month: monthKey(), input: 0, output: 0, questions: 0 };
+    await writeJson(aiFile(), { ...cur, usage: { ...u, input: u.input + usage.input + usage.cacheRead, output: u.output + usage.output, questions: (u.questions || 0) + 1 } });
+    send("done", { usage, tools, model: st.model });
+  } catch (e) { if (!ac.signal.aborted) send("error", { message: e.name === "TimeoutError" ? "Claude took too long to answer." : e.message }); }
+  res.end();
+}
+
 // ---- Net worth: synced stocks + Kite mutual funds + everything entered by hand ----
 const networthFile = () => userFile("networth.json");
 async function syncedMutualFunds() {
   const store = await readJson(U.kiteHoldingsFile, { accounts: {} }), links = (await readJson(networthFile(), {})).links || {};
   const xr = (await readJson(U.fundsFile, { funds: [] })).funds;
-  const out = [];
-  for (const [userId, acct] of Object.entries(store.accounts || {})) for (const f of acct.mf || []) {
-    const key = `${userId}:${f.isin}:${f.folio || ""}`, link = Object.hasOwn(links, key) ? links[key] : undefined;
+  const out = [], amfi = await amfiNav();
+  const add = (f, key, account, accountLabel, syncedAt, extra = {}) => {
+    const link = Object.hasOwn(links, key) ? links[key] : undefined;
     const auto = link === undefined ? matchFund(f.name, xr) : null;
     const fundId = link === undefined ? auto?.id || null : link && xr.some(x => x.id === link) ? link : null;
-    out.push({ ...f, key, account: userId, accountLabel: acct.label || userId, syncedAt: acct.mfSyncedAt || acct.syncedAt, fundId, autoLinked: !!auto && link === undefined, xrayName: xr.find(x => x.id === fundId)?.name || null });
+    out.push({ ...f, key, account, accountLabel, syncedAt, fundId, autoLinked: !!auto && link === undefined, xrayName: xr.find(x => x.id === fundId)?.name || null, ...extra });
+  };
+  const synced = [];
+  for (const [userId, acct] of Object.entries(store.accounts || {})) for (const f0 of acct.mf || []) {
+    synced.push(f0);
+    // a newer official NAV than the sync carried (units × today's AMFI NAV)
+    const syncDay = String(acct.mfSyncedAt || acct.syncedAt || "").slice(0, 10), f = f0.units > 0 ? valueFund({ ...f0, navDate: f0.navDate || syncDay || null }, amfi) : f0;
+    if (f.navSource === "AMFI" && Number.isFinite(f.invested)) f.pnl = Math.round((f.value - f.invested) * 100) / 100;
+    if (!Number.isFinite(f.avgNav) && Number.isFinite(f.invested) && f.units > 0) f.avgNav = Math.round(f.invested / f.units * 1e4) / 1e4;
+    add(f, `${userId}:${f.isin}:${f.folio || ""}`, userId, acct.label || userId, acct.mfSyncedAt || acct.syncedAt, { source: "sync" });
   }
+  for (const f of await importedFunds(synced)) if (!f.duplicate) add(f, `import:${f.id}`, "import", f.source === "manual" ? "Added by hand" : f.source === "cas" ? "CAS statement" : "Imported file", f.importedAt, { source: f.source });
   return out.sort((a, b) => (b.value || 0) - (a.value || 0));
 }
 async function networthView() {
@@ -1625,7 +2047,9 @@ async function networthView() {
   }
   const stocks = view.accounts.map(a => ({ account: a.userId, label: `${a.brokerName || "Zerodha"} · ${a.label}`, value: Math.round(per.get(a.userId)?.value || 0), invested: Math.round(per.get(a.userId)?.invested || 0) || null, syncedAt: a.syncedAt }));
   const accts = Object.entries((await readJson(U.kiteHoldingsFile, { accounts: {} })).accounts || {});
-  const intl = accts.flatMap(([id, a]) => (a.us || []).map((u, i) => ({ key: `${id}:${u.symbol || i}`, name: `${u.name}${u.symbol ? ` (${u.symbol})` : ""} · ${a.label || id}`, value: u.value, invested: u.invested, syncedAt: a.syncedAt })));
+  let intl;
+  try { intl = (await usHoldings()).rows.filter(r => Number.isFinite(r.valueInr)).map(r => ({ key: r.key, name: `${r.name}${r.symbol && r.symbol !== r.name ? ` (${r.symbol})` : ""} · ${r.account}`, value: Math.round(r.valueInr), invested: Number.isFinite(r.investedInr) ? Math.round(r.investedInr) : null, syncedAt: r.priceDate || r.syncedAt })); }
+  catch { intl = accts.flatMap(([id, a]) => (a.us || []).map((u, i) => ({ key: `${id}:${u.symbol || i}`, name: `${u.name}${u.symbol ? ` (${u.symbol})` : ""} · ${a.label || id}`, value: u.value, invested: u.invested, syncedAt: a.syncedAt }))); }
   const nw = buildNetworth({ stocks, intl, mf: mf.map(f => ({ key: f.key, name: f.name, value: f.value, invested: f.invested, syncedAt: f.syncedAt, fundId: f.fundId, isin: f.isin })), items });
   // Look-through uses synced funds plus hand-entered funds that are linked to an X-ray portfolio.
   const xray = new Map(xrFile.funds.map(f => [f.id, { name: f.name, holdings: f.holdings }]));
@@ -2165,7 +2589,8 @@ async function appHandler(req, res, url) {
         if (req.method === "GET" && !op) {
           const mine = (await readJson(usListFile(), { symbols: [] })).symbols || [];
           const which = url.searchParams.get("list") === "popular" ? "popular" : "mine";
-          const symbols = which === "popular" ? US_POPULAR : mine;
+          const held = which === "mine" ? (await usHoldingItems().catch(() => [])).map(i => i.symbol).filter(Boolean) : [];
+          const symbols = which === "popular" ? US_POPULAR : [...new Set([...mine, ...held])]; // what you hold is valued too
           queueUs(symbols);
           const out = await usRows(symbols);
           return reply(res, 200, { list: which, mine, ...out, pending: out.rows.filter(r => r.pending).length, queue: usQueue.size, secError: usLastError, model: { discount: 9, terminal: 3 } });
@@ -2177,8 +2602,43 @@ async function appHandler(req, res, url) {
           const ov = (await readJson(usGrowthFile(), {}))[sym] ?? null, { prices } = await usPrices([sym]), p = prices[sym];
           return reply(res, 200, { symbol: sym, name: c.name, cik: c.cik, fetchedAt: c.fetchedAt, price: p?.price ?? null, priceDate: p?.date || null, priceSource: p?.source || null, high52: p?.high52 ?? null, low52: p?.low52 ?? null, valuation: usValuation(c.series, p?.price ?? null, { growth: ov }), years: c.series.years.slice(-6), inList: ((await readJson(usListFile(), { symbols: [] })).symbols || []).includes(sym) });
         }
+        if (req.method === "GET" && op === "holdings") return reply(res, 200, await usHoldings());
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown US operation." });
         const b = await readBody(req);
+        if (op.startsWith("holdings/")) { // US stocks you hold through Vested / INDmoney / any US broker
+          const st = await readJson(otherFile(), {}); st.us ||= [];
+          const label = String(b.account || "").replace(/\s+/g, " ").trim().slice(0, 40) || "Vested";
+          let notice = null;
+          if (op === "holdings/import") {
+            let tables = [];
+            if (b.data) { const buf = Buffer.from(String(b.data), "base64"); if (buf.length > 10e6) throw new Error("File is larger than 10 MB."); tables = buf.readUInt32LE(0) === 0x04034b50 ? readXlsx(buf) : [{ rows: parseDelimited(buf.toString("utf8")) }]; }
+            else if (b.text && /[,\t]/.test(String(b.text).split(/\r?\n/)[0] || "") && /qty|quantity|shares|units/i.test(String(b.text).split(/\r?\n/)[0])) tables = [{ rows: parseDelimited(String(b.text)) }];
+            const rows = parseUsHoldings(tables, b.data ? "" : String(b.text || ""));
+            if (!rows.length) throw new Error("No holdings found. Expected columns like Symbol, Quantity, Average price (USD), or lines like “AAPL 10 150.25”.");
+            const now = new Date().toISOString();
+            st.us = [...st.us.filter(u => u.account !== label), ...rows.slice(0, 300).map(r => ({ id: crypto.randomUUID().slice(0, 8), source: "import", account: label, ...r, importedAt: now }))];
+            notice = `${label}: ${rows.length} US holding${rows.length === 1 ? "" : "s"} imported${rows.some(r => !r.symbol) ? " (some without a ticker: add it with ✎ to price them)" : ""}.`;
+          } else if (op === "holdings/save") {
+            const sym = cleanUsTicker(b.symbol), qty = Number(b.qty), avg = b.avgUsd === "" || b.avgUsd == null ? null : Number(b.avgUsd), invInr = b.investedInr === "" || b.investedInr == null ? null : Number(String(b.investedInr).replace(/[,₹\s]/g, ""));
+            if (!sym) throw new Error("Enter the US ticker (e.g. AAPL)."); if (!(qty > 0)) throw new Error("Enter the number of shares (fractions are fine).");
+            if (avg !== null && !(avg > 0)) throw new Error("Average price must be in dollars, above 0."); if (invInr !== null && !(invInr > 0)) throw new Error("Invested in rupees must be above 0.");
+            const prev = b.id ? st.us.find(u => u.id === b.id) : null;
+            const row = { id: prev?.id || crypto.randomUUID().slice(0, 8), source: prev?.source || "manual", account: prev?.account || label, symbol: sym, name: String(b.name || "").trim().slice(0, 80) || prev?.name || sym, qty: Math.round(qty * 1e4) / 1e4, avgUsd: avg, investedUsd: avg ? Math.round(avg * qty * 100) / 100 : null, investedInr: invInr, importedAt: new Date().toISOString() };
+            st.us = prev ? st.us.map(u => (u.id === prev.id ? row : u)) : [...st.us, row];
+          } else if (op === "holdings/delete") {
+            // one holding (id), one imported account (account), one synced account (syncId: hidden, the sync keeps them out), or everything (all)
+            const before = st.us.length, hid0 = (st.hiddenUs || []).length;
+            if (b.all) { st.us = []; const store = await readJson(U.kiteHoldingsFile, { accounts: {} }); st.hiddenUs = [...new Set([...(st.hiddenUs || []), ...Object.entries(store.accounts || {}).filter(([, a]) => (a.us || []).length).map(([id]) => id)])]; }
+            else if (b.syncId) st.hiddenUs = [...new Set([...(st.hiddenUs || []), String(b.syncId).slice(0, 80)])];
+            else st.us = b.id ? st.us.filter(u => u.id !== b.id) : b.account ? st.us.filter(u => u.account !== b.account) : st.us;
+            if (st.us.length === before && (st.hiddenUs || []).length === hid0) throw new Error("Nothing to remove.");
+            notice = b.all ? "All US holdings removed." : b.syncId ? "Removed. Its synced US holdings stay out (Show again brings them back)." : b.account ? `${b.account}: all holdings removed.` : null;
+          } else if (op === "holdings/unhide") {
+            st.hiddenUs = (st.hiddenUs || []).filter(x => x !== b.syncId); notice = "Synced US holdings shown again.";
+          } else return reply(res, 404, { message: "Unknown US operation." });
+          await writeJson(otherFile(), st);
+          return reply(res, 200, { ...(await usHoldings()), notice });
+        }
         if (op === "list") {
           const st = await readJson(usListFile(), { symbols: [] }); let syms = st.symbols || [];
           const add = (Array.isArray(b.add) ? b.add : []).map(cleanUsSymbol).filter(Boolean), rem = new Set((Array.isArray(b.remove) ? b.remove : []).map(cleanUsSymbol));
@@ -2216,6 +2676,10 @@ async function appHandler(req, res, url) {
           const charges = { ...CHARGE_DEFAULTS, ...(st.settings?.charges || {}) };
           return reply(res, 200, sellTaxEstimate({ lots, sellPrice: price, sellDate: b.date ? tradeDate(b.date) : new Date().toISOString(), exchange: p?.exchange || "NSE", ltExemptLeft: b.ltExemptLeft !== undefined ? Number(b.ltExemptLeft) : ltExemptionLeft(st.closed || [], st.settings?.ltUsedElsewhere || 0), charges }));
         }
+        // Hold or sell? scenarios for one position: sell now, hold to the ex-date, book part + stop, wait for long-term rates
+        if (req.method === "POST" && op === "decide") {
+          try { return reply(res, 200, await decideFor(await readBody(req))); } catch (e) { return reply(res, e.status || 400, { message: e.message }); }
+        }
         if (op === "ideas" || op === "ideas/scan") {
           if (op === "ideas/scan" && req.method === "POST") { startSwingScan({ force: true }); }
           return reply(res, 200, await swingIdeas());
@@ -2251,12 +2715,36 @@ async function appHandler(req, res, url) {
           st.closed = st.closed.filter(x => x.id !== t.id);
         }
         else if (op === "lots") { const p = find("positions", b.id); st.positions = st.positions.map(x => (x.id === p.id ? setLots(x, b.lots) : x)); }
-        else if (op === "promote") { // a swing-watchlist stock was bought: move it to positions
-          const w = find("watch", b.id), bp = Number(b.price), ideaT = w.idea && bp > 0 ? [w.idea.t1, w.idea.t2].filter(t => t > bp * 1.005).map(t => Math.round((t / bp - 1) * 1000) / 10) : [];
-          const p = sanitizePosition({ symbol: w.symbol, exchange: w.exchange, name: w.name, qty: b.qty, avgPrice: b.price, limit: b.limit ?? w.amount, notes: [w.notes, w.idea && !String(w.notes || "").includes(w.idea.label) ? `From swing idea: ${w.idea.label}` : ""].filter(Boolean).join(" · ") || null, boughtOn: b.date || undefined, stopLoss: w.stopLoss ?? null, targets: ideaT.length ? ideaT.join(",") : undefined }); st.watch = st.watch.filter(x => x.id !== w.id);
-          const held = st.positions.find(x => x.symbol === p.symbol && (x.exchange || "NSE") === p.exchange);
-          if (held) { const m = mergePositions(held, p); st.positions = st.positions.map(x => (x.id === held.id ? m : x)); notice = `${p.name}: added to your existing position. Now ${m.qty} shares at an average of ₹${m.avgPrice.toLocaleString("en-IN")}.`; } else st.positions.push(p);
-          moveCash(st, -p.qty * p.avgPrice, `Bought ${p.qty} ${p.symbol} @ ₹${p.avgPrice}`);
+        else if (op === "promote") notice = promoteWatch(st, find("watch", b.id), b); // a swing-watchlist stock was bought: move it to positions
+        else if (op === "dip-parse") { // buy-the-dip list typed in one go: preview with the symbols found
+          const rows = parseDipText(b.text); if (!rows.length) throw new Error('Nothing found. Write it like "TCS below 2100, INFY below 1000".');
+          const found = await resolveDipNames(rows.map(r => r.name));
+          return reply(res, 200, { rows: rows.map((r, i) => ({ ...r, ...found[i], typed: r.name })) });
+        }
+        else if (op === "dip-add") { // add (or update the level of) several dip entries at once
+          const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 60), def = parseSwingAmount(b.amount);
+          let added = 0, updated = 0;
+          for (const r of rows) {
+            if (!r || !r.symbol) continue;
+            const sym = String(r.symbol).toUpperCase(), lvl = Number(r.buyBelow);
+            // same stock at (about) the same level: update it; a different level is a second rung of the ladder
+            const ex = st.watch.find(x => x.list === "dip" && x.symbol === sym && Math.abs(x.buyBelow / lvl - 1) < 0.005);
+            if (!ex && st.watch.length >= 100) throw new Error("At most 100 swing watchlist entries.");
+            const w = sanitizeWatch({ symbol: sym, name: r.name, exchange: r.exchange, list: "dip", buyBelow: r.buyBelow, amount: r.amount ?? def, stopLoss: r.stopLoss ?? null, notes: r.notes }, ex);
+            st.watch = ex ? st.watch.map(x => (x.id === w.id ? w : x)) : [...st.watch, w]; ex ? updated++ : added++;
+          }
+          if (!added && !updated) throw new Error("Pick at least one stock.");
+          notice = `Buy-the-dip list: ${added} added${updated ? `, ${updated} updated` : ""}. You get an alert when each reaches its price.`;
+        }
+        else if (op === "bulk-buy") { // bought several dips together: each becomes a swing position (or adds to one)
+          const items = (Array.isArray(b.items) ? b.items : []).slice(0, 60), done = [];
+          for (const it of items) {
+            const q = Number(it.qty), pr = Number(it.price); if (!(q > 0) || !(pr > 0)) continue;
+            if (!Number.isInteger(q)) throw new Error("Whole shares only.");
+            const w = find("watch", it.id); promoteWatch(st, w, { qty: q, price: pr, date: b.date, keep: !!b.keep, setup: w.list === "dip" ? "dip" : undefined }); done.push(`${q} ${w.symbol}`);
+          }
+          if (!done.length) throw new Error("Enter a quantity and price for at least one stock.");
+          notice = `Recorded ${done.length} buy${done.length === 1 ? "" : "s"}: ${done.join(", ")}.${b.keep ? " Their dip levels stay on the list." : ""}`;
         }
         else if (op === "settings") {
           const t = parseTargets(b.targets ?? b.targetPct), d = Number(b.dipPct), plan = b.bookPlan === undefined ? st.settings?.bookPlan ?? null : parseBookPlan(b.bookPlan);
@@ -2266,7 +2754,8 @@ async function appHandler(req, res, url) {
           const chg = { ...(st.settings?.charges || {}) };
           for (const [k, lim] of [["dpPerSale", 100], ["txnPctNse", 0.1], ["sttPct", 1], ["cessPct", 10]]) if (b[k] !== undefined && b[k] !== "") { const v = Number(b[k]); if (!(v >= 0 && v <= lim)) throw new Error(`${k}: 0–${lim}`); chg[k] = v; }
           const ltUsed = b.ltUsedElsewhere === undefined || b.ltUsedElsewhere === "" ? st.settings?.ltUsedElsewhere || 0 : parseSwingAmount(b.ltUsedElsewhere);
-          st.settings = { targets: t, dipPct: d, riskPct, perTrade, charges: chg, ltUsedElsewhere: ltUsed || 0, ...(plan ? { bookPlan: plan } : {}) };
+          const slab = b.slabPct === undefined || b.slabPct === "" ? st.settings?.slabPct ?? 30 : Number(b.slabPct); if (!(slab >= 0 && slab <= 42.74)) throw new Error("Income-tax slab: 0–42.74%.");
+          st.settings = { targets: t, dipPct: d, riskPct, perTrade, charges: chg, ltUsedElsewhere: ltUsed || 0, slabPct: slab, ...(plan ? { bookPlan: plan } : {}) };
           if (b.cash !== undefined) { // cash set aside for swing: blank stops tracking it
             const c = String(b.cash).trim() === "" ? null : parseSwingAmount(b.cash);
             if (String(b.cash).trim() !== "" && c === null) throw new Error("Cash: enter an amount like 5L or 250000.");
@@ -2278,13 +2767,130 @@ async function appHandler(req, res, url) {
         else if (op === "import") {
           for (const r of Array.isArray(b.rows) ? b.rows.slice(0, 100) : []) {
             if (r.kind === "position") { const ex = st.positions.find(x => x.symbol === String(r.symbol).toUpperCase()); const p = sanitizePosition({ ...r, addBelow: r.addBelow, addAmount: r.addAmount }, ex); st.positions = ex ? st.positions.map(x => (x.id === p.id ? p : x)) : [...st.positions, p]; }
-            else { const ex = st.watch.find(x => x.symbol === String(r.symbol).toUpperCase()); const w = sanitizeWatch({ ...r, buyBelow: r.addBelow ?? r.buyBelow, amount: r.addAmount ?? r.amount }, ex); st.watch = ex ? st.watch.map(x => (x.id === w.id ? w : x)) : [...st.watch, w]; }
+            else { const ex = st.watch.find(x => x.symbol === String(r.symbol).toUpperCase() && x.list !== "dip"); const w = sanitizeWatch({ ...r, buyBelow: r.addBelow ?? r.buyBelow, amount: r.addAmount ?? r.amount }, ex); st.watch = ex ? st.watch.map(x => (x.id === w.id ? w : x)) : [...st.watch, w]; }
           }
         }
         else if (op === "resolve") return reply(res, 200, { results: await resolveNames([String(b.name || "")]) });
         else return reply(res, 404, { message: "Unknown swing operation." });
         await writeJson(swingFile(), st); notifyUser(currentUser().id, "symbols"); // the page's live stream now follows a new position too
         return reply(res, 200, { ...(await swingView()), ...(notice ? { notice } : {}) });
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/indices" || url.pathname.startsWith("/api/indices/")) { // Smart indices
+      const op = url.pathname.slice("/api/indices".length).replace(/^\//, "");
+      try {
+        if (req.method === "GET" && !op) return reply(res, 200, await indicesHome());
+        if (req.method === "GET" && op === "view") return reply(res, 200, await indexView(String(url.searchParams.get("name") || "NIFTY 50").slice(0, 80), { force: url.searchParams.get("fresh") === "1" }));
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown index operation." });
+        const b = await readBody(req);
+        if (op === "value") { const v = await indexView(String(b.name || "").slice(0, 80)); if (!v.rows.length) throw new Error("The index list has not loaded yet."); return reply(res, 200, { valueJob: startIndexValuation(v) }); }
+        if (op === "add") { // add several index stocks to the watchlist (and a list), then value the new ones in the background
+          const syms = (Array.isArray(b.symbols) ? b.symbols : []).map(x => String(x).toUpperCase()).filter(x => /^[A-Z0-9&-]{1,20}$/.test(x)).slice(0, 100);
+          if (!syms.length) throw new Error("Pick at least one stock.");
+          const names = b.names && typeof b.names === "object" ? b.names : {};
+          const stocks = await readWatchlist(), have = new Set(stocks.map(symOf)), fresh = syms.filter(x => !have.has(x));
+          let id = Math.max(0, ...stocks.map(s => Number(s.id) || 0));
+          const added = fresh.map(sym => ({ id: ++id, company: String(names[sym] || sym).slice(0, 80), ticker: sym, marketSymbol: sym, bucket: "Growth", action: "Watch", note: b.from ? `From ${String(b.from).slice(0, 60)}` : "", exchange: "NSE" }));
+          if (added.length) await persistWatchlist([...stocks, ...added], stocks);
+          await addToList(b.list || DEFAULT_ID, syms);
+          const fund = await readFundamentals(), need = added.filter(st => !fund[st.marketSymbol]);
+          if (need.length) (async () => { for (const st of need) { try { const [r] = await runFundamentalsFetch([st], false); if (r?.rateLimited) break; } catch { /* next */ } } })();
+          return reply(res, 200, { added: added.length, already: syms.length - added.length, valuing: need.length });
+        }
+        if (op === "import") { // the constituents CSV from niftyindices.com, when NSE's live data is blocked
+          const name = String(b.name || "").slice(0, 80), rows = parseIndexCsv(String(b.csv || "").slice(0, 400000));
+          if (!name || !rows.length) throw new Error("Choose the index and its constituents CSV (from niftyindices.com: Company Name, Industry, Symbol, Series, ISIN Code).");
+          const filled = []; for (const row of rows) filled.push(fillFromBars(row, await eodBars(row.symbol)));
+          const st = await idxStore(); st.lists[normIndex(name)] = { name, index: null, rows: filled, source: "Imported file + daily closes", at: Date.now() }; await writeJson(indexCacheFile, st);
+          return reply(res, 200, await indexView(name));
+        }
+        return reply(res, 404, { message: "Unknown index operation." });
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname.startsWith("/api/ai/")) { // Ask AI
+      const op = url.pathname.slice("/api/ai/".length);
+      try {
+        if (req.method === "GET" && op === "status") return reply(res, 200, await aiStatus());
+        if (req.method === "GET" && op === "preview") { const st = await aiSettings(), privacy = AI_PRIVACY[url.searchParams.get("privacy")] ? url.searchParams.get("privacy") : st.privacy, text = buildContext(await aiSnapshot(), { privacy }); return reply(res, 200, { privacy, text, chars: text.length, approxTokens: Math.round(text.length / 3.5) }); }
+        if (req.method === "GET" && op === "chats") return reply(res, 200, await readJson(aiChatsFile(), { chats: [] }));
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown AI operation." });
+        const b = await readBody(req);
+        if (op === "chat") return aiChat(req, res, b);
+        if (op === "settings") {
+          const cur = await readJson(aiFile(), {}), next = { ...cur };
+          if (b.model !== undefined) { const m = String(b.model).trim(); if (!/^claude-[a-z0-9.-]{3,60}$/.test(m)) throw new Error("Pick a Claude model."); next.model = m; }
+          if (b.privacy !== undefined) { if (!AI_PRIVACY[b.privacy]) throw new Error("Unknown privacy setting."); next.privacy = b.privacy; }
+          if (b.monthlyTokens !== undefined) { const n = Math.round(Number(String(b.monthlyTokens).replace(/[,\s]/g, ""))); if (!(n >= 10000 && n <= 1e9)) throw new Error("Monthly limit: between 10,000 and 1,000,000,000 tokens."); next.monthlyTokens = n; }
+          await writeJson(aiFile(), next); return reply(res, 200, await aiStatus());
+        }
+        if (op === "key") {
+          if (b.remove) { await writeJson(aiKeyFile(), {}); return reply(res, 200, await aiStatus()); }
+          const key = String(b.key || "").trim(); if (!looksLikeKey(key)) throw new Error("That does not look like an Anthropic API key (it starts with sk-ant-).");
+          // check it with the smallest possible request before saving
+          const st = await aiSettings();
+          const r = await fetch(`${ANTHROPIC_BASE()}/v1/messages`, { method: "POST", signal: AbortSignal.timeout(20000), headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" }, body: JSON.stringify({ model: st.model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }) }).catch(e => ({ ok: false, status: 0, json: async () => ({ error: { message: e.message } }) }));
+          if (!r.ok && r.status !== 429 && r.status !== 529) throw new Error(r.status ? friendlyApiError(r.status, await r.json().catch(() => ({}))) : "Could not reach Anthropic to check the key.");
+          await writeJson(aiKeyFile(), sealKey(key, await aiSecret()));
+          return reply(res, 200, { ...(await aiStatus()), notice: "Key saved (encrypted on this server)." });
+        }
+        if (op === "chats/delete") { const c = await readJson(aiChatsFile(), { chats: [] }); c.chats = b.all ? [] : c.chats.filter(x => x.id !== b.id); await writeJson(aiChatsFile(), c); return reply(res, 200, c); }
+        return reply(res, 404, { message: "Unknown AI operation." });
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/mf" || url.pathname.startsWith("/api/mf/")) { // mutual funds outside Zerodha Coin: CAS / CSV import, by hand
+      const op = url.pathname.slice("/api/mf".length).replace(/^\//, "");
+      try {
+        const view = async notice => {
+          const all = await syncedMutualFunds(), amfi = amfiMem?.at ? amfiMem : null, dups = (await importedFunds()).filter(f => f.duplicate);
+          const priced = all.filter(f => Number.isFinite(f.value)), withCost = priced.filter(f => Number.isFinite(f.invested));
+          const sum = (arr, k) => Math.round(arr.reduce((a, f) => a + (f[k] || 0), 0));
+          return { funds: all, duplicates: dups.map(f => ({ id: f.id, name: f.name, folio: f.folio })), totals: { value: sum(priced, "value"), invested: sum(withCost, "invested"), pnl: sum(withCost, "value") - sum(withCost, "invested"), count: all.length }, amfiAt: amfi?.at || null, ...(notice ? { notice } : {}) };
+        };
+        if (req.method === "GET" && !op) return reply(res, 200, await view());
+        if (req.method === "GET" && op === "search") return reply(res, 200, { results: searchAmfi(await amfiNav({ wait: true }), url.searchParams.get("q"), 12) });
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown mutual fund operation." });
+        const b = await readBody(req), st = await readJson(otherFile(), {}); st.mf ||= [];
+        let notice = null; const now = new Date().toISOString();
+        if (op === "import") {
+          let funds = [], source = "csv", statementTo = null;
+          const buf = b.data ? Buffer.from(String(b.data), "base64") : null; if (buf && buf.length > 20e6) throw new Error("File is larger than 20 MB.");
+          if (buf && buf.subarray(0, 5).toString("latin1") === "%PDF-") {
+            try { const r = parseCas(await pdfLines(buf, String(b.password || "").trim())); funds = r.funds; statementTo = r.statementTo; source = "cas"; }
+            catch (e) { if (e.needPassword) return reply(res, 400, { message: e.message, needPassword: true }); throw e; }
+            if (!funds.length) throw new Error("No fund balances found in that PDF. Use the CAMS / KFintech Consolidated Account Statement (CAS), detailed or summary.");
+          } else {
+            const tables = buf ? (buf.readUInt32LE(0) === 0x04034b50 ? readXlsx(buf) : [{ rows: parseDelimited(buf.toString("utf8")) }]) : [{ rows: parseDelimited(String(b.text || "")) }];
+            const rows = parseMfRows(tables, buf ? "" : String(b.text || "")); if (!rows.length) throw new Error("No funds found. Expected columns like Scheme name (or ISIN), Units, Invested.");
+            const amfi = await amfiNav({ wait: true });
+            funds = rows.map(r => { const isin = r.isin || searchAmfi(amfi, r.name, 1)[0]?.isin || null; return { isin, name: r.name || amfi[isin]?.[3] || isin, folio: r.folio, units: r.units, cost: r.cost, nav: null, navDate: null, value: null }; });
+          }
+          const newIds = new Set(), keep = st.mf.filter(f => source === "cas" ? f.source !== "cas" : true); // a new CAS replaces the last one (it is the full picture)
+          for (const f of funds) {
+            const ex = keep.find(x => x.isin && x.isin === f.isin && (x.folio || "") === (f.folio || "") && x.source !== "manual");
+            const row = { id: ex?.id || crypto.randomUUID().slice(0, 8), source, isin: f.isin, name: f.name, amc: f.amc || null, folio: f.folio || null, units: f.units, cost: f.cost ?? null, nav: f.nav ?? null, navDate: f.navDate || null, value: f.value ?? null, registrar: f.registrar || null, importedAt: now, statementTo };
+            if (ex) Object.assign(ex, row); else keep.push(row);
+            newIds.add(row.id);
+          }
+          st.mf = keep.slice(0, 300);
+          await writeJson(otherFile(), st);
+          const v = await view(), dup = v.duplicates.filter(d => newIds.has(d.id)).length;
+          notice = `${funds.length} fund${funds.length === 1 ? "" : "s"} imported${source === "cas" ? " from your CAS" : ""}.${dup ? ` ${dup === 1 ? "One is" : `${dup} are`} already in a broker sync (Zerodha / INDmoney), so ${dup === 1 ? "it is" : "they are"} counted once.` : ""}`;
+          return reply(res, 200, { ...v, notice });
+        }
+        if (op === "save") { // add or edit one fund by hand
+          const amfi = await amfiNav({ wait: true }), isin = String(b.isin || "").trim().toUpperCase();
+          if (!/^INF[0-9A-Z]{9}$/.test(isin)) throw new Error("Pick the fund from the list (so its NAV can be updated every day).");
+          const units = Number(String(b.units ?? "").replace(/,/g, "")), cost = b.cost === "" || b.cost == null ? null : Number(String(b.cost).replace(/[,₹\s]/g, ""));
+          if (!(units > 0)) throw new Error("Enter the units you hold (from the fund's statement or app)."); if (cost !== null && !(cost > 0)) throw new Error("Invested amount must be above 0.");
+          const prev = b.id ? st.mf.find(f => f.id === b.id) : null;
+          const row = { id: prev?.id || crypto.randomUUID().slice(0, 8), source: prev?.source || "manual", isin, name: amfi[isin]?.[3] || String(b.name || "").slice(0, 120) || isin, amc: amfi[isin]?.[4] || null, folio: String(b.folio || "").trim().slice(0, 30) || null, units: Math.round(units * 1e4) / 1e4, cost, nav: null, navDate: null, value: null, importedAt: now };
+          st.mf = prev ? st.mf.map(f => (f.id === prev.id ? row : f)) : [...st.mf, row];
+        } else if (op === "delete") {
+          const before = st.mf.length; st.mf = b.id ? st.mf.filter(f => f.id !== b.id) : b.source ? st.mf.filter(f => f.source !== b.source) : st.mf;
+          if (st.mf.length === before) throw new Error("Nothing to remove (funds from a broker sync go away when you disconnect it).");
+        } else return reply(res, 404, { message: "Unknown mutual fund operation." });
+        await writeJson(otherFile(), st);
+        return reply(res, 200, await view(notice));
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname.startsWith("/api/networth")) {
@@ -2592,6 +3198,7 @@ async function appHandler(req, res, url) {
         return reply(res, 200, { ...out, portfolioValue: Math.round(view.totals?.value || 0) });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
+    if (url.pathname === "/api/market/week" && req.method === "GET") return reply(res, 200, await weekView({ period: ["day", "week", "month"].includes(url.searchParams.get("period")) ? url.searchParams.get("period") : "week", universe: ["nifty500", "nifty50", "all", "mine"].includes(url.searchParams.get("universe")) ? url.searchParams.get("universe") : "nifty500" }));
     if (url.pathname === "/api/market" && req.method === "GET") {
       const list = url.searchParams.get("list") || "52high", source = url.searchParams.get("source") === "nse" ? "nse" : "mine";
       if (!MARKET_LISTS[list]) return reply(res, 400, { message: `Unknown list. Use one of: ${Object.keys(MARKET_LISTS).join(", ")}.` });

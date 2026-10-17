@@ -109,6 +109,23 @@ export function parseScreener(html, stock, today = new Date().toISOString().slic
   const bv = top["Book Value"]?.[0];
   if (bv > 0) entry.pb = round(price / bv, 2);
   if (sales) entry.salesCagr3 = cagr(sales, 3) ?? undefined;
+  // For companies without profits (valued on sales): last 12 months' sales and profit from the quarterly table, the recent
+  // sales growth (latest 12 months vs the 12 before, blended with the yearly growth over up to 3 years), operating margin
+  // now vs earlier, and cash parked in investments.
+  const qt = parseTable(section(html, "quarters")), qIdx = qt ? qt.headers.map((h, i) => /^[A-Z][a-z]{2}\s+\d{4}$/.test(h) ? i : -1).filter(i => i >= 0) : [];
+  const qSales = qt ? qIdx.map(i => pick(qt, ["Sales", "Revenue"])?.[i] ?? null) : [], qNp = qt ? qIdx.map(i => pick(qt, ["Net Profit"])?.[i] ?? null) : [];
+  const l4 = qSales.slice(-4), p4 = qSales.slice(-8, -4);
+  if (l4.length === 4 && l4.every(x => x !== null)) entry.salesTtm = round(sum(l4), 0);
+  else if (last(sales) > 0) entry.salesTtm = last(sales);
+  const n4 = qNp.slice(-4); if (n4.length === 4 && n4.every(x => x !== null)) entry.niTtm = round(sum(n4), 0); else if (np && last(np) !== null) entry.niTtm = last(np);
+  const yoy = p4.length === 4 && p4.every(x => x > 0) && l4.every(x => x !== null) ? (sum(l4) / sum(p4) - 1) * 100 : null;
+  const yrs = sales ? Math.min(3, sales.filter(x => x !== null).length - 1) : 0, cg = yrs >= 1 ? cagr(sales.filter(x => x !== null), yrs) : null;
+  if (yoy !== null || cg !== null) { entry.salesGrowth = round(yoy !== null && cg !== null ? 0.5 * yoy + 0.5 * cg : yoy ?? cg, 1); entry.salesGrowthYears = yoy !== null && cg !== null ? yrs : yoy !== null ? 1 : yrs; }
+  const opm = onlyAnnual(pl, pick(pl, ["OPM %", "OPM"])), qOpm = qt ? qIdx.map(i => pick(qt, ["OPM %", "OPM"])?.[i] ?? null) : [];
+  const opmNow = last(qOpm.filter(x => x !== null)) ?? last((opm || []).filter(x => x !== null));
+  if (opmNow !== null && opmNow !== undefined) entry.opmLatest = opmNow;
+  const opmHist = (opm || []).filter(x => x !== null); if (opmHist.length >= 3) entry.opmPrev = opmHist[opmHist.length - 3];
+  const inv = onlyAnnual(bs, pick(bs, ["Investments"])); if (inv && last(inv) !== null) entry.investments = last(inv);
   if (np) entry.profitCagr3 = cagr(np, 3) ?? undefined;
   if (last(borrow) !== null && borrow) entry.borrowings = last(borrow);
   if (last(reserves) !== null && reserves) entry.reserves = last(reserves);
@@ -149,7 +166,7 @@ export function parseScreener(html, stock, today = new Date().toISOString().slic
   entry.profile = detectScreenerProfile(entry.sector, entry.industry);
 
   const flags = [];
-  if (last(np) !== null && last(np) <= 0) flags.push("CHECK: latest-year net profit is zero or negative");
+  if (last(np) !== null && last(np) <= 0) flags.push("Loss-making in the latest year: valued on sales and a path to profit instead of P/E");
   if (entry.profile === "financial" && entry.pb === undefined) flags.push("Lender: book value missing, P/B not computed");
   entry.flags = flags.join(" | ");
   for (const k of Object.keys(entry)) if (entry[k] === undefined || entry[k] === null) delete entry[k];
@@ -214,7 +231,13 @@ export function parsePeersPe(html) {
 }
 
 // A company page with real numbers (the consolidated view of a standalone-only company has the labels but no values).
-export function hasFigures(html) { const top = parseTopRatios(html); return (top["Current Price"]?.[0] ?? 0) > 0; }
+// Needs the price AND real numbers in the profit & loss table: a company without subsidiaries can show a consolidated page
+// with the price filled in but every statement blank (Ather Energy's book value, sales and borrowings came out empty).
+export function hasFigures(html) {
+  const top = parseTopRatios(html); if (!((top["Current Price"]?.[0] ?? 0) > 0)) return false;
+  const pl = parseTable(section(html, "profit-loss")), sales = pl ? pick(pl, ["Sales", "Revenue"]) : null;
+  return !!(sales && sales.some(x => x !== null && x !== 0));
+}
 export async function fetchScreener(stock, fetchImpl = fetch) {
   const sym = (stock.marketSymbol || stock.ticker || "").toUpperCase();
   if (!/^[A-Z0-9&-]+$/.test(sym)) throw new Error("bad symbol");

@@ -22,10 +22,10 @@
   // Results / dividend / bonus decision under a position (open by default when it asks you to act)
   const evIcon = { results: "📊", "board-dividend": "📊", dividend: "💰", bonus: "🎁", split: "🎁" };
   const evRow = r => { const e = r.events; if (!e) return ""; const act = e.tone === "bad" || e.tone === "warn" || /wait for the dividend/i.test(e.headline);
-    return `<tr class="sw-ev-row ${(SIG[r.status] || [])[1] || ""}" data-ev="${esc(r.id)}"><td colspan="12"><details class="sw-ev ${esc(e.tone)}"${act ? " open" : ""}><summary><b>${esc(e.headline)}</b><span class="hint"> · ${e.items.length} note${e.items.length === 1 ? "" : "s"}</span></summary><ul>${e.items.map(i => `<li><span>${i.icon}</span> ${esc(i.text)}</li>`).join("")}</ul></details></td></tr>`; };
+    return `<tr class="sw-ev-row ${(SIG[r.status] || [])[1] || ""}" data-ev="${esc(r.id)}"><td colspan="12"><details class="sw-ev ${esc(e.tone)}"${act ? " open" : ""}><summary><b>${esc(e.headline)}</b><span class="hint"> · ${e.items.length} note${e.items.length === 1 ? "" : "s"}</span></summary><ul>${e.items.map(i => `<li><span>${i.icon}</span> ${esc(i.text)}</li>`).join("")}</ul><button type="button" class="ghost sw-decide-inline" data-decide="${esc(r.id)}">⚖ Hold or sell? Compare with your numbers</button></details></td></tr>`; };
   const upChips = w => (w.upcoming || []).map(e => `<span class="sw-up-chip ${esc(e.kind)}" title="${esc(e.label)} on ${esc(e.date)}">${evIcon[e.kind] || "🗓"} ${esc(e.kind === "dividend" && e.amount ? `Div ₹${e.amount}` : e.kind === "results" ? "Results" : e.label)} ${e.days === 0 ? "today" : e.days === 1 ? "tmrw" : `in ${e.days}d`}</span>`).join("");
   function render() {
-    const v = sw, t = v.totals;
+    const v = sw, t = v.totals; window.__swingData = sw; // Ask AI offers a question about a position with a dividend coming
     // A position without a live price is left out of the totals (said so); one on an older saved price is counted and flagged
     const priceNote = t.missing?.length ? `<small class="sw-miss" title="No price from any source yet; refresh again shortly">excl. ${esc(t.missing.join(", "))} (no price)</small>` : t.staleNames?.length ? `<small class="sw-miss" title="Live sources did not answer; the last saved price is used">${esc(t.staleNames.join(", "))} on last saved price</small>` : "";
     $("#swTargetLbl").textContent = `${v.settings.targets.join(" / ")}%`;
@@ -57,10 +57,12 @@
         <td>${r.limit ? `<div class="fd-w"><span><i style="width:${used}%"></i></span>${used}%</div><div class="ticker">${amt(r.invested)} of ${amt(r.limit)}</div>` : "—"}</td>
         <td>${r.addBelow ? `Add ${amt(r.addAmount)} below ${px(r.addBelow)}<div class="ticker">${fin(r.distanceToAdd) ? `${r.distanceToAdd > 0 ? `${r.distanceToAdd}% away` : "reached"}` : ""}</div>` : r.addAmount ? `Add ${amt(r.addAmount)}` : "—"}</td>
         <td>${sig(r)}</td>
-        <td class="sw-acts"><button type="button" class="ghost" data-act="sell" title="Sell / book profit">Sell</button><button type="button" class="ghost" data-act="buy" title="Bought more">Buy</button><button type="button" class="ghost" data-act="lots" title="Buys: dates, quantities and prices">📒</button><button type="button" class="ghost" data-act="edit" title="Edit">✎</button><button type="button" class="ghost danger-text" data-act="del" title="Remove">✕</button></td></tr>${evRow(r)}`;
+        <td class="sw-acts"><button type="button" class="ghost ai-btn" data-ask-ai="My ${esc(r.symbol)} swing position: book profit, hold, add or cut? Use the hold-or-sell numbers, targets, stop, trend and any results / dividend coming up." data-ask-sym="${esc(r.symbol)}" data-ask-where="Swing trading" title="Ask AI about this position">✨</button><button type="button" class="ghost sw-decide-btn" data-decide="${esc(r.id)}" title="Hold or sell? Compare selling now, holding to the dividend / results, and booking part with a stop">⚖</button><button type="button" class="ghost" data-act="sell" title="Sell / book profit">Sell</button><button type="button" class="ghost" data-act="buy" title="Bought more">Buy</button><button type="button" class="ghost" data-act="lots" title="Buys: dates, quantities and prices">📒</button><button type="button" class="ghost" data-act="edit" title="Edit">✎</button><button type="button" class="ghost danger-text" data-act="del" title="Remove">✕</button></td></tr>${evRow(r)}`;
     }).join("") : `<tr><td colspan="12" class="nw-empty-row">No swing positions yet. <button type="button" class="linklike" data-go="paste">Paste them from your sheet</button> or add one.</td></tr>`;
-    $("#swWatchNote").textContent = v.watch.length ? `${v.watch.filter(w => w.status === "deploy").length} at your buy level now` : "";
-    $("#swWatchRows").innerHTML = v.watch.length ? [...v.watch].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || (a.distance ?? 999) - (b.distance ?? 999)).map(w => `<tr class="sw-row ${(SIG[w.status] || [])[1] || ""}" data-id="${esc(w.id)}" data-sym="${esc(w.symbol)}">
+    renderDips(v.watch.filter(w => w.list === "dip"));
+    const watchList = v.watch.filter(w => w.list !== "dip");
+    $("#swWatchNote").textContent = watchList.length ? `${watchList.filter(w => w.status === "deploy").length} at your buy level now` : "";
+    $("#swWatchRows").innerHTML = watchList.length ? [...watchList].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || (a.distance ?? 999) - (b.distance ?? 999)).map(w => `<tr class="sw-row ${(SIG[w.status] || [])[1] || ""}" data-id="${esc(w.id)}" data-sym="${esc(w.symbol)}">
         <td><div class="company">${esc(w.name)}</div><div class="ticker">${esc(w.symbol)}${w.notes ? ` · ${esc(w.notes)}` : ""}</div>${w.upcoming?.length ? `<div class="sw-up">${upChips(w)}</div>` : ""}${w.idea ? `<div class="ticker">💡 ${esc(w.idea.label)}${w.stopLoss ? ` · SL ${px(w.stopLoss)}` : ""}${w.idea.t1 ? ` · T1 ${px(w.idea.t1)}` : ""}</div>` : w.stopLoss ? `<div class="ticker">SL ${px(w.stopLoss)}</div>` : ""}</td>
         <td class="num"><b>${px(w.price)}</b>${fin(w.dayPct) ? `<div class="ticker ${cls(w.dayPct)}">${pct(w.dayPct)} today</div>` : ""}</td>
         <td class="num">${w.buyBelow ? px(w.buyBelow) : '<span class="hint">not set</span>'}</td>
@@ -71,6 +73,79 @@
     $("#swClosedSum").textContent = v.closed.length ? `${v.closed.length} trade${v.closed.length === 1 ? "" : "s"}, ${sg(v.realised.pnl)}` : "none yet";
     $("#swClosedRows").innerHTML = v.closed.map(c => `<tr><td><div class="company">${esc(c.name)}</div><div class="ticker">${esc(c.symbol)}</div></td><td class="num">${c.qty}</td><td class="num">${px(c.buyAvg)}</td><td class="num">${px(c.sellPrice)}</td><td class="num ${cls(c.pnl)}">${sg(c.pnl)} <small>${pct(c.pnlPct)}</small></td><td>${new Date(c.closedAt).toLocaleDateString("en-IN")}</td>
       <td class="sw-acts"><button type="button" class="ghost${c.review ? " reviewed" : ""}" data-tact="review" data-tid="${esc(c.id)}" title="${c.review ? "Reviewed: " + esc((c.review.mistakes || []).map(m => sw.journal?.mistakes?.[m] || m).join(", ") || c.review.note || "") : "Journal: what went right or wrong"}">📝${c.review ? "✓" : ""}</button><button type="button" class="ghost" data-tact="reopen" data-tid="${esc(c.id)}" title="Closed by mistake: put the ${c.qty} shares back into positions">↩ Reopen</button><button type="button" class="ghost danger-text" data-tact="delete-trade" data-tid="${esc(c.id)}" title="Delete this record only">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="nw-empty-row">Sells you record appear here with their profit.</td></tr>`;
+  }
+  // Buy-the-dip list: one price per stock (or several rungs), how far it still has to fall, and a bulk buy for the ones that got there
+  function renderDips(dips) {
+    const reached = dips.filter(w => w.status === "deploy"), near = dips.filter(w => w.status === "near-deploy");
+    const need = reached.reduce((a, w) => a + (w.amount || 0), 0);
+    $("#swDipNote").textContent = dips.length ? `${reached.length} of ${dips.length} reached${near.length ? ` · ${near.length} close` : ""}` : "";
+    const b = $("#swDipBuy"); b.disabled = !reached.length; b.textContent = reached.length ? `Bulk buy reached (${reached.length})` : "Bulk buy reached"; b.classList.toggle("primary", !!reached.length);
+    $("#swDipCash").textContent = reached.length && need ? `${amt(need)} to deploy${fin(sw.totals.cash) ? ` · swing cash ${amt(sw.totals.cash)}${sw.totals.cash < need ? " (short)" : ""}` : ""}` : "";
+    const sorted = [...dips].sort((a, x) => (a.distance ?? 999) - (x.distance ?? 999));
+    $("#swDipRows").innerHTML = sorted.length ? sorted.map(w => {
+      const d = w.distance, fall = fin(d) ? Math.max(0, d) : null, bar = fin(fall) ? Math.max(4, 100 - Math.min(100, fall * 5)) : 0; // 0% away = full bar, 20%+ away = nearly empty
+      const qty = w.amount && w.buyBelow ? Math.floor(w.amount / Math.min(w.buyBelow, w.price || w.buyBelow)) : null;
+      const st = w.status === "deploy" ? '<b class="buy">✓ Reached: buy</b>' : w.status === "near-deploy" ? '<span class="sw-dip-near">Close</span>' : w.price == null ? '<span class="hint">no price yet</span>' : '<span class="hint">Waiting</span>';
+      return `<tr class="sw-row ${w.status === "deploy" ? "dp" : w.status === "near-deploy" ? "near" : ""}" data-id="${esc(w.id)}" data-sym="${esc(w.symbol)}">
+        <td><div class="company">${esc(w.name)}</div><div class="ticker">${esc(w.symbol)}${w.notes ? ` · ${esc(w.notes)}` : ""}${w.stopLoss ? ` · SL ${px(w.stopLoss)}` : ""}</div>${w.upcoming?.length ? `<div class="sw-up">${upChips(w)}</div>` : ""}</td>
+        <td class="num"><b>${px(w.price)}</b>${fin(w.dayPct) ? `<div class="ticker ${cls(w.dayPct)}">${pct(w.dayPct)} today</div>` : ""}</td>
+        <td class="num"><b>${px(w.buyBelow)}</b></td>
+        <td>${fin(d) ? (d <= 0 ? `<div class="sw-dip-bar done"><i style="width:100%"></i></div><span class="ticker buy">${Math.abs(d).toFixed(1)}% below your level</span>` : `<div class="sw-dip-bar"><i style="width:${bar}%"></i></div><span class="ticker">needs −${fall.toFixed(1)}% (${px(w.price - w.buyBelow)})</span>`) : "—"}</td>
+        <td class="num">${w.amount ? amt(w.amount) : '<span class="hint">not set</span>'}</td>
+        <td class="num">${qty ? `${qty}` : "—"}</td>
+        <td>${st}</td>
+        <td class="sw-acts">${w.status === "deploy" ? '<button type="button" class="ghost" data-act="dipbuy" title="Record this buy">Buy</button>' : ""}<button type="button" class="ghost" data-act="wedit" title="Change the level or amount">✎</button><button type="button" class="ghost danger-text" data-act="del" title="Remove">✕</button></td></tr>`;
+    }).join("") : `<tr><td colspan="8" class="nw-empty-row">Write your levels in one go, like <i>TCS below 2100, INFY below 1000, HCL below 1200</i>. <button type="button" class="linklike" data-go="dip">Add dip levels</button></td></tr>`;
+  }
+  async function dipAddDialog() {
+    let rows = null;
+    const out = await window.ui.dialog({
+      title: "Add buy-the-dip levels", icon: "📉", okText: "Add to the list", wide: true,
+      message: "One line or many: the stock, then the price to buy below, and optionally how much to put in. Short names work (HDFC, HCL, SBI, L&T). Two levels for the same stock make a ladder.",
+      bodyHtml: `<textarea class="ui-input sw-paste sw-dip-text" name="text" rows="4" placeholder="TCS below 2100, INFY below 1000, HCL below 1200, VBL below 400, HDFC below 680&#10;Bajaj Finance under 6500 for 2L"></textarea>
+        <div class="nw-form" style="margin-top:8px">${field("Amount per stock when not written (e.g. 1L)", "amount", sw.settings?.dipAmount ? `${sw.settings.dipAmount / 1e5}L` : "", 'placeholder="e.g. 1L"')}</div>
+        <div class="toolbar" style="margin:8px 0 0"><button type="button" class="ghost" data-read>Read</button><span class="ui-hint" data-st></span></div><div class="sw-preview" data-prev></div>`,
+      onOpen: (box, { setError }) => {
+        box.querySelector("[data-read]").onclick = async () => {
+          setError(""); box.querySelector("[data-st]").textContent = "Reading…";
+          try {
+            rows = (await api("/api/swing/dip-parse", { text: box.querySelector("[name=text]").value })).rows;
+            box.querySelector("[data-st]").textContent = `${rows.length} stock${rows.length === 1 ? "" : "s"}. Check the symbols:`;
+            box.querySelector("[data-prev]").innerHTML = `<table class="sw-prev"><thead><tr><th>You wrote</th><th>NSE symbol</th><th>Buy below (₹)</th><th>Amount</th></tr></thead><tbody>${rows.map((r, i) => `<tr><td>${esc(r.typed)}</td><td><input class="ui-input" data-i="${i}" list="dipOpt${i}" value="${esc(r.symbol || "")}" placeholder="symbol?"><datalist id="dipOpt${i}">${(r.options || []).map(o => `<option value="${esc(o.symbol)}">${esc(o.name)}</option>`).join("")}</datalist><div class="ticker">${esc(r.name || "")}${r.how === "not found" ? ' <span class="avoid">not found</span>' : r.how === "short name" ? " · short name" : ""}</div></td><td><input class="ui-input" data-p="${i}" inputmode="decimal" value="${r.buyBelow}"></td><td><input class="ui-input" data-a="${i}" value="${r.amount ? `${r.amount / 1e5}L` : ""}" placeholder="default"></td></tr>`).join("")}</tbody></table>`;
+          } catch (e) { setError(e.message); box.querySelector("[data-st]").textContent = ""; }
+        };
+      },
+      collect: async box => {
+        if (!rows) { box.querySelector("[data-read]").click(); throw new Error('Check the symbols below, then press "Add to the list".'); }
+        box.querySelectorAll("[data-i]").forEach(inp => { rows[Number(inp.dataset.i)].symbol = inp.value.trim().toUpperCase(); });
+        box.querySelectorAll("[data-p]").forEach(inp => { rows[Number(inp.dataset.p)].buyBelow = inp.value.trim(); });
+        box.querySelectorAll("[data-a]").forEach(inp => { rows[Number(inp.dataset.a)].amount = inp.value.trim() || null; });
+        const bad = rows.filter(r => !r.symbol); if (bad.length) throw new Error(`Type the NSE symbol for: ${bad.map(r => r.typed).join(", ")}`);
+        return api("/api/swing/dip-add", { rows: rows.map(r => ({ symbol: r.symbol, name: r.how === "not found" ? r.symbol : r.name, exchange: "NSE", buyBelow: r.buyBelow, amount: r.amount })), amount: box.querySelector("[name=amount]").value });
+      }
+    });
+    if (out) { sw = out; render(); if (out.notice) window.toast?.(out.notice, { kind: "ok", ms: 6000 }); }
+  }
+  // Bought several dips together: quantity from the amount at today's price, all editable; each becomes a swing position
+  async function bulkBuyDialog(list) {
+    if (!list.length) return;
+    const qty0 = w => (w.amount && w.price ? Math.max(1, Math.floor(w.amount / w.price)) : "");
+    const out = await window.ui.dialog({
+      title: list.length === 1 ? `Bought ${list[0].name} on the dip` : `Bulk buy: ${list.length} dips`, icon: "🛒", okText: "Record buys", wide: true,
+      message: "Place the orders at your broker, then record what you bought. Untick any you skipped. Each becomes a swing position (or adds to the one you hold) with your usual targets.",
+      bodyHtml: `<div class="sw-bulk-wrap"><table class="sw-prev sw-bulk"><thead><tr><th></th><th>Stock</th><th class="num">Level</th><th class="num">LTP</th><th>Qty</th><th>Price (₹)</th><th class="num">Cost</th></tr></thead><tbody>${list.map(w => `<tr data-row="${esc(w.id)}"><td><input type="checkbox" data-on checked></td><td><b>${esc(w.symbol)}</b><div class="ticker">${esc(w.name)}</div></td><td class="num">${px(w.buyBelow)}</td><td class="num">${px(w.price)}</td><td><input class="ui-input" data-q inputmode="numeric" value="${qty0(w)}"></td><td><input class="ui-input" data-pr inputmode="decimal" value="${w.price ?? w.buyBelow}"></td><td class="num" data-cost></td></tr>`).join("")}</tbody><tfoot><tr><td></td><td colspan="5"><b>Total</b></td><td class="num" data-total></td></tr></tfoot></table></div>
+        <div class="nw-form" style="margin-top:8px">${dateField("Bought on")}</div><label class="hint sw-keep"><input type="checkbox" name="keep"> Keep these levels on the list (to buy again if it falls further)</label><p class="ui-hint" data-cashnote></p>`,
+      onOpen: box => {
+        const upd = () => { let t = 0; box.querySelectorAll("[data-row]").forEach(tr => { const on = tr.querySelector("[data-on]").checked, c = Number(tr.querySelector("[data-q]").value) * Number(tr.querySelector("[data-pr]").value); tr.querySelector("[data-cost]").textContent = on && c > 0 ? amt(c) : "—"; tr.style.opacity = on ? "" : 0.45; if (on && c > 0) t += c; }); box.querySelector("[data-total]").textContent = amt(t); box.querySelector("[data-cashnote]").textContent = fin(sw.totals.cash) ? `Swing cash ${amt(sw.totals.cash)}${t > sw.totals.cash ? `: ${amt(t - sw.totals.cash)} short` : ` → ${amt(sw.totals.cash - t)} left after these`}` : ""; };
+        box.addEventListener("input", upd); box.addEventListener("change", upd); upd();
+      },
+      collect: box => {
+        const items = [...box.querySelectorAll("[data-row]")].filter(tr => tr.querySelector("[data-on]").checked).map(tr => ({ id: tr.dataset.row, qty: tr.querySelector("[data-q]").value, price: tr.querySelector("[data-pr]").value }));
+        if (!items.length) throw new Error("Tick at least one stock.");
+        return api("/api/swing/bulk-buy", { items, date: box.querySelector("[name=date]").value, keep: box.querySelector("[name=keep]").checked });
+      }
+    });
+    if (out) { sw = out; render(); if (out.notice) window.toast?.(out.notice, { kind: "ok", ms: 7000 }); }
   }
   function journalHtml(j) {
     if (!j?.total) return "";
@@ -245,6 +320,32 @@
     });
     if (out) { sw = out; render(); window.toast?.(side === "sell" ? "Sale recorded." : "Buy recorded.", { kind: "ok", ms: 3000 }); }
   }
+  // ---- Hold or sell? ----
+  async function decideDialog(p) {
+    if (!p) return;
+    let d; try { d = await api("/api/swing/decide", { id: p.id }); } catch (e) { window.toast?.(e.message, { kind: "error" }); return; }
+    const money = v => (v >= 0 ? inr(v) : `−${inr(-v)}`);
+    const card = (s, lean) => `<div class="dz-card${s.key === lean ? " lean" : ""}"><h4>${s.key === lean ? "👉 " : ""}${esc(s.title)}</h4>
+      ${s.key === "lt" ? `<div class="dz-nums"><div><span>Tax saved</span><b class="buy">${inr(s.saved)}</b></div></div>`
+        : `<div class="dz-nums">${fin(s.keepNow) && s.key === "split" ? `<div><span>Booked today</span><b>${money(s.keepNow)}</b></div>` : ""}<div><span>${s.key === "sell" ? "You keep" : "If the price holds"}</span><b class="${cls(s.typical)}">${money(s.typical)}</b></div>${s.key !== "sell" ? `<div><span>${s.key === "split" ? "Worst case (stop hit)" : "Bad week (−2σ)"}</span><b class="${cls(s.worst)}">${money(s.worst)}</b></div><div><span>Good week (+1σ)</span><b class="${cls(s.best)}">${money(s.best)}</b></div>` : ""}</div>`}
+      <ul>${s.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>
+      ${s.key === "split" ? `<div class="dz-acts"><button type="button" class="primary" data-dz="sell" data-q="${s.partQty}">Sell ${s.partQty} now…</button><button type="button" class="ghost" data-dz="stop" data-sl="${s.stop}">Set stop-loss ₹${s.stop.toLocaleString("en-IN")} + alert</button></div>` : s.key === "sell" ? `<div class="dz-acts"><button type="button" class="ghost" data-dz="sell" data-q="${d.facts.qty}">Sell all ${d.facts.qty}…</button></div>` : ""}</div>`;
+    const f = d.facts;
+    await window.ui.dialog({ title: `Hold or sell? ${d.name}`, icon: "⚖", okText: "Close", hideCancel: true, wide: true,
+      message: `${f.qty} shares at ${px(f.avgPrice)}, now ${px(f.price)}: ${sg(f.gainNow)} before costs, ${sg(f.netNow)} after STT, charges and tax if sold today.`,
+      bodyHtml: `<div class="dz-lean ${d.lean}"><b>${esc(d.headline)}</b><ul>${d.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>
+        <div class="dz-grid">${d.scenarios.map(s => card(s, d.lean)).join("")}</div>
+        <p class="vs-fine">Moves use this stock's own daily swings over the last 3 months (${f.volPct}% a day${f.volEstimated ? ", estimated" : ""}) for ${f.tradingDays} trading days: ±${f.movePct}% is a normal outcome (about 2 in 3), −${Math.round(f.movePct * 2 * 10) / 10}% a bad one (about 1 in 20). Dividend taxed at your ${f.slabPct}% slab (change it in ⚙ Settings). After STT, charges, STCG/LTCG and cess. A rule-based comparison to help you decide, not investment advice; the market can move more than this.</p>`,
+      onOpen: (box, { setError }) => box.querySelectorAll("[data-dz]").forEach(b => { b.onclick = async () => {
+        if (b.dataset.dz === "sell") { box.closest(".ui-scrim")?.querySelector('[data-ui="ok"]')?.click(); tradeDialog({ ...p, sellNow: Number(b.dataset.q) }, "sell"); return; }
+        try { // stop-loss on the position, and a price alert at the same level
+          const sl = Number(b.dataset.sl);
+          sw = await api("/api/swing/position", { id: p.id, symbol: p.symbol, name: p.name, exchange: p.exchange, qty: p.qty, avgPrice: p.avgPrice, limit: p.limit || "", addAmount: p.addAmount || "", addBelow: p.addBelow || "", targets: p.ownTargets ? p.targets.map(t => t.pct).join(",") : "", stopLoss: sl, bookPlan: p.ownPlan ? p.bookPlan.join(",") : "", notes: p.notes || "" });
+          await api("/api/rules/save", { symbol: p.symbol, type: "below", value: sl, note: "stop-loss from Hold or sell?" }).catch(() => {});
+          render(); b.textContent = `✓ Stop-loss ₹${sl.toLocaleString("en-IN")} set, alert on`; b.disabled = true;
+        } catch (e) { setError(e.message); }
+      }; }) });
+  }
   // ---- Journal: review of a sale (what went right or wrong) ----
   function reviewFields(t) {
     const ms = sw?.journal?.mistakes || {}, have = new Set(t?.review?.mistakes || []);
@@ -375,9 +476,10 @@
         ${field("Deploy when down this % (stocks without an add level)", "dipPct", sw.settings.dipPct, 'inputmode="decimal"')}
         ${field("Risk per trade (% of swing cash lost if the stop is hit)", "riskPct", sw.settings.riskPct ?? 1, 'inputmode="decimal"')}${field("Max per trade (₹, e.g. 2L)", "perTrade", sw.settings.perTrade ? `${sw.settings.perTrade / 1e5}L` : "2L")}
         ${field("LTCG exemption already used elsewhere this year (₹)", "ltUsedElsewhere", sw.taxInfo?.ltUsedElsewhere || "", 'placeholder="0"')}${field("DP charge per stock sold (₹)", "dpPerSale", sw.taxInfo?.charges?.dpPerSale ?? 15.34, 'inputmode="decimal"')}
-        ${field("Cash set aside for swing (₹, e.g. 5L; blank = don't track)", "cash", fin(sw.totals.cash) ? sw.totals.cash : "", 'placeholder="e.g. 5L"')}</div>
+        ${field("Cash set aside for swing (₹, e.g. 5L; blank = don't track)", "cash", fin(sw.totals.cash) ? sw.totals.cash : "", 'placeholder="e.g. 5L"')}
+        ${field("Your income-tax slab % (for dividends; e.g. 30)", "slabPct", sw.settings.slabPct ?? 30, 'inputmode="decimal"')}</div>
         <p class="ui-hint">The Targets column shows the price and the shares to sell at each level; you get an alert at T1, T2 and T3. Booking plan examples: <b>33, 33, 34</b> = a third at each target · <b>50, 50</b> = half at T1, the rest at T2 · <b>25, 25</b> = half in two steps, keep the rest as a runner. Cash goes down when you record a buy and up when you record a sale.</p>`,
-      collect: box => api("/api/swing/settings", { targets: [0, 1, 2].map(i => box.querySelector(`[name=t${i}]`).value.trim()).filter(Boolean).join(","), bookPlan: box.querySelector("[name=bookPlan]").value, dipPct: box.querySelector("[name=dipPct]").value, riskPct: box.querySelector("[name=riskPct]").value, perTrade: box.querySelector("[name=perTrade]").value, ltUsedElsewhere: box.querySelector("[name=ltUsedElsewhere]").value, dpPerSale: box.querySelector("[name=dpPerSale]").value, cash: box.querySelector("[name=cash]").value })
+      collect: box => api("/api/swing/settings", { targets: [0, 1, 2].map(i => box.querySelector(`[name=t${i}]`).value.trim()).filter(Boolean).join(","), bookPlan: box.querySelector("[name=bookPlan]").value, slabPct: box.querySelector("[name=slabPct]").value, dipPct: box.querySelector("[name=dipPct]").value, riskPct: box.querySelector("[name=riskPct]").value, perTrade: box.querySelector("[name=perTrade]").value, ltUsedElsewhere: box.querySelector("[name=ltUsedElsewhere]").value, dpPerSale: box.querySelector("[name=dpPerSale]").value, cash: box.querySelector("[name=cash]").value })
     });
     if (out) { sw = out; render(); loadIdeas(); }
   }
@@ -387,6 +489,8 @@
     $("#swAddPos").onclick = () => editPosition();
     $("#swAddWatch").onclick = () => editWatch();
     $("#swPaste").onclick = pasteDialog;
+    $("#swDipAdd").onclick = () => dipAddDialog();
+    $("#swDipBuy").onclick = () => bulkBuyDialog(sw.watch.filter(w => w.list === "dip" && w.status === "deploy"));
     $("#swSettings").onclick = () => settingsDialog();
     $("#swTaxCalc").onclick = () => taxCalculator();
     $("#swIdeasScan").onclick = () => loadIdeas(true);
@@ -401,6 +505,7 @@
     $("#swRefresh").onclick = () => load(false, true);
     $("#swingView").addEventListener("click", async e => {
       if (e.target.closest('[data-go="paste"]')) { pasteDialog(); return; }
+      if (e.target.closest('[data-go="dip"]')) { dipAddDialog(); return; }
       if (e.target.closest('[data-go="pat"]')) { patDialog(); return; }
       const nt = e.target.closest("[data-tax]"); if (nt) { const p = sw.positions.find(x => x.id === nt.dataset.tax); if (p) window.ui.dialog({ title: `${p.name}: if you sold all ${p.qty} now`, icon: "🧮", okText: "Close", hideCancel: true, wide: true, bodyHtml: taxTable(p.ifSold), collect: () => true }); return; }
       if (e.target.closest('[data-go="cash"]')) { settingsDialog("cash"); return; }
@@ -415,9 +520,10 @@
         if (ok) { try { sw = await api(`/api/swing/${tb.dataset.tact}`, { id: t.id }); render(); window.toast?.(reopen ? `${t.name} reopened.` : "Trade deleted.", { kind: "ok" }); } catch (err) { window.toast?.(err.message, { kind: "error" }); } }
         return;
       }
+      const dz = e.target.closest("[data-decide]"); if (dz) { decideDialog(sw.positions.find(x => x.id === dz.dataset.decide)); return; }
       const btn = e.target.closest("[data-act]"), tr = e.target.closest("tr[data-id]"); if (!btn || !tr) return;
       const id = tr.dataset.id, p = sw.positions.find(x => x.id === id), w = sw.watch.find(x => x.id === id), act = btn.dataset.act;
-      if (act === "edit") editPosition(p); else if (act === "wedit") editWatch(w); else if (act === "sell" || act === "buy") tradeDialog(p, act); else if (act === "bought") boughtDialog(w); else if (act === "lots") lotsDialog(p);
+      if (act === "edit") editPosition(p); else if (act === "wedit") editWatch(w); else if (act === "sell" || act === "buy") tradeDialog(p, act); else if (act === "bought") boughtDialog(w); else if (act === "dipbuy") bulkBuyDialog([w]); else if (act === "lots") lotsDialog(p);
       else if (act === "del" && await window.ui.confirm({ title: `Remove ${(p || w).name}?`, message: p ? "Only the swing tracking is removed; nothing changes at your broker. Use Sell to record a sale instead." : "It is removed from the swing watchlist.", okText: "Remove", danger: true })) { sw = await api("/api/swing/delete", { id }); render(); }
     });
   });

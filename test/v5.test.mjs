@@ -176,3 +176,63 @@ test("journal: setup kept on the position and the trade; stats by setup and by m
   assert.deepEqual(j.bySetup.map(s => [s.key, s.pnl]), [["breakout", 60], ["pullback", -40]]);
   assert.equal(j.byMistake[0].key, "no-stop"); assert.equal(j.earlyExits.missedToT1, 40);
 });
+
+test("hold or sell: INFY with ₹57k profit and a dividend in 10 days leans to booking part with a stop", async () => {
+  const { decideHoldSell, dailyVol } = await import("../decide.mjs");
+  const closes = Array.from({ length: 61 }, (_, i) => 1000 * Math.exp(0.015 * Math.sin(i * 1.3)));
+  assert.ok(dailyVol(closes) > 0.005 && dailyVol(closes) < 0.03);
+  const d = decideHoldSell({ qty: 300, avgPrice: 1029, price: 1219, lots: [{ qty: 300, price: 1029, at: "2026-06-10T04:00:00Z" }], today: "2026-10-17",
+    dividend: { amount: 23, date: "2026-10-27", days: 10 }, results: null, vol: 0.015, health: { state: "strong", trail: 1170 },
+    targets: [{ n: 1, pct: 10, price: 1131.9, sellQty: 99 }, { n: 2, pct: 20, price: 1234.8, sellQty: 99 }], planQty: 99, slabPct: 30 });
+  assert.equal(d.lean, "split");
+  const [A, B, C] = d.scenarios;
+  assert.equal(A.key, "sell"); assert.ok(A.keep > 40000 && A.keep < 57000, `after tax ${A.keep}`);
+  assert.ok(B.typical < A.keep, "holding for the dividend keeps a little less (price drop + slab tax)");
+  assert.ok(B.worst < A.keep - 15000, "a bad week costs far more than the dividend");
+  assert.equal(C.partQty, 99); assert.equal(C.stop, 1170); assert.ok(C.worst > A.keep * 0.75, `worst ${C.worst} vs ${A.keep}`);
+  assert.ok(d.why.some(w => /smaller than a normal/.test(w)));
+  assert.ok(B.notes.some(n => /more tax than selling now/.test(n)));
+  // weak trend → book now; long-term date close → mentioned
+  assert.equal(decideHoldSell({ qty: 300, avgPrice: 1029, price: 1219, lots: [{ qty: 300, price: 1029, at: "2025-11-01T04:00:00Z" }], today: "2026-10-17", vol: 0.015, health: { state: "weak", trail: 1170 }, targets: [], slabPct: 30 }).lean, "sell");
+  const lt = decideHoldSell({ qty: 300, avgPrice: 1029, price: 1219, lots: [{ qty: 300, price: 1029, at: "2025-11-01T04:00:00Z" }], today: "2026-10-17", vol: 0.015, health: { state: "strong", trail: 1170 }, targets: [], slabPct: 30 });
+  assert.ok(lt.scenarios.some(s => s.key === "lt" && s.saved > 3000));
+});
+
+test("loss-making companies are valued on sales and a path to profit", async () => {
+  const { computeValuation } = await import("../valuation.mjs");
+  const { classify } = await import("../classify.mjs");
+  const { impliedGrowth, fairMcap } = await import("../growthstage.mjs");
+  const today = new Date().toISOString().slice(0, 10);
+  const ather = computeValuation({ id: 1, company: "Ather", marketSymbol: "ATHERENERG", price: 1470 }, { price: 1470, asOf: today, marketCap: 58318, salesTtm: 2900, salesGrowth: 30, salesGrowthYears: 3, sector: "Consumer Discretionary", industry: "Two Wheelers", sectorPe: 34.4, opmLatest: -12, opmPrev: -40, niTtm: -700, investments: 1500, borrowings: 600 });
+  assert.equal(ather.basis, "P/S"); assert.ok(ather.growthStage.ps > 19 && ather.growthStage.ps < 21);
+  assert.ok(ather.growthStage.impliedGrowth > ather.growthStage.growth + 20, "price needs far more growth than delivered");
+  assert.ok(["Rich", "Very rich"].includes(ather.view)); assert.match(classify(ather).label, /premium/);
+  assert.ok(ather.reasons.some(r => /Operating margin -12% \(was -40%\): improving/.test(r)));
+  // a fast grower at a modest price-to-sales comes out cheap
+  const z = computeValuation({ id: 2, company: "Z", marketSymbol: "Z", price: 50 }, { price: 50, asOf: today, marketCap: 45000, salesTtm: 6000, salesGrowth: 60, sector: "Consumer Discretionary", industry: "E-Retail/ E-Commerce", sectorPe: 40, niTtm: -300, investments: 12000 });
+  assert.equal(z.view, "Undervalued"); assert.equal(classify(z).key, "buy"); assert.ok(z.growthStage.impliedGrowth < 60);
+  // implied growth really does reproduce the market cap
+  const ig = impliedGrowth({ mcap: 45000, sales: 6000, margin: 7, pe: 35, cash: 12000 });
+  assert.ok(Math.abs(fairMcap({ sales: 6000, g0: ig, margin: 7, pe: 35, cash: 12000 }) - 45000) < 50);
+  // no sales history: still "can't value"
+  assert.equal(computeValuation({ id: 3, company: "X", marketSymbol: "X", price: 10 }, { price: 10, asOf: today, marketCap: 100 }).view, "Unassessable");
+  // a profitable company is unchanged (P/E route)
+  assert.equal(computeValuation({ id: 4, company: "P", marketSymbol: "P", price: 100 }, { price: 100, asOf: today, pe: 20, salesCagr3: 12, roce: 18, marketCap: 1000, salesTtm: 500 }).basis, "P/E");
+});
+
+test("Screener: a consolidated page with a price but blank statements falls back; quarterly sales give the last 12 months", async () => {
+  const { hasFigures, parseScreener } = await import("../screener.mjs");
+  const top = `<ul id="top-ratios"><li><span class="name">Current Price</span><span class="number">1,470</span></li><li><span class="name">Market Cap</span><span class="number">58,318</span></li><li><span class="name">Stock P/E</span><span class="number"></span></li></ul>`;
+  const tbl = (id, heads, rows) => `<section id="${id}"><table><thead><tr><th></th>${heads.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${Object.entries(rows).map(([k, v]) => `<tr><td>${k}</td>${v.map(x => `<td>${x}</td>`).join("")}</tr>`).join("")}</tbody></table></section>`;
+  const blank = top + tbl("profit-loss", ["Mar 2024", "Mar 2025"], { Sales: ["", ""] }) + tbl("balance-sheet", ["Mar 2024", "Mar 2025"], { Borrowings: ["", ""] });
+  assert.equal(hasFigures(blank), false, "price alone is not enough");
+  const q = ["Sep 2024", "Dec 2024", "Mar 2025", "Jun 2025", "Sep 2025", "Dec 2025", "Mar 2026", "Jun 2026"];
+  const html = top + tbl("quarters", q, { Sales: [480, 520, 580, 600, 640, 700, 760, 800], "OPM %": ["-30%", "-25%", "-20%", "-18%", "-15%", "-12%", "-10%", "-8%"], "Net Profit": [-200, -180, -170, -160, -150, -140, -120, -100] })
+    + tbl("profit-loss", ["Mar 2022", "Mar 2023", "Mar 2024", "Mar 2025"], { Sales: [400, 1780, 1754, 2255], "OPM %": ["-60%", "-40%", "-45%", "-20%"], "Net Profit": [-344, -865, -1060, -812] })
+    + tbl("balance-sheet", ["Mar 2024", "Mar 2025"], { Borrowings: [500, 600], Reserves: [100, 2000], Investments: [300, 1500] });
+  assert.equal(hasFigures(html), true);
+  const { entry } = parseScreener(html, { marketSymbol: "ATHERENERG" });
+  assert.equal(entry.salesTtm, 2900); assert.equal(entry.niTtm, -510); assert.equal(entry.opmLatest, -8); assert.equal(entry.opmPrev, -40); assert.equal(entry.investments, 1500);
+  assert.ok(entry.salesGrowth > 30 && entry.salesGrowth < 70); assert.equal(entry.pe, undefined);
+  assert.match(entry.flags, /valued on sales/);
+});

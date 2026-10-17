@@ -1,0 +1,297 @@
+{
+  "at": "2026-10-17T13:36:50.460Z",
+  "node": "v22.22.0",
+  "endpoints": {
+    "/api/stocks": {
+      "cold": 23,
+      "p50": 7,
+      "p95": 9,
+      "kb": 71,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/valuation": {
+      "cold": 23,
+      "p50": 14,
+      "p95": 25,
+      "kb": 154,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/holdings": {
+      "cold": 23,
+      "p50": 13,
+      "p95": 17,
+      "kb": 85,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/swing": {
+      "cold": 1537,
+      "p50": 17,
+      "p95": 44,
+      "kb": 38,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/swing/summary": {
+      "cold": 16,
+      "p50": 17,
+      "p95": 20,
+      "kb": 1,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/networth": {
+      "cold": 1527,
+      "p50": 15,
+      "p95": 23,
+      "kb": 13,
+      "status": 200,
+      "budget": {
+        "warm": 400,
+        "cold": 3000
+      }
+    },
+    "/api/mf": {
+      "cold": 3,
+      "p50": 3,
+      "p95": 4,
+      "kb": 2,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/us/holdings": {
+      "cold": 2,
+      "p50": 2,
+      "p95": 3,
+      "kb": 2,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/us?list=mine": {
+      "cold": 2,
+      "p50": 3,
+      "p95": 4,
+      "kb": 0,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/events/upcoming": {
+      "cold": 4,
+      "p50": 3,
+      "p95": 4,
+      "kb": 0,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/returns": {
+      "cold": 2023,
+      "p50": 14,
+      "p95": 24,
+      "kb": 4,
+      "status": 200,
+      "budget": {
+        "warm": 500,
+        "cold": 4000
+      }
+    },
+    "/api/alerts": {
+      "cold": 8,
+      "p50": 7,
+      "p95": 13,
+      "kb": 5,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/lists": {
+      "cold": 5,
+      "p50": 3,
+      "p95": 4,
+      "kb": 1,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/prices/status": {
+      "cold": 3,
+      "p50": 2,
+      "p95": 3,
+      "kb": 0,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/tax": {
+      "cold": 15,
+      "p50": 9,
+      "p95": 12,
+      "kb": 14,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/dividend-income": {
+      "cold": 4,
+      "p50": 2,
+      "p95": 3,
+      "kb": 0,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/accumulate": {
+      "cold": 6,
+      "p50": 5,
+      "p95": 16,
+      "kb": 0,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/rules": {
+      "cold": 1,
+      "p50": 1,
+      "p95": 1,
+      "kb": 1,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/model": {
+      "cold": 25,
+      "p50": 21,
+      "p95": 30,
+      "kb": 10,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/portfolio/focus": {
+      "cold": 14,
+      "p50": 14,
+      "p95": 26,
+      "kb": 15,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/ai/status": {
+      "cold": 5,
+      "p50": 1,
+      "p95": 6,
+      "kb": 1,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/ai/preview": {
+      "cold": 38,
+      "p50": 33,
+      "p95": 35,
+      "kb": 12,
+      "status": 200,
+      "budget": {
+        "warm": 600,
+        "cold": 3000
+      }
+    },
+    "/api/indices": {
+      "cold": 3,
+      "p50": 2,
+      "p95": 5,
+      "kb": 3,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/market/week": {
+      "cold": 13,
+      "p50": 4,
+      "p95": 6,
+      "kb": 1,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/indices/view?name=NIFTY500%20QUALITY%2050": {
+      "cold": 4003,
+      "p50": 1,
+      "p95": 4,
+      "kb": 0,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 5000
+      }
+    }
+  },
+  "static": {
+    "/": {
+      "p95": 2,
+      "budget": 120
+    },
+    "/app.js": {
+      "p95": 2,
+      "budget": 120
+    },
+    "/styles.css": {
+      "p95": 15,
+      "budget": 120
+    },
+    "totalCompressedKb": 657
+  },
+  "stream": 3
+}

@@ -53,6 +53,27 @@ export function parsePrice(v) {
   return m ? Number(m[1]) * (m[2] ? 1000 : 1) : null;
 }
 
+// Buy-the-dip list typed or pasted in one go: "TCS below 2100, infy below 1000, hcl below 1200 2L, VBL < 400 hdfc 680".
+// Returns [{ name, buyBelow, amount }]; names are resolved to NSE symbols by the server (DIP_ALIASES first).
+export const DIP_ALIASES = { HDFC: "HDFCBANK", "HDFC BANK": "HDFCBANK", HCL: "HCLTECH", "HCL TECH": "HCLTECH", SBI: "SBIN", ICICI: "ICICIBANK", "ICICI BANK": "ICICIBANK", AXIS: "AXISBANK", "AXIS BANK": "AXISBANK", KOTAK: "KOTAKBANK", "KOTAK BANK": "KOTAKBANK", AIRTEL: "BHARTIARTL", "BHARTI AIRTEL": "BHARTIARTL", RIL: "RELIANCE", "L&T": "LT", LNT: "LT", HUL: "HINDUNILVR", "BAJAJ FINANCE": "BAJFINANCE", "BAJAJ FINSERV": "BAJAJFINSV", "ASIAN PAINTS": "ASIANPAINT", "SUN PHARMA": "SUNPHARMA", "TATA MOTORS": "TATAMOTORS", "TATA STEEL": "TATASTEEL", "TECH MAHINDRA": "TECHM", INFOSYS: "INFY", "VARUN BEVERAGES": "VBL", MAHINDRA: "M&M", "M AND M": "M&M", "DR REDDY": "DRREDDY", "ADANI PORTS": "ADANIPORTS", "ADANI ENT": "ADANIENT", "POWER GRID": "POWERGRID", "COAL INDIA": "COALINDIA", "HERO": "HEROMOTOCO", "EICHER": "EICHERMOT", "PERSISTENT": "PERSISTENT", "LTIM": "LTIM", "MINDTREE": "LTIM", "ZOMATO": "ETERNAL", "PAYTM": "PAYTM", "NYKAA": "NYKAA", "DMART": "DMART", "PIDILITE": "PIDILITIND", "BRITANNIA": "BRITANNIA", "NESTLE": "NESTLEIND", "TITAN": "TITAN", "ULTRATECH": "ULTRACEMCO" };
+export function parseDipText(text) {
+  const out = [], seen = new Set();
+  const src = String(text || "").replace(/\r/g, "").slice(0, 5000);
+  const re = /([A-Za-z][A-Za-z0-9&.'\- ]*?)\s*(?:below|under|less than|<=?|@|at|:|=|->|–|-)?\s*(?:rs\.?|₹|inr)?\s*(\d[\d,]*(?:\.\d+)?\s*k?)(?![\d.])(?:\s*(?:for|amt|amount|of|with|,)?\s*(?:rs\.?|₹)?\s*(\d+(?:\.\d+)?\s*(?:l|lac|lacs|lakh|lakhs|cr|crore|k)\b))?/gi;
+  for (const m of src.matchAll(re)) {
+    let name = m[1].replace(/\s+/g, " ").trim();
+    for (let i = 0; i < 4; i++) name = name.replace(/^(and|or|say|e\.?g\.?|etc\.?|buy|then|also|plus|when|if|is|stock)\b\s*/i, "").trim();
+    name = name.replace(/\s+(below|under|at|is|for)$/i, "").trim();
+    if (!name || /^(etc|and|rs|l|k|cr)$/i.test(name) || name.length > 40) continue;
+    const buyBelow = parsePrice(m[2]); if (!buyBelow) continue;
+    let amount = m[3] ? parseAmount(m[3].replace(/\s+/g, "")) : null;
+    // "2100 2L" read as price 2100 + amount 2L; "2100k"-style typos are left to the preview
+    const key = `${name.toUpperCase()}@${buyBelow}`; if (seen.has(key)) continue; seen.add(key);
+    out.push({ name, buyBelow, amount });
+  }
+  return out.slice(0, 60);
+}
+
 // Buy lots, oldest first (for FIFO tax on sales). Older positions without lots count as one lot at the average price.
 export function lotsOf(p) {
   const l = Array.isArray(p.lots) ? p.lots.filter(x => x.qty > 0) : [];
@@ -81,7 +102,9 @@ export function sanitizeWatch(b = {}, prev = null) {
   if (!/^[A-Z0-9&-]{1,20}$/.test(symbol)) throw new Error("Pick the stock (NSE symbol).");
   const buyBelow = parsePrice(b.buyBelow), amount = parseAmount(b.amount), stopLoss = b.stopLoss === undefined ? prev?.stopLoss ?? null : parsePrice(b.stopLoss);
   const idea = b.idea === undefined ? prev?.idea ?? null : (b.idea && typeof b.idea === "object" ? { setup: txt(b.idea.setup, 20), label: txt(b.idea.label, 60), t1: parsePrice(b.idea.t1), t2: parsePrice(b.idea.t2), at: new Date().toISOString() } : null);
-  return { id: prev?.id || id(), symbol, exchange: b.exchange === "BSE" ? "BSE" : "NSE", name: txt(b.name, 80) || prev?.name || symbol, buyBelow, amount, stopLoss, idea, notes: txt(b.notes, 200) || null, addedAt: prev?.addedAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const list = b.list === undefined ? prev?.list ?? null : b.list === "dip" ? "dip" : null;
+  if (list === "dip" && !buyBelow) throw new Error(`${symbol}: set the price to buy below.`);
+  return { id: prev?.id || id(), symbol, exchange: b.exchange === "BSE" ? "BSE" : "NSE", name: txt(b.name, 80) || prev?.name || symbol, list, buyBelow, amount, stopLoss, idea, notes: txt(b.notes, 200) || null, addedAt: prev?.addedAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
 }
 // Buy more: new average price. Sell: smaller position plus a closed-trade record.
 // Buying more starts a new booking cycle (targets move with the new average).
@@ -189,7 +212,7 @@ export function diffSwingAlerts(prev = {}, view, { now = Date.now(), events = []
     const prevLevel = /^(take-profit|riding)(?::(\d))?$/.test(prev[key] || "") ? Number(prev[key].split(":")[1] || 1) : 0;
     if (r.status === "take-profit" && r.hitLevel > prevLevel && !recent(`${key}:tp${r.hitLevel}`)) { const t = r.targets[r.hitLevel - 1]; fresh.push({ type: "swing-profit", swingKey: `${key}:tp${r.hitLevel}`, symbol: r.symbol, company: r.name, price: r.price, at: new Date(now).toISOString(), read: false, title: `🎯 ${r.name} hit T${t.n} (+${t.pct}%, ₹${t.price}): now ₹${r.price}, sell ${r.sellNow}?`, detail: r.note }); }
     if (r.status === "stop-hit" && !recent(`${key}:sl`)) fresh.push({ type: "swing-stop", swingKey: `${key}:sl`, symbol: r.symbol, company: r.name, price: r.price, at: new Date(now).toISOString(), read: false, title: `🛑 ${r.name} hit your stop-loss ₹${r.stopLoss}: now ₹${r.price}`, detail: r.note });
-    if (r.status === "deploy" && !recent(`${key}:dp`)) fresh.push({ type: "swing-deploy", swingKey: `${key}:dp`, symbol: r.symbol, company: r.name, price: r.price, at: new Date(now).toISOString(), read: false, title: `💰 ${r.name} at ₹${r.price}: time to deploy`, detail: r.note });
+    if (r.status === "deploy" && !recent(`${key}:dp`)) fresh.push({ type: "swing-deploy", swingKey: `${key}:dp`, symbol: r.symbol, company: r.name, price: r.price, at: new Date(now).toISOString(), read: false, title: r.list === "dip" ? `📉 ${r.name} dipped to ₹${r.price}: at your buy-the-dip level ₹${r.buyBelow}` : `💰 ${r.name} at ₹${r.price}: time to deploy`, detail: r.note });
   }
   return { next, fresh };
 }
@@ -370,7 +393,7 @@ export function ltExemptionLeft(closed = [], usedElsewhere = 0, today = new Date
 }
 
 // ---- Trade journal: setup and reason when you buy, a short review when you sell; results by setup and by mistake ----
-export const SETUPS = { pullback: "Pullback to support", breakout: "Breakout", bounce: "Oversold bounce", "value-turn": "Value turn", "golden-cross": "Golden cross + RSI", momentum: "Momentum", "results-play": "Results play", dividend: "Dividend play", other: "Other" };
+export const SETUPS = { dip: "Buy the dip (my price)", pullback: "Pullback to support", breakout: "Breakout", bounce: "Oversold bounce", "value-turn": "Value turn", "golden-cross": "Golden cross + RSI", momentum: "Momentum", "results-play": "Results play", dividend: "Dividend play", other: "Other" };
 export const MISTAKES = { "sold-early": "Sold too early", "held-long": "Held too long / ignored target", "no-stop": "No stop-loss / ignored it", oversized: "Position too big", chased: "Chased the entry", "off-plan": "Didn't follow my plan", "news-shock": "News / results surprise", none: "No mistake" };
 export function sanitizeReview(b = {}) {
   const mistakes = (Array.isArray(b.mistakes) ? b.mistakes : []).filter(m => MISTAKES[m]).slice(0, 5);

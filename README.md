@@ -1,5 +1,89 @@
 # Equity Watchlist MVP
 
+## v5.6.1: what changed — remove US holdings in one go
+
+US stocks → My US holdings: each account (Vested, INDmoney, …) shows as a chip with its holdings count and value and a **Remove all** button, plus **🗑 Remove all** for every US holding at once (with a confirmation). Imported and hand-added holdings are deleted; INDmoney's synced ones are kept out of the app, Net worth and Ask AI until you press **Show again** (otherwise the next sync would bring them back). Nothing changes at your broker.
+
+## v5.6.0: what changed — 📅 Market pulse (key indices, top gainers and losers of the week)
+
+At the top of **Market today**: Nifty 50, Sensex, Bank Nifty, Nifty Next 50, Midcap 150, Smallcap 250, Nifty 500 and Nifty IT with their level and change **today / this week / this month**, and the **top 10 gainers and losers** for the same period among the Nifty 500 (or Nifty 50, every stock trading ₹5 Cr+ a day, or only your own stocks). ＋ adds a stock to your watchlist.
+
+How: NSE publishes every stock's closing price each evening (the "bhavcopy"); the app now keeps the last ~5 weeks of these for the whole market (fetched once in the background, then one file each evening) and compares today's close with the one 5 (week) or 21 (month) trading days earlier. Index levels come from NSE's daily index file and live index data in market hours; Sensex (BSE) from Yahoo. Pages never wait for these downloads (checked by `npm run perf`).
+
+## v5.5.0: what changed — 🧠 Smart indices
+
+A new screen (menu → **Smart indices**) that opens any NSE index and lists every stock in it: broad indices (Nifty 50, Next 50, 100, Midcap 150, Smallcap 250, 500), smart-beta indices (Nifty500 Quality 50, Nifty200 Momentum 30, Nifty500 Momentum 50, Nifty100 / Nifty200 / Midcap150 Quality, Alpha 50, Value 50 / 30, Low Volatility 30, Dividend Opportunities 50, Alpha Low-Volatility 30) and every other NSE index from a drop-down (sector and thematic ones too).
+
+For each stock: price, today / 1-month / 1-year change, distance from the 52-week high, index weight, this app's valuation (fair value, upside, P/E) where it has the fundamentals, whether you hold it or already watch it, and a **smart score** (0–100: valuation 35%, quality 20%, momentum within the index 30%, trend 15%; hover to see why). Filters: Smart score 70+, Undervalued, Momentum leaders, Pullback in uptrend, Near 52-week low, Not in my watchlist, I hold. The header shows what the index picks, how much of it you already own and its sector mix.
+
+Tick stocks and **Add to watchlist** (to any list) in one go; they are valued in the background. **Value the rest** fetches fundamentals for the index's stocks the app has not valued yet (largest first). **✨ Ask AI: best picks here** asks Claude for a shortlist (it can read any index's table through a new tool). Lists come from NSE's live index data (cached, refreshed every 15 minutes in market hours); if NSE is blocked, import the index's constituents CSV from niftyindices.com.
+
+Performance check: both new APIs are in `npm run perf` (repeat calls well under budget; the first-ever load of an index waits at most 4 s for NSE, then answers from cache).
+
+## v5.4.0: what changed — ✨ Ask AI (Claude with your own key) and a performance check on every release
+
+**✨ Ask AI**, on every screen (bottom-right button, also ✨ on each swing position, "Ask AI about my dips" on the dip list, and "Ask AI: buy X?" on a valued stock). Claude sees your long-term holdings with their valuation and stance, swing positions with targets / stops / trend / upcoming results and dividends, your buy-the-dip list and swing watchlist, US stocks, mutual funds, the net-worth mix and the next 30 days of events. While answering it can look up, through the app, one stock's valuation and technicals, the "Hold or sell?" numbers for a swing position, and today's swing setups. One-tap questions: review my swing trades, which dips to buy, best swing setups this week, portfolio check-up, where to put ₹1 L, and "book or wait for the dividend?" when one is coming. Answers stream in; conversations are kept in your account (last 30).
+
+Setup: Ask AI → ⚙ → paste your key from console.anthropic.com. It is checked with Anthropic, then stored **encrypted** (AES-256-GCM) on your server for your login only, never sent back to the browser and left out of backups. Pick the model (Sonnet 5.5 default, Opus 5.5 deepest, Haiku 5.5 cheapest) and a monthly token limit.
+
+Privacy: the request goes from your server straight to Anthropic's API. It carries a summary of your portfolio (👁 "see exactly what" shows it) and your question; never account names, client IDs, broker logins, PAN, email or folio numbers, and nothing of other users. "Amounts as % only" mode drops quantities and rupee values. Anthropic's commercial API terms say API data is not used for training by default; check their current retention policy.
+
+**Performance check (`npm run perf`, `npm run check`).** Runs the app on a throw-away account (108-stock watchlist, holdings, swing, dips, US, funds) with every outside site hanging and fails when any page's API is slow or got slower than the saved baseline. It caught and fixed in this release: Net worth, US holdings and the US list waiting 1.5 s on every load for US prices / the USD rate, Returns waiting 15 s on every load for index history, and Mutual funds waiting for the AMFI file; all now answer from saved data in milliseconds and refresh in the background. Current numbers: every page's API answers repeat calls in under 50 ms (p95), first calls under 2.1 s with sites down.
+
+## v5.3.0: what changed — buy-the-dip list, US holdings (INDmoney, Vested), mutual funds from anywhere
+
+**Swing trading → 📉 Buy-the-dip list.** A separate list of "buy below" levels, typed in one go: `TCS below 2100, INFY below 1000, HCL below 1200, VBL below 400, HDFC below 680` (short names work: HDFC → HDFCBANK, HCL → HCLTECH, SBI, L&T, HUL…; add `for 2L` after a level for a different amount; two levels for the same stock make a ladder). Each row shows the live price, the fall still needed (bar + % + ₹), the amount, the shares it buys at the level, and upcoming dividends / results. You get an alert (and Telegram, if set) when a stock reaches its level. **Bulk buy reached** records every stock that got there in one go: quantity from the amount at today's price, all editable, total against your swing cash; each becomes a swing position tagged "Buy the dip" (or adds to the one you hold), optionally keeping the level for a further dip.
+
+**US stocks → 💼 My US holdings.** INDmoney's sync already carried US stocks; they now show here, re-priced live in dollars. Vested (no personal API) and any other US broker: import the holdings statement (CSV / Excel with Symbol, Quantity, Average price) or paste `AAPL 10 150.25` lines; importing again replaces that account. Invested, current value and P/L in ₹ and $ at today's USD/INR (Yahoo `USDINR=X`, every 30 min); add what you paid in rupees for an exact rupee P/L. Held stocks are also valued in "My US list". All of it flows into Net worth (international).
+
+**🧺 Mutual funds (new screen).** Every fund in one table with invested, current value and P/L, valued daily at the official AMFI NAV: Zerodha Coin and INDmoney funds from their sync, funds held directly with the AMC (Axis, Quant…) from the **CAMS / KFintech CAS PDF** (one statement for every fund house; password = your PAN, used once and never stored), a CSV (Scheme / ISIN, Units, Invested), or **+ Add a fund** (search by name, type units and invested). A fund that a broker sync already brings is counted once. Net worth and the stocks look-through include them.
+
+New dependency: `pdfjs-dist` (reads the CAS PDF; loaded only when a PDF is imported). New optional settings: `AMFI_NAV_URL`, `STOOQ_BASE`.
+
+## v5.2.0: what changed — valuing companies that are not profitable yet (Ather, Swiggy, Meesho…)
+
+Loss-making companies have no P/E, so they showed "Can't value yet". They now get a **growth-stage valuation**
+(`growthstage.mjs`):
+
+- **Price-to-sales** on the last 12 months' sales (from the quarterly results).
+- **Path to profit:** sales grow at the company's recent rate, slowing steadily to 12% over 10 years; by then it earns
+  a mature net margin for its kind of business (e-commerce 7%, autos/EV 8%, healthcare / energy 12%, software 15%…),
+  valued at its sector's P/E (capped 15–35) and discounted back at 14% a year, plus half its net cash. Bear and bull
+  cases change the growth and margin. That gives a fair value, a buy zone and the usual Undervalued … Very rich view.
+- **Implied growth:** the sales growth today's price needs, shown next to what the company has actually delivered.
+  Well above its record = you are paying a premium; below = the market expects a slowdown (possible value).
+- Operating margin trend (improving / worsening), net cash and how many years of the current loss it covers.
+- Verdicts: "Loss-making: priced below its growth path (speculative buy)", "…fairly priced for its growth", or
+  "…paying a premium (price needs ~X% growth)". Always marked low confidence; the stock card has a **Path to profit**
+  panel with the two growth bars and every assumption.
+
+Also fixed: for companies that publish no consolidated accounts, Screener shows a consolidated page with a price but
+blank statements; the app now notices and reads the standalone page (Ather's sales, borrowings and book value were
+blank). Loss-making stocks saved before this version are re-fetched automatically to pick up the sales figures.
+
+## v5.1.1: what changed — Invested and Current value on My holdings
+
+- My holdings: new **Invested** (quantity × average cost) and **Current value** columns, and tiles for both at the top
+  with **Profit / loss** in rupees and %. Totals compare like with like: holdings without a price yet are left out of
+  both and the tile says how many.
+- Profit is bold green and loss bold red in the table and the tiles (both themes); P/L shows +₹ / −₹.
+- Holdings imported without an "invested" figure now get it from quantity × average cost (they showed ₹0 before).
+
+## v5.1.0: what changed — "Hold or sell?" for every swing position
+
+A **⚖ Hold or sell?** button on each swing position (and in its results / dividend line) compares, with your own numbers:
+
+- **Sell all now:** what you keep after STT, charges, STCG/LTCG and cess.
+- **Hold to the ex-dividend date (or results) and sell after:** the dividend shown for what it is (the price drops by
+  about the same on the ex-date, and it is taxed at your income slab, set in ⚙ Settings), plus the risk of waiting:
+  a normal and a bad move over those days, from the stock's own daily swings.
+- **Sell part now, keep the rest with a stop:** booked today, worst case if the stop is hit, and the upside; the stop is
+  the trailing stop (2 ATR / 20-day low) or target 1. One click sets it as the position's stop-loss and a price alert.
+- **Wait for long-term rates** when some shares turn 12 months old within 45 days: the tax saved.
+
+Each view ends with a rule-based lean ("book now", "book part and protect the rest", "hold with your stop") and why.
+It is a comparison to help you decide, not investment advice.
+
 ## v5.0.0: what changed — events and decisions, true returns, your own alerts, digests, backups
 
 **Swing page: a decision under each stock.** Upcoming results, dividends, bonuses and splits for each position, with

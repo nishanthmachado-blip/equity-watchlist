@@ -42,7 +42,67 @@
     clearTimeout(poll); if (data.pending && !$("#usView").hidden) poll = setTimeout(load, 4000);
   }
   async function load() { try { data = await api(`/api/us?list=${list}`); render(); } catch (e) { $("#usStatus").textContent = e.message; } }
-  window.openUs = load;
+  window.openUs = () => { load(); loadHold(); };
+
+  // ---- my US holdings (INDmoney sync, Vested / broker statements, by hand) ----
+  let hold = null;
+  const fin = Number.isFinite;
+  const inr = v => !fin(v) ? "—" : Math.abs(v) >= 1e7 ? `₹${(v / 1e7).toFixed(2)} Cr` : Math.abs(v) >= 1e5 ? `₹${(v / 1e5).toFixed(2)} L` : `₹${Math.round(v).toLocaleString("en-IN")}`;
+  const sgn = (v, f) => !fin(v) ? "—" : `${v >= 0 ? "+" : "−"}${f(Math.abs(v))}`;
+  const usd2 = v => fin(v) ? `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—";
+  const pl = v => (v > 0 ? "pl-up" : v < 0 ? "pl-dn" : "");
+  const fileB64 = f => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.onerror = () => bad(new Error("Could not read the file.")); r.readAsDataURL(f); });
+  async function loadHold() { try { hold = await api("/api/us/holdings"); renderHold(); } catch (e) { $("#usHoldStatus").textContent = e.message; } }
+  function renderHold() {
+    const v = hold; if (!v) return;
+    const t = v.totals, rows = v.rows;
+    $("#usHoldNote").textContent = v.fx ? `$1 = ₹${v.fx}` : rows.length ? "USD/INR rate not available yet" : "";
+    $("#usHoldCards").innerHTML = rows.length ? [["Invested", inr(t.investedInr), usd2(t.investedUsd), ""], ["Current value", inr(t.valueInr), usd2(t.valueUsd), ""], ["P/L", sgn(t.pnlInr, inr), `${sgn(t.pnlUsd, usd2)}${t.investedUsd ? ` · ${(t.pnlUsd / t.investedUsd * 100).toFixed(1)}%` : ""}`, pl(t.pnlInr)], ["Holdings", String(t.count), t.unpriced.length ? `${t.unpriced.length} without a price` : "all priced", ""]]
+      .map(([k, a, b, c]) => `<div class="metric"><span>${k}</span><strong class="${c}">${a}</strong><small class="hint">${b}</small></div>`).join("") : "";
+    $("#usHoldRows").innerHTML = rows.length ? rows.map(r => `<tr data-hid="${esc(r.id || "")}" data-key="${esc(r.key)}">
+      <td><div class="company">${esc(r.name || r.symbol || "")}</div><div class="ticker">${esc(r.symbol || "no ticker")}${fin(r.dayPct) ? ` · <span class="${pl(r.dayPct)}">${r.dayPct > 0 ? "+" : ""}${r.dayPct}% today</span>` : ""}</div></td>
+      <td class="num">${fin(r.qty) ? r.qty : "—"}</td><td class="num">${usd2(r.avgUsd)}</td>
+      <td class="num"><b>${usd2(r.price)}</b>${r.stale ? '<div class="ticker">synced value</div>' : ""}</td>
+      <td class="num">${inr(r.investedInr)}<div class="ticker">${fin(r.investedUsd) ? usd2(r.investedUsd) : ""}${r.investedInrAtToday ? " · at today's ₹" : ""}</div></td>
+      <td class="num"><b>${inr(r.valueInr)}</b><div class="ticker">${usd2(r.valueUsd)}</div></td>
+      <td class="num ${pl(r.pnlInr ?? r.pnlUsd)}"><b>${sgn(r.pnlInr, inr)}</b><div class="ticker">${fin(r.pnlUsd) ? `${sgn(r.pnlUsd, usd2)} · ${r.pnlPct > 0 ? "+" : ""}${r.pnlPct}%` : ""}</div></td>
+      <td>${esc(r.account)}<div class="ticker">${r.source === "sync" ? "synced" : r.source === "manual" ? "by hand" : "imported"}</div></td>
+      <td class="sw-acts">${r.id ? `<button type="button" class="ghost" data-hact="edit" title="Edit">✎</button><button type="button" class="ghost danger-text" data-hact="del" title="Remove">✕</button>` : ""}</td></tr>`).join("")
+      : `<tr><td colspan="9" class="nw-empty-row">No US holdings yet. Connect INDmoney (they arrive with its sync) or import your Vested statement.</td></tr>`;
+    const inr0 = x => `₹${Math.round(x || 0).toLocaleString("en-IN")}`;
+    $("#usHoldAccts").innerHTML = [...(v.accounts || []).map(a => `<span class="us-acct">${esc(a.account)} <small>${a.source === "sync" ? "synced" : "imported"} · ${a.count} holding${a.count === 1 ? "" : "s"} · ${inr0(a.valueInr)}</small><button type="button" class="ghost danger-text" data-rm-acct="${esc(a.source === "sync" ? a.accountId : a.account)}" data-src="${a.source}" data-label="${esc(a.account)}" data-n="${a.count}">Remove all</button></span>`),
+      ...(v.hiddenAccounts || []).map(a => `<span class="us-acct off">${esc(a.account)} <small>synced · removed (${a.count})</small><button type="button" class="ghost" data-unhide="${esc(a.accountId)}">Show again</button></span>`)].join("");
+    $("#usHoldClear").hidden = !rows.length;
+    const st = []; if (v.priceErrors?.length && t.unpriced.length) st.push(`Some prices unavailable (${v.priceErrors[0]})`);
+    $("#usHoldStatus").textContent = st.join(" · ");
+  }
+  async function holdImport() {
+    let file = null;
+    const accts = [...new Set((hold?.rows || []).filter(r => r.source === "import").map(r => r.account))];
+    const out = await window.ui.dialog({
+      title: "Import US holdings", icon: "⬆", okText: "Import", wide: true,
+      message: "A holdings statement from Vested (or any US broker): CSV or Excel with Symbol, Quantity and Average price columns. Or paste lines like “AAPL 10 150.25” (ticker, shares, average price in $). Importing again replaces that account's list.",
+      bodyHtml: `<div class="nw-form"><label class="ui-field"><span>Account name</span><input class="ui-input" name="account" value="${esc(accts[0] || "Vested")}" list="usAccts"><datalist id="usAccts">${accts.map(a => `<option value="${esc(a)}">`).join("")}</datalist></label>
+        <label class="ui-field"><span>Statement file (CSV / Excel)</span><input class="ui-input" type="file" name="file" accept=".csv,.xlsx,.txt"></label></div>
+        <label class="ui-field"><span>…or paste</span><textarea class="ui-input sw-paste" name="text" rows="5" placeholder="AAPL 10 150.25&#10;MSFT 3.5 410&#10;VOO 2 480"></textarea></label>`,
+      onOpen: box => { box.querySelector("[name=file]").onchange = e => { file = e.target.files[0] || null; }; },
+      collect: async box => {
+        const account = box.querySelector("[name=account]").value.trim() || "Vested", text = box.querySelector("[name=text]").value;
+        if (!file && !text.trim()) throw new Error("Choose the statement file or paste the holdings.");
+        return api("/api/us/holdings/import", file ? { account, data: await fileB64(file), filename: file.name } : { account, text });
+      }
+    });
+    if (out) { hold = out; renderHold(); if (out.notice) window.toast?.(out.notice, { kind: "ok", ms: 6000 }); load(); }
+  }
+  async function holdEdit(r = null) {
+    const f = (l, n, v, a = "") => `<label class="ui-field"><span>${l}</span><input class="ui-input" name="${n}" value="${esc(v ?? "")}" ${a}></label>`;
+    const out = await window.ui.dialog({
+      title: r ? `Edit ${r.symbol || r.name}` : "Add a US holding", icon: "🇺🇸", okText: "Save", wide: true,
+      bodyHtml: `<div class="nw-form">${f("Ticker (e.g. AAPL, VOO)", "symbol", r?.symbol, 'autocapitalize="characters" autofocus')}${f("Shares (fractions are fine)", "qty", r?.qty, 'inputmode="decimal"')}${f("Average price paid ($ a share)", "avgUsd", r?.avgUsd, 'inputmode="decimal"')}${f("What you paid in ₹ (optional, for exact rupee P/L)", "investedInr", r?.investedInr, 'inputmode="decimal" placeholder="e.g. 1,25,000"')}${f("Account", "account", r?.account || "Vested")}</div>`,
+      collect: box => { const v = n => box.querySelector(`[name=${n}]`).value.trim(); return api("/api/us/holdings/save", { id: r?.id, symbol: v("symbol"), qty: v("qty"), avgUsd: v("avgUsd"), investedInr: v("investedInr"), account: v("account"), name: r?.name }); }
+    });
+    if (out) { hold = out; renderHold(); load(); }
+  }
 
   // ---- detail sheet ----
   function ensureSheet() {
@@ -105,6 +165,30 @@
   document.addEventListener("DOMContentLoaded", () => {
     if (!$("#usView")) return;
     $("#viewUs").onclick = () => setView("us");
+    $("#usHoldImport").onclick = () => holdImport();
+    $("#usHoldAdd").onclick = () => holdEdit();
+    $("#usHoldClear").onclick = async () => {
+      if (!await window.ui.confirm({ title: "Remove all US holdings?", message: `All ${hold?.rows?.length || 0} US holdings leave this app (and Net worth): imported and hand-added ones are deleted; INDmoney's synced ones are kept out of future syncs until you press Show again. Nothing changes at your broker.`, okText: "Remove all", danger: true })) return;
+      try { hold = await api("/api/us/holdings/delete", { all: true }); renderHold(); window.toast?.(hold.notice || "Removed.", { kind: "ok" }); load(); } catch (err) { window.toast?.(err.message, { kind: "error" }); }
+    };
+    $("#usHoldAccts").addEventListener("click", async e => {
+      const rm = e.target.closest("[data-rm-acct]"), un = e.target.closest("[data-unhide]");
+      try {
+        if (rm) {
+          const sync = rm.dataset.src === "sync";
+          if (!await window.ui.confirm({ title: `Remove all ${rm.dataset.label} holdings?`, message: sync ? `The ${rm.dataset.n} US holdings from the ${rm.dataset.label} sync are kept out of this app and Net worth until you press Show again. Nothing changes at your broker.` : `The ${rm.dataset.n} imported / hand-added holdings of ${rm.dataset.label} are deleted from this app. Nothing changes at your broker; you can import the statement again any time.`, okText: "Remove all", danger: true })) return;
+          hold = await api("/api/us/holdings/delete", sync ? { syncId: rm.dataset.rmAcct } : { account: rm.dataset.rmAcct });
+        } else if (un) hold = await api("/api/us/holdings/unhide", { syncId: un.dataset.unhide });
+        else return;
+        renderHold(); if (hold.notice) window.toast?.(hold.notice, { kind: "ok" }); load();
+      } catch (err) { window.toast?.(err.message, { kind: "error" }); }
+    });
+    $("#usHoldRows").addEventListener("click", async e => {
+      const b = e.target.closest("[data-hact]"), tr = e.target.closest("tr[data-hid]"); if (!b || !tr) return;
+      const r = hold.rows.find(x => x.id === tr.dataset.hid); if (!r) return;
+      if (b.dataset.hact === "edit") holdEdit(r);
+      else if (await window.ui.confirm({ title: `Remove ${r.symbol || r.name}?`, message: "Only removes it from this app.", okText: "Remove", danger: true })) { try { hold = await api("/api/us/holdings/delete", { id: r.id }); renderHold(); } catch (err) { window.toast?.(err.message, { kind: "error" }); } }
+    });
     $("#usList").addEventListener("click", e => { const b = e.target.closest("[data-list]"); if (b) { list = b.dataset.list; load(); } });
     $("#usRows").addEventListener("click", e => { const l = e.target.closest("[data-list]"); if (l) { list = l.dataset.list; load(); return; } const tr = e.target.closest("tr[data-sym]"); if (tr) openStock(tr.dataset.sym); });
     $("#usScreens").addEventListener("click", e => { const b = e.target.closest("[data-screen]"); if (b) { screen = b.dataset.screen; render(); } });

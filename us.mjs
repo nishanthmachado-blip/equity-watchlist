@@ -169,15 +169,15 @@ export async function fetchUsPrices(symbols, { fetchImpl = fetch } = {}) {
   for (let i = 0; i < want.length; i += 20) {
     const chunk = want.slice(i, i + 20);
     try {
-      const r = await fetchImpl(`https://stooq.com/q/l/?s=${chunk.map(s => `${s.toLowerCase()}.us`).join("+")}&f=sd2t2ohlcv&h&e=csv`, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": "Mozilla/5.0" } });
+      const r = await fetchImpl(`${(process.env.STOOQ_BASE || "https://stooq.com").replace(/\/+$/, "")}/q/l/?s=${chunk.map(s => `${s.toLowerCase()}.us`).join("+")}&f=sd2t2ohlcv&h&e=csv`, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": "Mozilla/5.0" } });
       if (r.ok) for (const [k, v] of parseStooq(await r.text())) out.set(k, v); else errors.push(`Stooq HTTP ${r.status}`);
     } catch (e) { errors.push(`Stooq: ${e.message}`); }
   }
   for (const s of want.filter(x => !out.has(x))) {
     try {
-      const r = await fetchImpl(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s)}?range=5d&interval=1d`, { signal: AbortSignal.timeout(12000), headers: { "User-Agent": "Mozilla/5.0" } });
+      const r = await fetchImpl(`${(process.env.YAHOO_CHART_BASE || "https://query1.finance.yahoo.com").replace(/\/+$/, "")}/v8/finance/chart/${encodeURIComponent(s)}?range=5d&interval=1d`, { signal: AbortSignal.timeout(12000), headers: { "User-Agent": "Mozilla/5.0" } });
       const m = r.ok ? (await r.json())?.chart?.result?.[0]?.meta : null;
-      if (m?.regularMarketPrice > 0) out.set(s, { price: m.regularMarketPrice, date: m.regularMarketTime ? new Date(m.regularMarketTime * 1000).toISOString().slice(0, 10) : null, high52: m.fiftyTwoWeekHigh || null, low52: m.fiftyTwoWeekLow || null, source: "Yahoo" });
+      if (m?.regularMarketPrice > 0) out.set(s, { price: m.regularMarketPrice, prevClose: m.chartPreviousClose || m.previousClose || null, date: m.regularMarketTime ? new Date(m.regularMarketTime * 1000).toISOString().slice(0, 10) : null, high52: m.fiftyTwoWeekHigh || null, low52: m.fiftyTwoWeekLow || null, source: "Yahoo" });
       else if (!r.ok) errors.push(`Yahoo ${s}: HTTP ${r.status}`);
     } catch (e) { errors.push(`Yahoo ${s}: ${e.message}`); }
   }

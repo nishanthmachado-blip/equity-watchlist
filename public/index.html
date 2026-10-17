@@ -10,10 +10,12 @@
       <button id="viewHome" class="viewTab active" title="Value a stock"><span class="ico" aria-hidden="true">🔎</span><span class="lbl">Value a stock</span></button>
       <button id="viewLists" class="viewTab" title="Watchlists"><span class="ico" aria-hidden="true">⭐</span><span class="lbl">Watchlists</span></button>
       <button id="viewMarket" class="viewTab" title="Market today"><span class="ico" aria-hidden="true">📈</span><span class="lbl">Market today</span></button>
+      <button id="viewIndices" class="viewTab" data-goto="indices" title="Smart indices"><span class="ico" aria-hidden="true">🧠</span><span class="lbl">Smart indices</span></button>
       <button id="viewUs" class="viewTab" title="US stocks"><span class="ico" aria-hidden="true">🇺🇸</span><span class="lbl">US stocks</span></button>
       <button id="viewDividends" class="viewTab" title="Dividend income planner"><span class="ico" aria-hidden="true">💰</span><span class="lbl">Dividend income planner</span></button>
       <p class="side-label">Your portfolio</p>
       <button id="viewNetworth" class="viewTab" title="Net worth"><span class="ico" aria-hidden="true">🏦</span><span class="lbl">Net worth</span></button>
+      <button id="viewMf" class="viewTab" data-goto="mf" title="Mutual funds"><span class="ico" aria-hidden="true">🧺</span><span class="lbl">Mutual funds</span></button>
       <button id="viewTax" class="viewTab" title="Tax view"><span class="ico" aria-hidden="true">🧾</span><span class="lbl">Tax view</span></button>
       <button id="viewPortfolio" class="viewTab" title="My holdings"><span class="ico" aria-hidden="true">📂</span><span class="lbl">My holdings</span></button>
       <button id="viewSwing" class="viewTab" title="Swing trading"><span class="ico" aria-hidden="true">⚡</span><span class="lbl">Swing trading</span></button>
@@ -178,6 +180,9 @@
       <div class="sw-legend"><span class="sw-dot tp"></span>Reached T1 / T2 / T3: plan to book profit <span class="sw-dot dp"></span>At or below your add level: deploy cash <span class="sw-dot near"></span>Getting close <span class="sw-dot rd"></span>Booked as planned, holding for the next target</div>
       <div class="nw-head"><h3>My swing positions</h3><span class="hint" id="swPosNote"></span></div>
       <section class="table-wrap"><table class="sw-table"><thead><tr><th>Stock</th><th class="num">Qty</th><th class="num">Avg price</th><th class="num">LTP</th><th class="num">Invested</th><th class="num">Value now</th><th class="num">P/L</th><th>Targets (sell price)</th><th>Limit used</th><th>Add plan</th><th>Signal</th><th></th></tr></thead><tbody id="swRows"></tbody></table></section>
+      <div class="nw-head sw-dip-head" style="margin-top:24px"><h3>📉 Buy-the-dip list <span class="hint">your price for each stock; bulk buy the ones that get there</span></h3><span class="hint" id="swDipNote"></span></div>
+      <div class="toolbar sw-dip-tools"><button type="button" class="ghost" id="swDipAdd">+ Add dip levels</button><button type="button" id="swDipBuy" disabled>Bulk buy reached</button><button type="button" class="ghost ai-btn" data-ask-ai="Look at my buy-the-dip list: which levels are value buys and which stocks look like falling knives? Should I change any level or amount? Rank them." data-ask-where="Buy-the-dip list">✨ Ask AI about my dips</button><span class="hint" id="swDipCash"></span></div>
+      <section class="table-wrap"><table class="sw-table sw-dip"><thead><tr><th>Stock</th><th class="num">LTP</th><th class="num">Buy below</th><th>Fall needed</th><th class="num">Amount</th><th class="num">Qty at level</th><th>Status</th><th></th></tr></thead><tbody id="swDipRows"></tbody></table></section>
       <div class="nw-head" style="margin-top:24px"><h3>Swing watchlist: stocks to deploy into</h3><span class="hint" id="swWatchNote"></span></div>
       <section class="table-wrap"><table class="sw-table sw-watch"><thead><tr><th>Stock</th><th class="num">LTP</th><th class="num">Buy below</th><th class="num">Distance</th><th class="num">Amount</th><th>Signal</th><th></th></tr></thead><tbody id="swWatchRows"></tbody></table></section>
       <section class="report-card sw-ideas" id="swIdeasBox">
@@ -218,7 +223,41 @@
         <p class="vs-fine" id="mdRules"></p>
       </div>
     </section>
+    <section id="idxView" data-feature-view="indices" hidden>
+      <p class="hint">Every stock inside an NSE index, with this app's valuation (where it has the fundamentals), momentum from the index data and a <b>smart score</b> that explains itself. Pick the good ones and add them to your watchlist in one go.</p>
+      <div class="idx-picker" id="idxPicker"></div>
+      <section class="report-card idx-head" id="idxHead"><p class="hint">Pick an index.</p></section>
+      <section class="toolbar idx-tools"><div class="idx-filters" id="idxFilters"></div><input id="idxQ" placeholder="Filter: name, symbol or industry" autocomplete="off" aria-label="Filter stocks"></section>
+      <section class="toolbar idx-acts"><button type="button" class="primary" id="idxAdd" disabled>＋ Add selected to watchlist</button><select id="idxList" class="ui-input" aria-label="Watchlist to add to"></select><button type="button" class="ghost" id="idxValue" title="Fetch fundamentals for the stocks this app has not valued yet (largest first)">📥 Value the rest</button><button type="button" class="ghost ai-btn" id="idxAsk">✨ Ask AI: best picks here</button><span class="hint" id="idxStatus" role="status"></span></section>
+      <section class="table-wrap idx-wrap"><table class="idx-table"><thead><tr><th><input type="checkbox" id="idxAll" aria-label="Select all shown"></th><th data-k="name">Stock</th><th class="num" data-k="price">Price</th><th class="num" data-k="pChange">Today</th><th class="num" data-k="ch30d">1M</th><th class="num" data-k="ch365d">1Y</th><th class="num" data-k="fromHigh">From 52w high</th><th class="num" data-k="weight">Weight</th><th data-k="val">Valuation</th><th data-k="score">Smart score</th><th></th></tr></thead><tbody id="idxRows"></tbody></table></section>
+      <details class="us-howto"><summary>How the smart score works</summary><p>Each part is scored 0–100 and weighted: <b>valuation</b> 35% (this app's fair value vs price: Undervalued 90 → Very rich 5), <b>quality</b> 20% (ROCE / ROE), <b>momentum</b> 30% (1-year return ranked inside this index, plus the last month), <b>trend</b> 15% (distance from the 52-week high, above or below the 200-day average). Parts the app does not know yet are left out and the score is marked <i>partial</i>: press <b>Value the rest</b> to fetch the missing fundamentals. Tags: <b>Undervalued</b>, <b>Momentum leader</b> (top 20% 1-year return, within 10% of the high), <b>Pullback</b> (up over the year, 10–25% off the high, trend intact), <b>Near 52w low</b> (falling: be careful).</p><p>Index lists and prices come from NSE (refreshed every 15 minutes in market hours). If NSE's site is blocked, download the index's constituents CSV from niftyindices.com and <button type="button" class="linklike" id="idxImport">import it here</button>.</p></details>
+    </section>
+    <section id="mfView" data-feature-view="mf" hidden>
+      <p class="hint">Every mutual fund you hold in one place, valued daily at the official AMFI NAV: Zerodha Coin and INDmoney funds arrive with their sync; funds held directly with the AMC (Axis, Quant, PPFAS…) or anywhere else come in from your <b>CAS statement</b> (one PDF from CAMS / KFintech covering every fund house) or can be added by hand. They also count in Net worth and the stocks look-through.</p>
+      <section class="metrics" id="mfCards"></section>
+      <section class="toolbar"><button type="button" class="primary" id="mfImport">⬆ Import CAS statement (PDF) or CSV</button><button type="button" class="ghost" id="mfAdd">+ Add a fund</button><span id="mfStatus" class="hint" role="status"></span></section>
+      <div id="mfDup"></div>
+      <section class="table-wrap"><table class="mf-table"><thead><tr><th>Fund</th><th class="num">Units</th><th class="num">Avg NAV</th><th class="num">NAV</th><th class="num">Invested</th><th class="num">Current value</th><th class="num">P/L</th><th>From</th><th></th></tr></thead><tbody id="mfRows"></tbody></table></section>
+      <details class="us-howto" id="mfHow"><summary>How to get your CAS (all funds, every fund house, 2 minutes)</summary>
+        <ol><li>Open <b>camsonline.com</b> → Investors → Statements → <b>CAS – CAMS+KFintech</b> (or <b>mfcentral.com</b> → Reports → CAS).</li>
+        <li>Choose <b>Detailed</b> (includes cost), period <b>Since inception</b> (or a specific period up to today), <b>with zero balance folios: No</b>, enter your email and PAN, and set a password (or it is your PAN in capitals).</li>
+        <li>The PDF arrives by email in a few minutes. Import it here with that password. It is read once on the server; the password and PAN are never stored.</li></ol>
+        <p>It covers funds bought anywhere: direct with Axis MF, INDmoney, Groww, Kuvera, a distributor. Funds that a broker sync already brings (Zerodha Coin, INDmoney) are counted once. Import a fresh CAS every few months to pick up new SIP units (NAVs update by themselves every day).</p>
+        <p><b>Without the CAS</b>: press <b>+ Add a fund</b>, pick the fund (e.g. “Axis ELSS Direct Growth”), and type the units and the amount invested from the AMC's app or statement. A CSV with columns <i>Scheme name (or ISIN), Units, Invested</i> works too.</p></details>
+    </section>
     <section id="usView" hidden>
+      <section class="report-card us-hold" id="usHold">
+        <div class="nw-head"><h3>💼 My US holdings <span class="hint">INDmoney · Vested · any US broker, in $ and ₹</span></h3><span class="hint" id="usHoldNote"></span></div>
+        <section class="metrics" id="usHoldCards"></section>
+        <div class="toolbar"><button type="button" class="primary" id="usHoldImport">⬆ Import Vested / broker statement</button><button type="button" class="ghost" id="usHoldAdd">+ Add a holding</button><button type="button" class="ghost danger-text" id="usHoldClear" hidden>🗑 Remove all</button><span id="usHoldStatus" class="hint" role="status"></span></div>
+        <div class="us-accts" id="usHoldAccts"></div>
+        <div class="table-wrap"><table class="us-hold-table"><thead><tr><th>Stock</th><th class="num">Shares</th><th class="num">Avg cost</th><th class="num">Price</th><th class="num">Invested</th><th class="num">Current value</th><th class="num">P/L</th><th>Account</th><th></th></tr></thead><tbody id="usHoldRows"></tbody></table></div>
+        <details class="us-howto"><summary>How to bring in INDmoney and Vested</summary>
+          <p><b>INDmoney</b>: Connect brokers → <b>INDmoney</b> (log in once). Its sync brings your Indian stocks, mutual funds <i>and</i> US stocks; the US ones appear here automatically and are re-priced live in dollars.</p>
+          <p><b>Vested</b>: Vested has no API for personal accounts. In the Vested app or website open <b>Portfolio → Holdings</b> and download the statement (or copy the table), then press <b>Import Vested / broker statement</b>. Any file with columns like <i>Symbol, Quantity, Average price</i> works (CSV or Excel), or type lines like <code>AAPL 10 150.25</code>. Importing again replaces that account's holdings.</p>
+          <p>Values in rupees use today's USD/INR rate. Add what you paid in rupees (✎) for an exact rupee P/L including the currency move; otherwise the rupee cost is your dollar cost at today's rate.</p>
+        </details>
+      </section>
       <p class="hint">US-listed companies valued from their SEC filings (10-K annual reports via SEC EDGAR, free and official) and the latest price (Stooq, else Yahoo). Fair value = average of a fair P/E for the company's growth and quality and a 10-year free-cash-flow DCF at 9%; it also shows the growth today's price already assumes. Prices and values in US dollars.</p>
       <section class="toolbar us-tools">
         <div class="us-search"><input id="usQ" placeholder="Add a US stock: ticker or company (e.g. AAPL, Costco)" autocomplete="off" aria-label="Search US stocks"><div id="usDrop" class="us-drop" hidden></div></div>
@@ -280,6 +319,11 @@
     </section>
 
     <section id="marketView" hidden>
+      <section class="report-card wk-card" id="wkBox">
+        <div class="nw-head"><h3>📅 Market pulse</h3><div class="wk-ctl"><div class="md-seg" id="wkPeriod"><button type="button" data-p="day">Today</button><button type="button" data-p="week" class="active">This week</button><button type="button" data-p="month">This month</button></div><select class="ui-input" id="wkUni" aria-label="Which stocks"><option value="nifty500">Nifty 500</option><option value="nifty50">Nifty 50</option><option value="all">All liquid stocks</option><option value="mine">My stocks</option></select></div></div>
+        <div class="wk-grid"><div><h4>Key indices</h4><div id="wkIdx"></div></div><div><h4>Top gainers <span class="hint" data-wk-p></span></h4><div id="wkUp"></div></div><div><h4>Top losers <span class="hint" data-wk-p></span></h4><div id="wkDown"></div></div></div>
+        <p class="vs-fine" id="wkNote"></p>
+      </section>
       <nav class="views sub mk-tabs" aria-label="Market list"><button type="button" class="viewTab active" data-mk="52high">52-week highs</button><button type="button" class="viewTab" data-mk="52low">52-week lows</button><button type="button" class="viewTab" data-mk="volume">Most active · volume</button><button type="button" class="viewTab" data-mk="value">Most active · value</button><button type="button" class="viewTab" data-mk="gainers">Top gainers</button><button type="button" class="viewTab" data-mk="losers">Top losers</button></nav>
       <section class="toolbar"><label class="lens-control">Source<select id="mkSource"><option value="mine">My watchlist + holdings (live quotes)</option><option value="nse">Whole market (NSE, often blocked)</option></select></label><label class="lens-control" id="mkMineWrap" hidden><input id="mkMine" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">Only stocks I track or hold</label><input id="mkSearch" placeholder="Filter by symbol or name" style="min-width:200px;flex:0"><button id="mkRefresh" type="button" class="ghost">Refresh</button><span id="mkStatus" class="hint"></span></section>
       <p id="mkNote" class="mk-note" hidden></p>
@@ -306,7 +350,7 @@
       <nav class="views sub pf-acc" id="pfAccTabs" aria-label="Broker account"></nav>
       <section class="metrics" id="pfCards" aria-label="Portfolio summary"></section>
       <section class="toolbar" id="pfFilters" aria-label="Filter holdings"></section>
-      <section class="table-wrap"><table><thead><tr><th>Stock</th><th>Qty</th><th>Avg cost</th><th>Price</th><th>P/E</th><th>Sector P/E</th><th>P/L</th><th>% of total</th><th>Verdict</th><th>Valuation</th><th>Fair value (base)</th><th>Buy zone</th><th>Status</th><th></th></tr></thead><tbody id="pfRows"></tbody></table></section>
+      <section class="table-wrap"><table><thead><tr><th>Stock</th><th>Qty</th><th>Avg cost</th><th>Price</th><th class="num">Invested</th><th class="num">Current value</th><th class="num">P/L</th><th>P/E</th><th>Sector P/E</th><th>% of total</th><th>Verdict</th><th>Valuation</th><th>Fair value (base)</th><th>Buy zone</th><th>Status</th><th></th></tr></thead><tbody id="pfRows"></tbody></table></section>
       <p class="hint" id="pfNote"></p>
       <details id="pfSetup" class="pf-setup"><summary><strong>Add or sync holdings</strong> <span class="hint">Kite, Angel One, Dhan, Groww, INDmoney CSV · add holdings to the watchlist</span></summary>
       <section class="report-grid two">
@@ -520,6 +564,10 @@
   <script src="swing.js"></script>
   <script src="us.js"></script>
   <script src="features.js"></script>
+  <script src="mf.js"></script>
+  <script src="indices.js"></script>
+  <script src="week.js"></script>
+  <script src="ai.js"></script>
   <script src="prices.js" defer></script>
 <script src="freshness.js"></script>
 </body></html>

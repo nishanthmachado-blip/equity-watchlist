@@ -1,4 +1,5 @@
 import { etfValuation } from "./etf.mjs";
+import { growthStageValuation } from "./growthstage.mjs";
 // Rule-based valuation view + buy zones. Pure functions, no I/O.
 // Every threshold lives in MODEL so it is easy to review and tweak. This is a transparent
 // heuristic, NOT a forecast or advice: output is only as good as the fundamentals fed in.
@@ -72,7 +73,10 @@ export function computeValuation(stock, f, now = Date.now()) {
     out.reasons.push(`Lender profile: P/B ${out.pb} vs fair ${round(fairMultiple, 2)} (ROE ${out.roe}%).`);
   } else {
     if (profile === "financial") out.reasons.push("Lender profile needs P/B and ROE; fell back to P/E rules.");
-    if (pe === null) return { ...out, view: "Unassessable", status: "Needs P/E", reasons: [...out.reasons, "P/E missing or non-positive (loss-making or no data); no earnings-based zone."] };
+    if (pe === null) { // loss-making: value on sales and a path to profit instead
+      const gsv = growthStageValuation(out, f, price, MODEL); if (gsv) return gsv;
+      return { ...out, view: "Unassessable", status: "Needs P/E", reasons: [...out.reasons, "P/E missing or non-positive (loss-making or no data), and no sales history to value it on sales instead."] };
+    }
     multiple = pe; basis = "P/E";
     if (profile === "cyclical") {
       const nl = num(f.niLatest), na = num(f.niAvg4);
@@ -142,8 +146,8 @@ export function computeAll(stocks, fundamentals, now = Date.now()) {
 }
 
 // ---- Fundamentals input -------------------------------------------------------------
-export const FIELDS = ["symbol", "companyName", "priceDate", "sector", "industry", "profile", "high52", "low52", "price", "pe", "pb", "roce", "roe", "promoter", "promoterChange3y", "salesCagr3", "profitCagr3", "borrowings", "reserves", "sectorPe", "cfoToProfit3", "fcfNegative", "debtorDays", "inventoryDays", "niLatest", "niAvg4", "marketCap", "thin", "nseRefreshedAt", "sectorPeSource", "asOf", "source", "flags", "etfType", "etfDevQ", "indexName", "dma50", "dma200", "devNow", "devPctile", "devDays", "cagr1", "cagr3", "cagr5", "histYears", "inav", "premium", "indexPe", "indexPb", "indexDy"];
-const NUMERIC = new Set(["high52", "low52", "price", "pe", "pb", "roce", "roe", "promoter", "promoterChange3y", "salesCagr3", "profitCagr3", "borrowings", "reserves", "sectorPe", "cfoToProfit3", "fcfNegative", "debtorDays", "inventoryDays", "niLatest", "niAvg4", "marketCap", "thin", "dma50", "dma200", "devNow", "devPctile", "devDays", "cagr1", "cagr3", "cagr5", "histYears", "inav", "premium", "indexPe", "indexPb", "indexDy"]);
+export const FIELDS = ["symbol", "companyName", "priceDate", "sector", "industry", "profile", "high52", "low52", "price", "pe", "pb", "roce", "roe", "promoter", "promoterChange3y", "salesCagr3", "profitCagr3", "borrowings", "reserves", "sectorPe", "cfoToProfit3", "fcfNegative", "debtorDays", "inventoryDays", "niLatest", "niAvg4", "marketCap", "thin", "nseRefreshedAt", "sectorPeSource", "asOf", "source", "flags", "etfType", "etfDevQ", "indexName", "dma50", "dma200", "devNow", "devPctile", "devDays", "cagr1", "cagr3", "cagr5", "histYears", "inav", "premium", "indexPe", "indexPb", "indexDy", "salesTtm", "salesGrowth", "salesGrowthYears", "opmLatest", "opmPrev", "niTtm", "investments"];
+const NUMERIC = new Set(["high52", "low52", "price", "pe", "pb", "roce", "roe", "promoter", "promoterChange3y", "salesCagr3", "profitCagr3", "borrowings", "reserves", "sectorPe", "cfoToProfit3", "fcfNegative", "debtorDays", "inventoryDays", "niLatest", "niAvg4", "marketCap", "thin", "dma50", "dma200", "devNow", "devPctile", "devDays", "cagr1", "cagr3", "cagr5", "histYears", "inav", "premium", "indexPe", "indexPb", "indexDy", "salesTtm", "salesGrowth", "salesGrowthYears", "opmLatest", "opmPrev", "niTtm", "investments"]);
 export const PROFILES = ["default", "financial", "cyclical", "etf"];
 
 export function sanitizeEntry(e) {

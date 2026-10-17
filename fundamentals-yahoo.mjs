@@ -133,6 +133,9 @@ export function buildEntry(stock, summary, timeseriesResult) {
   const entry = {
     sector: ap.sector || undefined, industry: ap.industry || undefined, profile, cfoToProfit3: cfoToProfit3 ?? undefined, fcfNegative: fcfNegative ?? undefined, debtorDays: debtorDays ?? undefined, inventoryDays: inventoryDays ?? undefined, niLatest: niLatest ?? undefined, niAvg4: niAvg4 ?? undefined,
     marketCap: fin(pr.marketCap) ? Math.round(fin(pr.marketCap) / 1e7) : undefined,
+    // for loss-makers valued on sales: last 12 months' revenue (₹ crore), its growth and the operating margin
+    salesTtm: fin(fd.totalRevenue) ? Math.round(fin(fd.totalRevenue) / 1e7) : undefined, salesGrowth: fin(fd.revenueGrowth) ? Math.round(fin(fd.revenueGrowth) * 1000) / 10 : undefined, salesGrowthYears: fin(fd.revenueGrowth) ? 1 : undefined,
+    opmLatest: fin(fd.operatingMargins) ? Math.round(fin(fd.operatingMargins) * 1000) / 10 : undefined, niTtm: fin(ks.netIncomeToCommon) ? Math.round(fin(ks.netIncomeToCommon) / 1e7) : undefined, investments: fin(fd.totalCash) ? Math.round(fin(fd.totalCash) / 1e7) : undefined,
     symbol: (stock.marketSymbol || stock.ticker || "").toUpperCase(), companyName: pr.longName || pr.shortName || undefined, price,
     priceDate: new Date().toISOString().slice(0, 10), high52: fin(sd.fiftyTwoWeekHigh) ?? undefined, low52: fin(sd.fiftyTwoWeekLow) ?? undefined,
     pe: pe ?? undefined, pb: fin(ks.priceToBook) ?? undefined, roce: roce ?? undefined, roe: roeRaw !== null ? Number((roeRaw * 100).toFixed(1)) : undefined,

@@ -38,6 +38,12 @@ export function classify(r) {
   if (r?.profile === "etf") return classifyEtf(r);
   if (!r || !r.view || r.view === "No fundamentals") return { key: "none", label: "Not valued yet", cls: "v-none", tags: [] };
   if (!fin(r.ratio)) return { key: "none", label: "Can't value yet", cls: "v-none", tags: [] };
+  if (r.growthStage) { // not profitable yet: valued on sales and a path to profit (low confidence)
+    const inZone = r.status === "In zone" || r.status === "Below zone", gs = r.growthStage, tags = ["Loss-making", inZone && "Buy zone"].filter(Boolean);
+    if (inZone) return { key: "buy", label: "Loss-making: priced below its growth path (speculative buy)", cls: "v-under", tags, inZone, growthScore: null, growthNotes: [], growthJustified: false };
+    if (r.view === "Undervalued" || r.view === "Fair") return { key: "wait", label: "Loss-making: fairly priced for its growth", cls: "v-fair", tags, inZone, growthScore: null, growthNotes: [], growthJustified: false };
+    return { key: "expensive", label: `Loss-making: paying a premium${fin(gs.impliedGrowth) ? ` (price needs ~${Math.round(gs.impliedGrowth)}% growth)` : ""}`, cls: r.view === "Fair to rich" ? "v-rich1" : "v-rich", tags, inZone, growthScore: null, growthNotes: [], growthJustified: false };
+  }
   // A floored zone means the value is below the 52-week low: "wait for a reset", not an entry.
   const inZone = (r.status === "In zone" || r.status === "Below zone") && !r.floored;
   const rich = r.view === "Rich" || r.view === "Very rich";

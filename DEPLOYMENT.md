@@ -1,7 +1,7 @@
-# Equity Watchlist v5.0.0: Deployment Guide (AWS)
+# Equity Watchlist v5.2.0: Deployment Guide (AWS)
 
 **Audience:** deployment / infrastructure team
-**App version:** 5.0.0
+**App version:** 5.2.0
 **Owner:** Nishanth
 
 ---
@@ -263,6 +263,11 @@ Use this option if the team standardises on ALBs.
 | `BACKUP_S3_BUCKET` | — | Also copy each daily backup to this S3 bucket (see section 9) |
 | `BACKUP_S3_REGION` / `BACKUP_S3_PREFIX` | `ap-south-1` / `equity-watchlist/` | Bucket region and key prefix |
 | `BACKUP_INCLUDE_SECRETS` | off | `1` includes broker logins, API keys and Telegram tokens in the automatic backups (off: they are left out) |
+| `AI_KEY_SECRET` | random, kept in `DATA_DIR/ai-secret.json` | Secret that encrypts each user's Anthropic API key. Set it (long random string) so keys survive a lost data folder secret; changing it means users re-enter their key |
+| `ANTHROPIC_API_KEY` | – | Optional: lets the **owner** use Ask AI without entering a key (members always need their own) |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | For a proxy / gateway; the server needs outbound HTTPS to it |
+| `AMFI_NAV_URL` | AMFI NAVAll.txt | Daily mutual fund NAV file (shared by all users, refreshed every 6 h when funds are viewed) |
+| `STOOQ_BASE` | `https://stooq.com` | US price source tried before Yahoo (`YAHOO_CHART_BASE` also serves US prices and USD/INR) |
 
 Telegram phone alerts (v4.4): each user connects their own bot from 🔔 Alerts → 📱 Phone alerts. The bot token is stored in that user's `notify.json` (MongoDB document `users/<id>/notify.json`), is never returned in full by the API, and is left out of user backups like broker logins. Alerts are sent by the server, so they arrive with the browser closed; the background swing check runs every 5 minutes during market hours.
 

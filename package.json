@@ -1,6 +1,6 @@
 {
   "name": "equity-watchlist-mvp",
-  "version": "5.0.0",
+  "version": "5.6.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,10 +9,13 @@
     "test": "node --test test/*.test.mjs",
     "test:mongo": "TEST_MONGO_URL=${TEST_MONGO_URL:-mongodb://127.0.0.1:27017/} node --test test/storage.test.mjs",
     "docker:up": "docker compose up -d --build",
-    "lint": "node scripts/lint.mjs"
+    "lint": "node scripts/lint.mjs",
+    "perf": "node scripts/perf.mjs",
+    "check": "npm run lint && npm test && npm run perf"
   },
   "dependencies": {
-    "mongodb": "^6.21.0"
+    "mongodb": "^6.21.0",
+    "pdfjs-dist": "^4.10.38"
   },
   "engines": {
     "node": ">=20"
