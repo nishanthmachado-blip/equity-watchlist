@@ -520,9 +520,46 @@ function setReportSub(tab){
   if(tab==="history")renderHistoryPanel();
   if(tab==="advisor")renderAdvisorList();
 }
+// Page heading for each screen: eyebrow (section), title, one-line description; also the browser tab title
+const VIEW_HEADERS={
+  home:["Indian equity research","Is this stock worth buying?","Enter any NSE stock and get a fair-value estimate, buy zone and a Value / Growth verdict."],
+  lists:["Research","Watchlists","Group stocks into lists and see each list's valuations at a glance."],
+  watchlist:["Screens","Curated watchlist tabs","Every stock you track with its price, valuation and notes, grouped into tabs."],
+  market:["Research","Market today","Key indices, the week's top gainers and losers, 52-week highs and lows, and the most active stocks."],
+  indices:["Research","Smart indices","Every stock inside an NSE index, valued and scored: pick the good ones for your watchlist."],
+  us:["Research","US stocks","Your US holdings in ₹ and $, and US companies valued from their SEC filings."],
+  dividends:["Income","Dividend income planner","Dividends you have received, what is coming, and how to build a monthly income."],
+  networth:["Your portfolio","Net worth","Everything you own and owe in one place, with goals and the trend over time."],
+  mf:["Your portfolio","Mutual funds","Every fund you hold, valued daily at the official NAV, with invested, current value and P/L."],
+  tax:["Your portfolio","Tax view","Short- and long-term gains, this year's tax estimate and harvesting ideas."],
+  portfolio:["Your portfolio","My holdings","What you hold across brokers: invested, current value, P/L and a stance on each stock."],
+  swing:["Your portfolio","Swing trading","Positions with targets and stops, your buy-the-dip list, and when to book or deploy."],
+  returns:["Your portfolio","Returns vs index","Your real return (XIRR) against Nifty 50, Nifty 500 and the small-cap index."],
+  events:["Your portfolio","Results & dividends","Results, dividends, bonuses and splits coming up for the stocks you hold and watch."],
+  accumulate:["Your portfolio","Accumulate (basket)","Build long-term positions step by step: buy more on dips, up to a target per stock."],
+  model:["Your portfolio","Model portfolio","A target allocation for your goal and risk, compared with what you hold."],
+  focus:["Your portfolio","Focus list","The few stocks that deserve your attention now."],
+  invest:["Your portfolio","Where to invest ₹X","Split a sum across the best-valued stocks for your style."],
+  alerts:["Your portfolio","Alerts","Price, target and stop alerts, your own rules and the morning / evening digest."],
+  integrations:["Settings","Connect brokers","Zerodha, Angel One, Dhan, Groww and INDmoney: sync holdings read-only."],
+  valuation:["Screens","Valuation table","Fair value, buy zone and verdict for every stock in the selected watchlist."],
+  picks:["Screens","Value · Growth · Dividend","The selected watchlist sorted into value, growth and dividend picks."],
+  growth:["Screens","Growth lens","How much growth today's price assumes, and whether the company can deliver it."],
+  plan:["Screens","Buying plan","Position sizes and buy levels for the selected watchlist."],
+  thesis:["Screens","Thesis","Why you own each stock, and whether the reasons still hold."],
+  reports:["Screens","Reports","Summaries and exports of your research."],
+  funds:["Your portfolio","Mutual fund X-ray","The stocks inside your funds, and where they overlap with what you hold."]
+};
+function applyHeader(v){
+  const h=VIEW_HEADERS[v]||VIEW_HEADERS.home;
+  const e=document.getElementById("hdEyebrow"),t=document.getElementById("hdTitle"),s=document.getElementById("hdSub");
+  if(e)e.textContent=h[0].toUpperCase(); if(t)t.textContent=h[1]; if(s)s.textContent=h[2];
+  document.title=v==="home"?"Equity Watchlist":`${h[1]} · Equity Watchlist`;
+}
 function setView(view){
   const v=["watchlist","reports","valuation","plan","picks","growth","integrations","thesis","portfolio","alerts","invest","dividends","focus","market","funds","networth","tax","model","us","lists","swing","returns","events","accumulate","mf","indices"].includes(view)?view:"home";
   // screens added in v5 (features.js): one section each, marked data-feature-view
+  applyHeader(v);
   document.querySelectorAll("[data-feature-view]").forEach(sec=>{sec.hidden=sec.dataset.featureView!==v});
   document.querySelectorAll("[data-goto]").forEach(b=>b.classList.toggle("active",b.dataset.goto===v));
   if(window.featureOpen?.[v])window.featureOpen[v]();

@@ -1,5 +1,9 @@
 # Equity Watchlist MVP
 
+## v5.6.2: what changed — page heading follows the menu
+
+The big heading at the top now changes with the screen you are on (e.g. "YOUR PORTFOLIO · Swing trading — Positions with targets and stops, your buy-the-dip list, and when to book or deploy."), and so does the browser tab title. "Is this stock worth buying?" stays on Value a stock.
+
 ## v5.6.1: what changed — remove US holdings in one go
 
 US stocks → My US holdings: each account (Vested, INDmoney, …) shows as a chip with its holdings count and value and a **Remove all** button, plus **🗑 Remove all** for every US holding at once (with a confirmation). Imported and hand-added holdings are deleted; INDmoney's synced ones are kept out of the app, Net worth and Ask AI until you press **Show again** (otherwise the next sync would bring them back). Nothing changes at your broker.
