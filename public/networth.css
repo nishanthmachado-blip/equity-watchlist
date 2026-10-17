@@ -513,3 +513,22 @@ body.ai-open .ai-fab{display:none}
 .us-acct small{font-weight:500;opacity:.7}
 .us-acct button{padding:3px 9px;font-size:12px;border-radius:999px}
 .us-acct.off{opacity:.75;border-style:dashed}
+/* v5.6.3 holdings filter / sort bar */
+.pf-bar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:4px 0 6px}
+.pf-bar .md-seg b{font-weight:700;opacity:.7;margin-left:3px}
+.pf-sel{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:650;color:var(--muted,#64748b)}
+.pf-sel select{padding:7px 8px;font-size:13px;border-radius:8px}
+.pf-dir{padding:7px 10px;font-size:12.5px}
+#pfQ{min-width:160px;max-width:220px;padding:8px 10px}
+.pf-sum{margin:2px 0 8px;font-size:13px;color:var(--muted,#64748b)}
+.pf-sum b{color:var(--ink,#13263d)}
+#portfolioView th.sorted{text-decoration:underline}
+.pf-bar .md-seg{display:inline-flex!important;flex-direction:row!important;flex-wrap:nowrap;gap:0;border:1px solid var(--line,#dce4ee);border-radius:999px;overflow:hidden;padding:0}
+.pf-bar .md-seg button{display:inline-flex;align-items:baseline;gap:4px;border:0;border-radius:0;padding:7px 12px;font-size:12.5px;background:transparent;white-space:nowrap}
+.pf-bar .md-seg button+button{border-left:1px solid var(--line,#dce4ee)}
+.pf-bar .md-seg button.active{background:var(--navy,#183b62);color:#fff}
+.pf-sel{white-space:nowrap}
+.pf-sel select{width:auto;min-width:0;display:inline-block;margin:0}
+.pf-bar .md-seg{flex:none;max-width:none}
+.pf-bar .md-seg button{flex:none;flex-direction:row}
+.pf-bar .md-seg button b{display:inline!important;margin-left:4px}

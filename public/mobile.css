@@ -1,0 +1,138 @@
+/* Phones and the installed app (v5.8). Loaded last so it wins over the screen-specific styles.
+   - Tables turn into cards on phones: every cell gets its column name as a label (mobile.js), less important columns
+     (th.m-hide) and empty "—" cells are left out. A table can opt out with .m-keep on its .table-wrap.
+   - Compact header, banners and toolbars; bottom-sheet dialogs; 16px form fields (no iOS zoom); notch / home-bar safe areas. */
+
+/* installed app: respect the notch and the home indicator */
+header{padding-top:max(28px,env(safe-area-inset-top))!important}
+body.standalone .tabbar{bottom:max(10px,env(safe-area-inset-bottom))!important}
+
+@media (max-width:699px){
+  /* ---- header: small title, no sub line, icon-only actions ---- */
+  header{padding:max(14px,env(safe-area-inset-top)) 14px 16px!important;gap:10px!important;flex-direction:column;align-items:stretch!important}
+  header .eyebrow{font-size:10px!important;margin:0 0 4px!important}
+  header h1{font-size:22px!important;line-height:1.15;letter-spacing:-.02em}
+  header .sub{display:none}
+  .header-actions{justify-content:flex-start!important;gap:6px!important;flex-wrap:nowrap!important;overflow-x:auto;scrollbar-width:none}
+  .header-actions::-webkit-scrollbar{display:none}
+  .header-actions>*{flex:none}
+  .header-actions button,.header-actions .pill{padding:6px 10px!important;font-size:12px!important;min-height:34px}
+  #provider{display:none!important}
+
+  /* ---- banners: one compact block ---- */
+  .fresh-item{padding:8px 10px!important;font-size:12.5px!important;gap:8px!important;border-radius:12px!important;line-height:1.35}
+  .fresh-item button{padding:5px 9px!important;font-size:12px!important}
+
+  /* ---- page layout ---- */
+  main{padding:0 12px calc(96px + env(safe-area-inset-bottom))!important}
+  body{padding-bottom:0!important}
+  .report-grid,.nw-cats,.wk-grid,.gl-grid,.detail{grid-template-columns:1fr!important}
+  main .report-card,main .vs-card,main section,main .nw-card{min-width:0!important;max-width:100%}
+  .metrics{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}
+  .metrics>div{padding:12px!important;border-radius:14px!important;min-width:0}
+  .metrics strong{font-size:19px!important;word-break:break-word}
+  .metrics small{font-size:11px}
+  .toolbar{gap:8px!important;margin:12px 0 8px!important}
+  .toolbar input{min-width:0!important;flex:1 1 100%}
+  .toolbar>button,.toolbar>select{flex:0 1 auto}
+  .views.sub,.pf-acc,.mk-tabs{overflow-x:auto;flex-wrap:nowrap!important;scrollbar-width:none}
+  .views.sub::-webkit-scrollbar{display:none}
+  .views.sub .viewTab{flex:none}
+  .pf-bar{gap:8px!important}.pf-bar .md-seg{order:-1;width:100%}.pf-bar .md-seg button{flex:1}
+  .pf-sel{flex:1 1 45%}.pf-sel select{flex:1;width:100%}
+  #pfQ,#idxQ{flex:1 1 100%;max-width:none!important}
+  .idx-picker .idx-group{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+  .idx-glabel{width:auto!important;min-width:max-content!important}
+  .idx-chip{flex:none}
+  h2{font-size:20px}h3{font-size:16px}
+
+  /* form fields at 16px so iPhone does not zoom in when one is tapped */
+  input,select,textarea{font-size:16px!important}
+
+  /* bigger touch targets */
+  main button,main select{min-height:36px}
+  main .sw-acts button,main .ai-btn{min-width:36px}
+
+  /* ---- tables → cards ---- */
+  main .table-wrap:not(.m-keep){overflow:visible!important;border:0!important;background:transparent!important;max-height:none!important;box-shadow:none!important;border-radius:0!important}
+  main .table-wrap:not(.m-keep)>table{display:block;min-width:0!important;width:100%!important;border:0}
+  main .table-wrap:not(.m-keep)>table>thead{display:none}
+  main .table-wrap:not(.m-keep)>table>tbody{display:flex;flex-direction:column;gap:10px}
+  main .table-wrap:not(.m-keep)>table>tfoot{display:block;margin-top:8px}
+  main .table-wrap:not(.m-keep)>table>tbody>tr,main .table-wrap:not(.m-keep)>table>tfoot>tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;background:var(--card-bg,#fff);border:1px solid var(--line,#e5e7eb);border-radius:16px;padding:12px 14px;box-shadow:0 6px 18px -14px rgba(15,23,42,.35)}
+  main .table-wrap:not(.m-keep)>table>tbody>tr>td,main .table-wrap:not(.m-keep)>table>tfoot>tr>td{display:block;border:0!important;padding:0!important;text-align:left!important;min-width:0;max-width:none!important;white-space:normal!important;overflow-wrap:anywhere;font-size:13.5px;position:static!important;background:transparent!important}
+  main .table-wrap:not(.m-keep) td[data-label]::before{content:attr(data-label);display:block;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted,#64748b);margin:0 0 2px}
+  main .table-wrap:not(.m-keep) td[data-label=""]::before{display:none}
+  /* the first cell (the stock / item) is the card's title; actions and full-width cells take the whole row */
+  main .table-wrap:not(.m-keep) tbody>tr>td:first-child{grid-column:1/-1;font-size:15px;padding-bottom:6px!important;border-bottom:1px solid var(--line,#eef2f6)!important;margin-bottom:2px}
+  main .table-wrap:not(.m-keep) tbody>tr>td:first-child::before{display:none}
+  main .table-wrap:not(.m-keep) td.sw-acts,main .table-wrap:not(.m-keep) td[data-label=""],main .table-wrap:not(.m-keep) td[colspan],main .table-wrap:not(.m-keep) td.sw-tg,main .table-wrap:not(.m-keep) td.m-wide{grid-column:1/-1}
+  main .table-wrap:not(.m-keep) td.sw-acts{display:flex!important;flex-wrap:wrap;gap:6px;justify-content:flex-start}
+  main .table-wrap:not(.m-keep) td.sw-acts::before{display:none}
+  main .table-wrap:not(.m-keep) td.sw-acts button{flex:1 1 auto;min-height:38px}
+  main .table-wrap:not(.m-keep) td.m-hide,main .table-wrap:not(.m-keep) td.m-empty{display:none!important}
+  main .table-wrap:not(.m-keep) td[colspan]:only-child{text-align:center!important;border:0!important;padding:8px 0!important}
+  main .table-wrap:not(.m-keep) tr.nw-empty-row td,main .table-wrap:not(.m-keep) td.nw-empty-row{grid-column:1/-1;border:0!important}
+  main .table-wrap:not(.m-keep) tbody>tr:has(>td.nw-empty-row:only-child){display:block}
+  /* swing: the decision line under a position joins its card */
+  main .table-wrap:not(.m-keep) tr.sw-ev-row{margin-top:-14px;border-top:0;border-radius:0 0 16px 16px;padding-top:4px;box-shadow:none}
+  main .table-wrap:not(.m-keep) tr.sw-ev-row>td{grid-column:1/-1}
+  main .table-wrap:not(.m-keep) tr:has(+ tr.sw-ev-row){border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:0}
+  main .sw-tg{display:flex!important;flex-wrap:wrap;gap:6px}
+  main .sw-tg .tg-l{flex:1 1 30%}
+  /* checkbox column (Smart indices) sits in the title row */
+  main .idx-table tbody>tr>td:first-child{grid-column:auto;border:0!important;padding:0!important;font-size:inherit}
+  main .idx-table tbody>tr>td:nth-child(2){grid-column:1/-1;order:-1;font-size:15px;padding-bottom:6px!important;border-bottom:1px solid var(--line,#eef2f6)!important}
+  main .idx-table tbody>tr>td:nth-child(2)::before{display:none}
+  main .idx-table tbody>tr>td:first-child::before{content:"Select";display:block}
+  /* holdings: P/L stands out */
+  #pfRows td:nth-child(7) b,#pfRows td:nth-child(7){font-size:15px}
+  .pl-pct{display:inline;margin-left:4px}
+
+  /* ---- dialogs: bottom sheets ---- */
+  .ui-scrim{align-items:end!important;padding:0!important}
+  .ui-dlg,.ui-dlg.wide{width:100%!important;max-width:100%!important;border-radius:22px 22px 0 0!important;max-height:92dvh!important;padding:20px 16px calc(16px + env(safe-area-inset-bottom))!important;animation:uiSheet .22s ease-out}
+  .ui-dlg .nw-form{grid-template-columns:1fr!important}
+  .ui-actions{position:sticky;bottom:-16px;background:var(--card-bg,#fff);padding:10px 0 4px;margin-top:14px!important}
+  .sw-prev{font-size:12.5px}
+  .sw-bulk-wrap{margin:0 -4px}
+
+  /* ---- floating Ask AI sits above the tab bar; tab bar respects the home indicator ---- */
+  .ai-fab{right:14px!important;bottom:calc(88px + env(safe-area-inset-bottom))!important;padding:12px!important;border-radius:999px!important;width:48px;height:48px;justify-content:center}
+  .ai-fab b{display:none}
+  .ai-fab span{font-size:20px}
+  .tabbar{bottom:max(10px,env(safe-area-inset-bottom))!important}
+  .toasts{bottom:calc(150px + env(safe-area-inset-bottom))!important;left:12px!important;right:12px!important}
+  .ai-panel{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+  footer{padding:12px 16px calc(100px + env(safe-area-inset-bottom))!important;font-size:11px}
+}
+@keyframes uiSheet{from{transform:translateY(40px);opacity:.4}}
+@media (max-width:380px){.metrics{grid-template-columns:1fr 1fr!important}.metrics strong{font-size:17px!important}.tabbar button{font-size:10px!important}}
+.install-steps{margin:6px 0 8px;padding-left:20px;line-height:1.7}
+@media (max-width:699px){
+  .fresh-item{align-items:flex-start!important}
+  .fresh-ico{display:none!important}
+  .fresh-text{font-size:12.5px!important;line-height:1.35!important;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .fresh-item button.ghost{padding:5px 9px!important;font-size:12px!important;min-height:30px}
+  .back-home,button.back-btn,[data-back-home]{display:none!important}
+  main section>p.hint:first-child,main>section>p.hint{font-size:12.5px;line-height:1.45}
+  .md-seg{display:inline-flex!important;flex-direction:row!important;flex-wrap:nowrap!important;max-width:100%}
+  .md-seg>button{flex:1 1 auto;white-space:nowrap}
+  .wk-ctl{width:100%}.wk-ctl .md-seg{flex:1}.wk-ctl select{flex:1}
+  .side-menu{z-index:1200!important}
+  body.menu-open .ai-fab{display:none}
+}
+@media (max-width:699px){
+  /* status colour moves from the first cell to the card's left edge */
+  main .table-wrap:not(.m-keep) td:first-child{box-shadow:none!important}
+  main .table-wrap:not(.m-keep) tr.sw-row.tp{border-left:5px solid var(--good)!important;background:color-mix(in srgb,var(--good) 7%,var(--card-bg,#fff))!important}
+  main .table-wrap:not(.m-keep) tr.sw-row.dp{border-left:5px solid #2f6fed!important;background:color-mix(in srgb,#2f6fed 6%,var(--card-bg,#fff))!important}
+  main .table-wrap:not(.m-keep) tr.sw-row.sl{border-left:5px solid var(--bad)!important;background:color-mix(in srgb,var(--bad) 6%,var(--card-bg,#fff))!important}
+  main .table-wrap:not(.m-keep) tr.sw-row.near{border-left:5px solid #f59e0b!important}
+  main .table-wrap:not(.m-keep) tr.sw-row.rd{border-left:5px solid color-mix(in srgb,var(--good) 45%,transparent)!important}
+  main .table-wrap:not(.m-keep) tr.idx-held{border-left:5px solid var(--good)!important}
+  /* holdings card: value and P/L right under the name */
+  #pfRows>tr>td:first-child{order:-3}
+  #pfRows>tr>td:nth-child(6),#pfRows>tr>td:nth-child(7){order:-2}
+  #pfRows>tr>td:nth-child(6) ,#pfRows>tr>td:nth-child(7){font-size:16px;font-weight:700}
+}

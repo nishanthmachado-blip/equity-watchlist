@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Equity Watchlist</title><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#1f2460"><link rel="icon" href="/icons/icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Watchlist"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=JetBrains+Mono:wght@400;600;700&family=Playfair+Display:wght@700;800&family=Source+Serif+4:ital,wght@0,400;0,600;1,400;1,600&display=swap" media="print" onload="this.media='all'"><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="theme.css"><link rel="stylesheet" href="home.css"><link rel="stylesheet" href="themes.css"><link rel="stylesheet" href="shell.css"><link rel="stylesheet" href="networth.css"><link rel="stylesheet" href="redesigns.css"><script>try{const T={"indigo-night":[1,0],"midnight":[1,1],"ivory":[0,1],"forest":[0,1],"slate":[1,1],"terminal":[1,1],"glass":[1,1],"editorial":[0,1],"vibe":[0,1],"vibe-night":[1,1]};let id=localStorage.getItem("equity-skin");if(!localStorage.getItem("equity-skin-chosen"))id="indigo";const t=T[id];if(t){if(t[0])document.documentElement.setAttribute("data-theme","dark");if(t[1])document.documentElement.setAttribute("data-skin",id)}}catch(e){}</script></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Equity Watchlist</title><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#1f2460"><link rel="icon" href="/icons/icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Watchlist"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=JetBrains+Mono:wght@400;600;700&family=Playfair+Display:wght@700;800&family=Source+Serif+4:ital,wght@0,400;0,600;1,400;1,600&display=swap" media="print" onload="this.media='all'"><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="theme.css"><link rel="stylesheet" href="home.css"><link rel="stylesheet" href="themes.css"><link rel="stylesheet" href="shell.css"><link rel="stylesheet" href="networth.css"><link rel="stylesheet" href="redesigns.css"><link rel="stylesheet" href="mobile.css"><script>try{const T={"indigo-night":[1,0],"midnight":[1,1],"ivory":[0,1],"forest":[0,1],"slate":[1,1],"terminal":[1,1],"glass":[1,1],"editorial":[0,1],"vibe":[0,1],"vibe-night":[1,1]};let id=localStorage.getItem("equity-skin");if(!localStorage.getItem("equity-skin-chosen"))id="indigo";const t=T[id];if(t){if(t[0])document.documentElement.setAttribute("data-theme","dark");if(t[1])document.documentElement.setAttribute("data-skin",id)}}catch(e){}</script></head>
 <body>
   <header><div><p class="eyebrow" id="hdEyebrow">INDIAN EQUITY RESEARCH</p><h1 id="hdTitle">Is this stock worth buying?</h1><p class="sub" id="hdSub">Enter any NSE stock and get a fair-value estimate, buy zone and a Value / Growth verdict.</p></div><div class="header-actions"><button id="pricesBtn" type="button" class="ghost prices-btn" aria-label="Refresh prices"><span aria-hidden="true">⟳</span> <span id="pricesTime">Refresh prices</span></button><button id="bellBtn" class="ghost bell-btn" aria-label="Alerts" title="Alerts: buy-zone entries and verdict changes">🔔<span id="bellCount" class="bell-count" hidden>0</span></button><button id="menuBtn" class="ghost menu-btn" aria-controls="sideMenu" aria-expanded="false">☰ Menu</button><button id="themeToggle" class="ghost theme-toggle" title="Toggle color theme" aria-label="Toggle color theme">🌙 Dark</button><span id="provider" class="pill muted">Local research mode</span></div></header>
   <div id="menuScrim" class="scrim" hidden></div>
@@ -39,6 +39,7 @@
         <button id="viewReports" class="viewTab" title="Reports"><span class="ico" aria-hidden="true">🖨️</span><span class="lbl">Reports</span></button>
       </details>
       <p class="side-label">Data</p>
+      <button id="installBtn" class="viewTab" type="button" hidden title="Install as an app"><span class="ico" aria-hidden="true">📲</span><span class="lbl">Install app</span></button>
       <button id="refresh" class="primary" title="Refresh prices &amp; news"><span class="ico" aria-hidden="true">⟳</span><span class="lbl">Refresh prices &amp; news</span></button>
     </nav>
   </aside>
@@ -179,7 +180,7 @@
       </section>
       <div class="sw-legend"><span class="sw-dot tp"></span>Reached T1 / T2 / T3: plan to book profit <span class="sw-dot dp"></span>At or below your add level: deploy cash <span class="sw-dot near"></span>Getting close <span class="sw-dot rd"></span>Booked as planned, holding for the next target</div>
       <div class="nw-head"><h3>My swing positions</h3><span class="hint" id="swPosNote"></span></div>
-      <section class="table-wrap"><table class="sw-table"><thead><tr><th>Stock</th><th class="num">Qty</th><th class="num">Avg price</th><th class="num">LTP</th><th class="num">Invested</th><th class="num">Value now</th><th class="num">P/L</th><th>Targets (sell price)</th><th>Limit used</th><th>Add plan</th><th>Signal</th><th></th></tr></thead><tbody id="swRows"></tbody></table></section>
+      <section class="table-wrap"><table class="sw-table"><thead><tr><th>Stock</th><th class="num">Qty</th><th class="num">Avg price</th><th class="num">LTP</th><th class="num">Invested</th><th class="num">Value now</th><th class="num">P/L</th><th>Targets (sell price)</th><th class="m-hide">Limit used</th><th class="m-hide">Add plan</th><th>Signal</th><th></th></tr></thead><tbody id="swRows"></tbody></table></section>
       <div class="nw-head sw-dip-head" style="margin-top:24px"><h3>📉 Buy-the-dip list <span class="hint">your price for each stock; bulk buy the ones that get there</span></h3><span class="hint" id="swDipNote"></span></div>
       <div class="toolbar sw-dip-tools"><button type="button" class="ghost" id="swDipAdd">+ Add dip levels</button><button type="button" id="swDipBuy" disabled>Bulk buy reached</button><button type="button" class="ghost ai-btn" data-ask-ai="Look at my buy-the-dip list: which levels are value buys and which stocks look like falling knives? Should I change any level or amount? Rank them." data-ask-where="Buy-the-dip list">✨ Ask AI about my dips</button><span class="hint" id="swDipCash"></span></div>
       <section class="table-wrap"><table class="sw-table sw-dip"><thead><tr><th>Stock</th><th class="num">LTP</th><th class="num">Buy below</th><th>Fall needed</th><th class="num">Amount</th><th class="num">Qty at level</th><th>Status</th><th></th></tr></thead><tbody id="swDipRows"></tbody></table></section>
@@ -350,7 +351,18 @@
       <nav class="views sub pf-acc" id="pfAccTabs" aria-label="Broker account"></nav>
       <section class="metrics" id="pfCards" aria-label="Portfolio summary"></section>
       <section class="toolbar" id="pfFilters" aria-label="Filter holdings"></section>
-      <section class="table-wrap"><table><thead><tr><th>Stock</th><th>Qty</th><th>Avg cost</th><th>Price</th><th class="num">Invested</th><th class="num">Current value</th><th class="num">P/L</th><th>P/E</th><th>Sector P/E</th><th>% of total</th><th>Verdict</th><th>Valuation</th><th>Fair value (base)</th><th>Buy zone</th><th>Status</th><th></th></tr></thead><tbody id="pfRows"></tbody></table></section>
+      <section class="pf-bar" aria-label="Filter and sort holdings">
+        <div class="md-seg" id="pfPl"><button type="button" data-pl="all" class="active">All</button><button type="button" data-pl="profit">In profit</button><button type="button" data-pl="loss">In loss</button></div>
+        <label class="pf-sel">Invested<select id="pfInv"><option value="0">Any</option><option value="25000">₹25 K+</option><option value="50000">₹50 K+</option><option value="100000">₹1 L+</option><option value="300000">₹3 L+</option><option value="500000">₹5 L+</option><option value="1000000">₹10 L+</option><option value="-50000">Under ₹50 K</option></select></label>
+        <label class="pf-sel">P/L %<select id="pfPct"><option value="">Any</option><option value="50:">+50% or more</option><option value="20:">+20% or more</option><option value="0:20">0 to +20%</option><option value="-10:0">0 to −10%</option><option value="-20:-10">−10% to −20%</option><option value=":-20">−20% or worse</option></select></label>
+        <label class="pf-sel">P/L ₹<select id="pfAbs"><option value="">Any</option><option value="100000:">+₹1 L or more</option><option value="25000:">+₹25 K or more</option><option value=":-25000">−₹25 K or worse</option><option value=":-100000">−₹1 L or worse</option></select></label>
+        <label class="pf-sel">Sort<select id="pfSort"><option value="value">Current value</option><option value="invested">Invested</option><option value="pnl">P/L ₹</option><option value="pnlPct">P/L %</option><option value="day">Day change %</option><option value="weight">% of total</option><option value="name">Name A–Z</option></select></label>
+        <button type="button" class="ghost pf-dir" id="pfDir" title="Reverse the order">↓ High to low</button>
+        <input id="pfQ" placeholder="Search holdings" autocomplete="off" aria-label="Search holdings">
+        <button type="button" class="linklike" id="pfReset" hidden>Clear filters</button>
+      </section>
+      <p class="pf-sum" id="pfSum"></p>
+      <section class="table-wrap"><table><thead><tr><th data-sk="name">Stock</th><th>Qty</th><th>Avg cost</th><th>Price</th><th class="num" data-sk="invested">Invested</th><th class="num" data-sk="value">Current value</th><th class="num" data-sk="pnl">P/L</th><th>P/E</th><th class="m-hide">Sector P/E</th><th data-sk="weight">% of total</th><th>Verdict</th><th>Valuation</th><th class="m-hide">Fair value (base)</th><th class="m-hide">Buy zone</th><th class="m-hide">Status</th><th></th></tr></thead><tbody id="pfRows"></tbody></table></section>
       <p class="hint" id="pfNote"></p>
       <details id="pfSetup" class="pf-setup"><summary><strong>Add or sync holdings</strong> <span class="hint">Kite, Angel One, Dhan, Groww, INDmoney CSV · add holdings to the watchlist</span></summary>
       <section class="report-grid two">
@@ -547,8 +559,8 @@
   </main>
   <nav class="tabbar" aria-label="Quick navigation">
     <button type="button" data-go="viewHome"><span aria-hidden="true">🔎</span>Value</button>
-    <button type="button" data-go="viewLists"><span aria-hidden="true">⭐</span>Lists</button>
     <button type="button" data-go="viewPortfolio"><span aria-hidden="true">📂</span>Holdings</button>
+    <button type="button" data-go="viewSwing"><span aria-hidden="true">⚡</span>Swing</button>
     <button type="button" data-go="viewNetworth"><span aria-hidden="true">🏦</span>Net worth</button>
     <button type="button" data-go="menu"><span aria-hidden="true">☰</span>More</button>
   </nav>
@@ -568,6 +580,7 @@
   <script src="indices.js"></script>
   <script src="week.js"></script>
   <script src="ai.js"></script>
+  <script src="mobile.js"></script>
   <script src="prices.js" defer></script>
 <script src="freshness.js"></script>
 </body></html>

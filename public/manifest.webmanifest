@@ -18,6 +18,8 @@
   "shortcuts": [
     { "name": "Value a stock", "url": "/#home" },
     { "name": "My holdings", "url": "/#portfolio" },
-    { "name": "Net worth", "url": "/#networth" }
+    { "name": "Swing trading", "url": "/#swing" },
+    { "name": "Net worth", "url": "/#networth" },
+    { "name": "Smart indices", "url": "/#indices" }
   ]
 }

@@ -344,6 +344,11 @@
 
   // ---- Portfolio ---------------------------------------------------------------------------------
   let pf = null, pfFilter = "all", pfTimer = null;
+  // filter / sort bar (like a broker app): profit or loss, invested size, P/L % and ₹ bands, search, sort; remembered per browser
+  const PF_DEF = { pl: "all", inv: "0", pct: "", abs: "", sort: "value", dir: -1, q: "" };
+  let pfOpt = (() => { try { return { ...PF_DEF, ...JSON.parse(localStorage.getItem("pf-opt") || "{}"), q: "" }; } catch { return { ...PF_DEF }; } })();
+  const pfSave = () => { try { localStorage.setItem("pf-opt", JSON.stringify({ ...pfOpt, q: "" })); } catch { /* private mode */ } };
+  const band = (spec, v) => { if (!spec) return true; if (!Number.isFinite(v)) return false; const [lo, hi] = spec.split(":"); return (lo === "" || v >= Number(lo)) && (hi === "" || hi === undefined || v < Number(hi)); };
   const FILTERS = [["all", "All"], ["buy", "Buy zone"], ["Value", "Value"], ["Growth", "Growth"], ["Dividend", "Dividend"], ["wait", "Wait / hold"], ["expensive", "Expensive"], ["none", "Not valued"]];
   const matches = (h, f) => f === "all" || h.c.key === f || h.c.tags.includes(f);
   let pfAccount = "all"; // "all" or an account userId: each broker account gets its own tab
@@ -372,7 +377,26 @@
     $("#pfAccTabs").innerHTML = v.accounts.length ? [`<button type="button" class="viewTab${pfAccount === "all" ? " active" : ""}" data-acc="all">All accounts <span class="tab-badge">${v.holdings.length}</span></button>`, ...v.accounts.map(a => `<button type="button" class="viewTab${pfAccount === a.userId ? " active" : ""}" data-acc="${esc(a.userId)}">${(a.label || "").toLowerCase().includes(String(a.brokerName || "").toLowerCase()) ? "" : `<span class="acc-broker">${esc(a.brokerName)}</span> `}${esc(a.label)} <span class="tab-badge">${a.count}</span></button>`)].join("") : "";
     $("#pfCards").innerHTML = hs.length ? `<div><span>Holdings${pfAccount === "all" ? "" : " in this account"}</span><strong>${hs.length}</strong></div><div><span>Invested</span><strong>${inr(Math.round(totalInvested))}</strong><small>${unpriced ? `excl. ${unpriced} without a price` : "quantity × average cost"}</small></div><div><span>Current value</span><strong class="${plc(totalPnl)}">${inr(Math.round(totalValue))}</strong><small>at today's prices</small></div><div class="${totalPnl > 0 ? "pf-up" : totalPnl < 0 ? "pf-dn" : ""}"><span>Profit / loss</span><strong class="${plc(totalPnl)}">${pl(totalPnl)}</strong><small class="${plc(totalPnl)}">${plPct(totalPnl, totalInvested)}</small></div><div><span>In buy zone / expensive</span><strong><b class="buy">${cnt("buy")}</b> / ${cnt("expensive")}</strong></div>` : "";
     $("#pfFilters").innerHTML = FILTERS.map(([k, l]) => `<button type="button" class="pf-chip${pfFilter === k ? " active" : ""}" data-f="${k}">${l}<b>${cnt(k)}</b></button>`).join("");
-    const shown = hs.filter(h => matches(h, pfFilter));
+    const pctOf = h => (priced(h) && investedOf(h) > 0 ? (h.value / investedOf(h) - 1) * 100 : null);
+    const inv = Number(pfOpt.inv), q = pfOpt.q.trim().toLowerCase();
+    const shown = hs.filter(h => matches(h, pfFilter)).filter(h => {
+      if (pfOpt.pl === "profit" && !(priced(h) && h.pnl > 0)) return false;
+      if (pfOpt.pl === "loss" && !(priced(h) && h.pnl < 0)) return false;
+      const iv = investedOf(h) || 0; if (inv > 0 && iv < inv) return false; if (inv < 0 && iv >= -inv) return false;
+      if (!band(pfOpt.pct, pctOf(h)) || !band(pfOpt.abs, priced(h) ? h.pnl : null)) return false;
+      return !q || `${h.symbol} ${h.company || ""}`.toLowerCase().includes(q);
+    });
+    const key = { value: h => (priced(h) ? h.value : null), invested: investedOf, pnl: h => (priced(h) ? h.pnl : null), pnlPct: pctOf, day: h => h.dayChangePct ?? null, weight: h => h.weightPct, name: h => (h.company || h.symbol).toLowerCase() }[pfOpt.sort] || (h => h.value);
+    shown.sort((a, b) => { const x = key(a), y = key(b); if (typeof x === "string" || typeof y === "string") return String(x).localeCompare(String(y)) * (pfOpt.dir > 0 ? 1 : -1); if (!Number.isFinite(x) && !Number.isFinite(y)) return 0; if (!Number.isFinite(x)) return 1; if (!Number.isFinite(y)) return -1; return (x - y) * (pfOpt.dir > 0 ? 1 : -1); });
+    // the bar reflects the options; the summary line totals what is shown
+    $("#pfPl").querySelectorAll("[data-pl]").forEach(b => { b.classList.toggle("active", b.dataset.pl === pfOpt.pl); const n = b.dataset.pl === "all" ? hs.length : hs.filter(h => priced(h) && (b.dataset.pl === "profit" ? h.pnl > 0 : h.pnl < 0)).length; b.innerHTML = `${{ all: "All", profit: "In profit", loss: "In loss" }[b.dataset.pl]} <b>${n}</b>`; });
+    $("#pfInv").value = pfOpt.inv; $("#pfPct").value = pfOpt.pct; $("#pfAbs").value = pfOpt.abs; $("#pfSort").value = pfOpt.sort;
+    $("#pfDir").textContent = pfOpt.sort === "name" ? (pfOpt.dir > 0 ? "A to Z" : "Z to A") : pfOpt.dir > 0 ? "↑ Low to high" : "↓ High to low";
+    const filtered = pfOpt.pl !== "all" || pfOpt.inv !== "0" || pfOpt.pct || pfOpt.abs || q || pfFilter !== "all";
+    $("#pfReset").hidden = !filtered;
+    document.querySelectorAll("#portfolioView th[data-sk]").forEach(th => th.classList.toggle("sorted", th.dataset.sk === pfOpt.sort));
+    { const sp = shown.filter(priced), sInv = sp.reduce((a, h) => a + (investedOf(h) || 0), 0), sVal = sp.reduce((a, h) => a + h.value, 0), sPl = sVal - sInv;
+      $("#pfSum").innerHTML = hs.length ? `${filtered ? `Showing <b>${shown.length}</b> of ${hs.length}` : `<b>${shown.length}</b> holdings`} · invested ${inr(Math.round(sInv))} · now ${inr(Math.round(sVal))} · <span class="${plc(sPl)}">${pl(sPl)}${sInv > 0 ? ` (${plPct(sPl, sInv)})` : ""}</span>${filtered && totalValue > 0 ? ` · ${Math.round(sVal / totalValue * 1000) / 10}% of your holdings` : ""}` : ""; }
     $("#pfRows").innerHTML = shown.length ? shown.map(h => { const r = h.r; return `<tr data-sym="${esc(h.symbol)}"><td><div class="company">${esc(h.company || h.symbol)}</div><div class="ticker">${esc(h.symbol)} · ${h.accounts.map(a => (a.label || "").toLowerCase().includes(String(a.brokerName || "").toLowerCase()) ? esc(a.label) : `${esc(a.brokerName || "")} · ${esc(a.label)}`).join(", ")}</div></td><td>${h.qty}</td><td>${inr(h.avgPrice)}</td><td>${inr(h.syncPrice ?? h.watchlistPrice)}</td><td class="num">${inr(Number.isFinite(investedOf(h)) ? Math.round(investedOf(h)) : null)}</td><td class="num ${plc(h.pnl)}">${priced(h) ? inr(Math.round(h.value)) : '<span class="hint">no price</span>'}</td><td class="num ${priced(h) ? plc(h.pnl) : ""}">${priced(h) ? pl(h.pnl) : "—"}<div class="pl-pct">${priced(h) ? plPct(h.pnl, investedOf(h)) : ""}</div></td><td>${r && Number.isFinite(r.pe) ? `<b>${fmt(r.pe)}</b>` : "—"}</td><td>${r ? sectorPeText(r) : "—"}</td><td>${Number.isFinite(h.weightPct) ? h.weightPct + "%" : "—"}</td><td>${verdictChip(h.c)}</td><td>${r && Number.isFinite(r.ratio) ? viewChip(r.view) : "—"}</td><td>${r?.fairValue ? money(r.fairValue.base) : "—"}</td><td class="range">${r?.zoneLow ? `${money(r.zoneLow)} – ${money(r.zoneHigh)}` : "—"}</td><td>${r && Number.isFinite(r.ratio) ? statusChip(r.status) : "—"}</td><td>${h.inWatchlist ? "" : `<button type="button" class="ghost" data-add="${esc(h.symbol)}">Add &amp; value</button>`}</td></tr>`; }).join("") : `<tr><td colspan="16" style="text-align:center;padding:24px;color:var(--muted)">${hs.length ? "No holdings match this filter." : "No holdings yet. Connect a broker or import a CSV above."}</td></tr>`;
     $("#pfNote").textContent = hs.length ? `Click a row to see the full valuation. ${hs.filter(h => !h.inWatchlist).length} holding(s) are not on the watchlist yet: use "Add all holdings & value them".` : "";
   }
@@ -394,6 +418,13 @@
     try { const [h] = await Promise.all([get("/api/holdings"), loadValuation()]); pf = h; renderPortfolio(); } catch (e) { $("#pfAccounts").textContent = `Could not load holdings: ${e.message}`; }
   };
   $("#pfFilters").addEventListener("click", e => { const b = e.target.closest("[data-f]"); if (b) { pfFilter = b.dataset.f; renderPortfolio(); } });
+  $("#pfPl").addEventListener("click", e => { const b = e.target.closest("[data-pl]"); if (b) { pfOpt.pl = b.dataset.pl; pfSave(); renderPortfolio(); } });
+  for (const [id, k] of [["#pfInv", "inv"], ["#pfPct", "pct"], ["#pfAbs", "abs"]]) $(id).onchange = e => { pfOpt[k] = e.target.value; pfSave(); renderPortfolio(); };
+  $("#pfSort").onchange = e => { pfOpt.sort = e.target.value; pfOpt.dir = e.target.value === "name" ? 1 : -1; pfSave(); renderPortfolio(); };
+  $("#pfDir").onclick = () => { pfOpt.dir = -pfOpt.dir; pfSave(); renderPortfolio(); };
+  $("#pfQ").addEventListener("input", e => { pfOpt.q = e.target.value; renderPortfolio(); });
+  $("#pfReset").onclick = () => { pfOpt = { ...PF_DEF }; pfFilter = "all"; $("#pfQ").value = ""; pfSave(); renderPortfolio(); };
+  document.querySelectorAll("#portfolioView th[data-sk]").forEach(th => { th.title = "Sort"; th.style.cursor = "pointer"; th.onclick = () => { const k = th.dataset.sk; pfOpt.dir = pfOpt.sort === k ? -pfOpt.dir : k === "name" ? 1 : -1; pfOpt.sort = k; pfSave(); renderPortfolio(); }; });
   $("#pfRows").addEventListener("click", async e => {
     const add = e.target.closest("[data-add]");
     if (add) { e.stopPropagation(); await addToWatchlist([add.dataset.add]); return; }

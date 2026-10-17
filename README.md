@@ -1,5 +1,15 @@
 # Equity Watchlist MVP
 
+## v5.8.0: what changed — works properly on phones, and installs as an app
+
+**Phones (any browser).** Every table turns into cards on a phone: the stock's name on top, each figure labelled underneath (current value and P/L first on My holdings), less useful columns hidden, empty "—" cells dropped, and the action buttons full-width and easy to tap. Swing positions keep their status colour on the card's edge, and the dividend / results decision joins its card. The header shrinks to a one-line title with icon buttons; warning banners are compact; dialogs open as bottom sheets with the buttons always in reach; form fields are 16 px so iPhone does not zoom in when you tap one; the bottom tabs are Value · Holdings · Swing · Net worth · More; the ✨ Ask AI button sits above the tabs (it used to cover "More"). Checked on every screen at 390 px (iPhone), 820 px (tablet) and phone landscape: nothing runs off the screen.
+
+**Install as an app.** Menu → **📲 Install app**: on Android / Chrome / Edge it installs directly; on iPhone it shows the three Safari steps (Share → Add to Home Screen). The installed app opens full-screen with your login kept, respects the notch and home bar, and has shortcuts (long-press the icon) to Value a stock, My holdings, Swing trading, Net worth and Smart indices. Phones only install from an **https** address (as in DEPLOYMENT.md).
+
+## v5.7.0: what changed — filter and sort your holdings like a broker app
+
+My holdings has a filter / sort bar: **All · In profit · In loss** (with counts), **Invested** (₹25 K+ … ₹10 L+, or under ₹50 K), **P/L %** bands (+50% or more, +20% or more, 0 to +20%, 0 to −10%, −10% to −20%, −20% or worse), **P/L ₹** (+₹1 L or more, −₹1 L or worse, …), search, and **Sort** by current value, invested, P/L ₹, P/L %, day change, % of total or name, high-to-low or low-to-high (click the Invested / Current value / P/L / % of total headers too). A line under the bar totals what is shown (invested, value, P/L and its share of your holdings). Works with the account tabs and the valuation chips; your choices are remembered in this browser; **Clear filters** resets.
+
 ## v5.6.2: what changed — page heading follows the menu
 
 The big heading at the top now changes with the screen you are on (e.g. "YOUR PORTFOLIO · Swing trading — Positions with targets and stops, your buy-the-dip list, and when to book or deploy."), and so does the browser tab title. "Is this stock worth buying?" stays on Value a stock.
