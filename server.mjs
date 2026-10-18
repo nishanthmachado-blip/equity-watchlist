@@ -338,28 +338,93 @@ let sxChain = Promise.resolve();
 function saveScreenerExtra(symbol, patch) { const run = async () => { const all = await readJson(screenerExtraFile, {}); all[symbol] = { ...(all[symbol] || {}), ...patch }; await writeJson(screenerExtraFile, all); }; sxChain = sxChain.then(run, run); return sxChain; }
 // ---- Mutual fund X-ray ----
 const normName = s => String(s || "").toLowerCase().replace(/&/g, " and ").replace(/\b(limited|ltd|the|india|co|company|corporation|corp|inc|industries|industry)\b/g, " ").replace(/[^a-z0-9]+/g, " ").trim();
-async function resolveHoldingSymbols(items) {
-  const [map, stocks, fund] = await Promise.all([readJson(nameMapFile, {}), readWatchlist(), readFundamentals()]);
+// ---- ISIN → NSE symbol, offline (shared, public data): NSE's list of every listed company with its ISIN
+// (EQUITY_L.csv, refreshed weekly). Fund portfolios carry ISINs, so most holdings match exactly with no search.
+const isinFile = path.join(DATA_DIR, "isin-master.json");
+let isinMem = null, isinLoading = null, isinTriedAt = 0;
+function refreshIsinMaster() {
+  if (isinLoading) return isinLoading;
+  isinTriedAt = Date.now();
+  isinLoading = (async () => {
+    try {
+      const r = await fetch(`${NSE_ARCHIVE_BASE()}/content/equities/EQUITY_L.csv`, { headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36", Referer: "https://www.nseindia.com/" }, signal: AbortSignal.timeout(30000) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const map = {}; for (const x of parseNseEquityList(await r.text())) if (/^INE[A-Z0-9]{9}$/.test(x.isin || "")) map[x.isin] = x.symbol;
+      if (Object.keys(map).length < 500) throw new Error("list too short");
+      isinMem = { fetchedAt: Date.now(), map }; await writeJson(isinFile, isinMem);
+      console.log(`[x-ray] ISIN list: ${Object.keys(map).length} NSE companies`);
+    } catch (e) { console.warn(`[x-ray] Could not download NSE's company list (${e.message}); matching by name / Screener search.`); }
+  })().finally(() => { isinLoading = null; });
+  return isinLoading;
+}
+// wait: on a user action (upload, fetch), wait a few seconds the very first time; never on page loads
+async function isinMaster({ wait = 0 } = {}) {
+  if (!isinMem) { const saved = await readJson(isinFile, null); if (saved?.map) isinMem = saved; }
+  const stale = !isinMem || Date.now() - isinMem.fetchedAt > 7 * 864e5;
+  if (stale && Date.now() - isinTriedAt > 6 * 3600e3) { const p = refreshIsinMaster(); if (!isinMem && wait) await Promise.race([p, new Promise(r => setTimeout(r, wait))]); }
+  return isinMem?.map || {};
+}
+// Matching order: names you confirmed before → ISIN (NSE list) → your watchlist / known companies → listed-company
+// list by exact name → Screener search (only for what is left, a limited number per call: it rate-limits long runs).
+async function resolveHoldingSymbols(items, { searchBudget = 15, wait = 6000 } = {}) {
+  const [map, stocks, fund, isins, master] = await Promise.all([readJson(nameMapFile, {}), readWatchlist(), readFundamentals(), isinMaster({ wait }), scripMaster().catch(() => ({ list: [] }))]);
   const byName = new Map();
   for (const st of stocks) if (symOf(st)) byName.set(normName(st.company), { symbol: symOf(st), exchange: st.exchange || "NSE" });
   for (const [sym, f] of Object.entries(fund)) if (f.companyName && !byName.has(normName(f.companyName))) byName.set(normName(f.companyName), { symbol: sym, exchange: "NSE" });
-  const out = []; let changed = false;
+  // listed companies by normalised name; a name shared by two NSE symbols is ambiguous and skipped
+  const byListed = new Map();
+  for (const x of master.list || []) {
+    const k = normName(x.name); if (!k) continue; const cur = byListed.get(k);
+    if (!cur) byListed.set(k, { symbol: x.symbol, exchange: x.exchange || "NSE" });
+    else if (cur.exchange === x.exchange && cur.symbol !== x.symbol) byListed.set(k, { ...cur, ambiguous: true });
+    else if (cur.exchange === "BSE" && x.exchange === "NSE") byListed.set(k, { symbol: x.symbol, exchange: "NSE" });
+  }
+  const out = []; let changed = false, searches = 0;
   for (const it of items) {
     const key = it.isin || normName(it.name), n = normName(it.name);
-    if (map[key]) { out.push({ ...map[key], how: "saved" }); continue; }
-    let hit = byName.get(n) || [...byName.entries()].find(([k]) => k && n && (k.startsWith(n) || n.startsWith(k)) && Math.min(k.length, n.length) >= 6)?.[1];
-    let how = hit ? "watchlist" : null;
-    if (!hit) {
+    if (map[key]?.symbol) { out.push({ ...map[key], how: "saved" }); continue; }
+    let hit = null, how = null;
+    if (it.isin && isins[it.isin]) { hit = { symbol: isins[it.isin], exchange: "NSE" }; how = "isin"; }
+    if (!hit) { hit = byName.get(n) || [...byName.entries()].find(([k]) => k && n && (k.startsWith(n) || n.startsWith(k)) && Math.min(k.length, n.length) >= 6)?.[1] || null; if (hit) how = "watchlist"; }
+    if (!hit) { const l = byListed.get(n); if (l && !l.ambiguous) { hit = l; how = "list"; } }
+    if (!hit && searches < searchBudget) {
       try {
-        for (const q of [it.isin, it.name].filter(Boolean)) { const res = await searchScreener(q); if (res.length) { hit = { symbol: res[0].symbol, exchange: res[0].exchange, label: res[0].name }; how = "screener"; break; } await new Promise(r => setTimeout(r, 350)); }
-      } catch (e) { out.push({ symbol: null, how: "error", error: e.message }); continue; }
+        for (const q of [it.isin, it.name].filter(Boolean)) { searches++; const res = await searchScreener(q); if (res.length) { hit = { symbol: res[0].symbol, exchange: res[0].exchange, label: res[0].name }; how = "screener"; break; } await new Promise(r => setTimeout(r, 300)); }
+      } catch (e) { searches = searchBudget; out.push({ symbol: null, how: "later", error: e.message }); continue; } // rate-limited: stop searching this round
+      await new Promise(r => setTimeout(r, 300));
     }
     if (hit) { map[key] = { symbol: hit.symbol, exchange: hit.exchange || "NSE", label: hit.label || null }; changed = true; }
-    out.push(hit ? { ...map[key], how } : { symbol: null, how: "none" });
-    await new Promise(r => setTimeout(r, 300));
+    out.push(hit ? { ...map[key], how } : { symbol: null, how: searches >= searchBudget ? "later" : "none" });
   }
   if (changed) await writeJson(nameMapFile, map);
   return out;
+}
+// Saved X-ray funds with holdings that still have no symbol (an earlier upload when Screener was rate-limiting, or
+// before the ISIN list): match them again in the background, at most once an hour per fund, and value the new ones.
+const fundFixAt = new Map(), fundFixRun = new Set();
+const fundFixRunning = id => fundFixRun.has(`${currentUser().id}:${id}`);
+function fixFundSymbols(fundId) {
+  const key = `${currentUser().id}:${fundId}`;
+  if (Date.now() - (fundFixAt.get(key) || 0) < 3600e3) return false;
+  fundFixAt.set(key, Date.now()); fundFixRun.add(key);
+  (async () => {
+    const st0 = await readJson(U.fundsFile, { funds: [] }), f0 = st0.funds.find(f => f.id === fundId); if (!f0) return;
+    const miss = f0.holdings.filter(h => !h.symbol); if (!miss.length) return;
+    const found = new Map();
+    for (let i = 0; i < miss.length; i += 25) {
+      const chunk = miss.slice(i, i + 25), res = await resolveHoldingSymbols(chunk.map(h => ({ name: h.name, isin: /^INE[A-Z0-9]{9}$/.test(h.isin || "") ? h.isin : null })), { searchBudget: 4, wait: 15000 });
+      res.forEach((x, k) => { if (x?.symbol) found.set(chunk[k].isin || chunk[k].name, x); });
+    }
+    if (!found.size) return;
+    const st = await readJson(U.fundsFile, { funds: [] }), f = st.funds.find(x => x.id === fundId); if (!f) return;
+    const added = [];
+    f.holdings = f.holdings.map(h => { const x = !h.symbol && found.get(h.isin || h.name); if (!x) return h; added.push({ ...h, symbol: x.symbol, exchange: x.exchange || "NSE" }); return added.at(-1); });
+    await writeJson(U.fundsFile, st);
+    for (const h of added) await ensureInPool(h.symbol, h.exchange, h.name, `Added from fund X-ray (${f.name}).`);
+    queueFill(added.map(h => h.symbol), 150).catch(() => {});
+    console.log(`[x-ray] ${f.name}: matched ${added.length} more holding(s)`);
+  })().catch(e => console.warn(`[x-ray] symbol fix failed: ${e.message}`)).finally(() => { fundFixAt.set(key, Date.now()); fundFixRun.delete(key); });
+  return true;
 }
 const dividendsFile = path.join(DATA_DIR, "dividends-cache.json"), technicalsFile = path.join(DATA_DIR, "technicals-cache.json");
 // Every valuation row also carries its dividend lens (from the cached dividend history) and the Value / Growth / Buy verdict.
@@ -3186,8 +3251,9 @@ async function appHandler(req, res, url) {
           if (!f) return reply(res, 404, { message: "Unknown fund." });
           const [{ rows }, view] = await Promise.all([computeRows(), kiteHoldingsView()]);
           const bySym = Object.fromEntries(rows.map(r => [String(r.symbol).toUpperCase(), r])), mine = new Map(view.holdings.map(h => [h.symbol, h.weightPct || 0]));
+          const missing = f.holdings.filter(h => !h.symbol).length, fixing = missing > 0 && fixFundSymbols(f.id);
           const holdings = f.holdings.map(h => { const r = h.symbol ? bySym[h.symbol] : null; return { ...h, held: mine.has(h.symbol), pe: r?.pe ?? null, sectorPe: r?.sectorPe ?? r?.sectorPeEst ?? null, sectorPeEst: !r?.sectorPe && !!r?.sectorPeEst, view: r && Number.isFinite(r.ratio) ? r.view : null, verdict: r?.verdict?.label || null, verdictCls: r?.verdict?.cls || null, verdictKey: r?.verdict?.key || null, growth: r?.growthLens ? { verdict: r.growthLens.verdict, key: r.growthLens.key, growth: r.growthLens.growth, implied: r.growthLens.impliedGrowth } : null, roce: r ? (r.profile === "financial" ? r.roe : r.roce) : null, valued: !!(r && Number.isFinite(r.ratio)) }; });
-          return reply(res, 200, { fund: { id: f.id, name: f.name, asOf: f.asOf, updatedAt: f.updatedAt }, holdings, summary: fundSummary(f.holdings, bySym, mine), pending: holdings.filter(h => h.symbol && !h.valued).length });
+          return reply(res, 200, { fund: { id: f.id, name: f.name, asOf: f.asOf, updatedAt: f.updatedAt }, holdings, summary: fundSummary(f.holdings, bySym, mine), pending: holdings.filter(h => h.symbol && !h.valued).length, missing, matching: !!fixing || fundFixRunning(f.id) });
         }
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown fund operation." });
         const b = await readBody(req);
@@ -3201,7 +3267,7 @@ async function appHandler(req, res, url) {
         }
         if (op === "auto") { const r = await autoFetchFund({ id: b.id || null, name: String(b.name || "").slice(0, 160), isin: String(b.isin || "").toUpperCase(), link: b.link ? String(b.link).slice(0, 600) : null }); return r.ok ? reply(res, 200, r) : reply(res, 422, { message: `Could not fetch the holdings of ${r.name || "this fund"} automatically.`, tried: r.tried }); }
         if (op === "auto-all") return reply(res, 200, { job: startXrayAll() });
-        if (op === "resolve") { const items = (Array.isArray(b.items) ? b.items : []).slice(0, 15).map(i => ({ name: String(i.name || "").slice(0, 120), isin: /^INE[A-Z0-9]{9}$/.test(i.isin || "") ? i.isin : null })); return reply(res, 200, { results: await resolveHoldingSymbols(items) }); }
+        if (op === "resolve") { const items = (Array.isArray(b.items) ? b.items : []).slice(0, 15).map(i => ({ name: String(i.name || "").slice(0, 120), isin: /^INE[A-Z0-9]{9}$/.test(i.isin || "") ? i.isin : null })); return reply(res, 200, { results: await resolveHoldingSymbols(items, { searchBudget: 6 }) }); }
         if (op === "save") {
           const name = String(b.name || "").trim().slice(0, 80); if (!name) throw new Error("Give the fund a name.");
           const holdings = (Array.isArray(b.holdings) ? b.holdings : []).map(h => ({ name: String(h.name || "").slice(0, 120), isin: /^INE[A-Z0-9]{9}$/.test(h.isin || "") ? h.isin : null, weight: Number(h.weight) || 0, sector: h.sector ? String(h.sector).slice(0, 60) : null, symbol: /^[A-Z0-9&-]{1,20}$/.test(String(h.symbol || "").toUpperCase()) ? String(h.symbol).toUpperCase() : null, exchange: h.exchange === "BSE" ? "BSE" : "NSE" })).filter(h => h.name && h.weight > 0).slice(0, 300);

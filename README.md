@@ -1,5 +1,23 @@
 # Equity Watchlist MVP
 
+## v5.16.0: what changed — fund X-ray matches every listed stock
+- **Why holdings showed "no symbol"**: each holding was looked up with a separate Screener search. Long portfolios (Bandhan Small Cap has 258 holdings) hit Screener's rate limit, so well-known stocks like Canara Bank, SBI and Titan were left unmatched.
+- **Now matched offline first**, in this order:
+  1. Mappings you confirmed before.
+  2. The ISIN, using NSE's full company list (`EQUITY_L.csv`, downloaded once and refreshed weekly).
+  3. Your watchlist.
+  4. The exact company name in the listed-company list.
+  5. A capped number of Screener searches, only for what is left. A rate-limit stops the searching instead of failing every remaining stock.
+- **Funds you already saved are fixed automatically**: opening a fund with unmatched holdings matches them in the background (at most once an hour). It shows "matching…" and the page refreshes by itself as they get valued.
+- Bug fix: NSE's company list has spaces in its header, so its ISIN column was never read. It is now.
+- Performance: matching runs in the background; `npm run perf` is all within budget.
+
+## v5.15.0: what changed — picking a fund shows it straight away
+- **Mutual fund X-ray**: clicking a fund tab closes the open *Add a mutual fund* form and scrolls the page to that fund's details. The details briefly glow and show "Loading…" while they arrive, so it's clear something happened.
+- The same happens after saving an uploaded portfolio or fetching one automatically.
+- Background refreshes (fundamentals arriving) never move the page.
+- Performance: browser-only change; `npm run perf` is all within budget.
+
 ## v5.14.0: what changed — old Excel (.xls) files work everywhere
 - **Mutual fund X-ray reads `.xls` (Excel 97-2003)**, the format Helios and many other fund houses still use for monthly portfolios. Upload it as-is; there's no need to re-save it as .xlsx. A new built-in reader (`xls.mjs`, no new dependency) handles:
   - shared strings split across records

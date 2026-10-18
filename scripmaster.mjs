@@ -41,10 +41,10 @@ export function parseKiteInstruments(csv) {
 }
 // NSE EQUITY_L.csv: SYMBOL,NAME OF COMPANY,SERIES,DATE OF LISTING,PAID UP VALUE,MARKET LOT,ISIN NUMBER,FACE VALUE
 export function parseNseEquityList(csv) {
-  const lines = String(csv || "").split(/\r?\n/), head = splitCsv(lines.shift() || "").map(h => h.toUpperCase()), out = [];
+  const lines = String(csv || "").split(/\r?\n/), head = splitCsv(lines.shift() || "").map(h => h.trim().toUpperCase()), out = []; // NSE's header has spaces after the commas
   const iS = head.indexOf("SYMBOL"), iN = head.indexOf("NAME OF COMPANY"), iI = head.findIndex(h => h.startsWith("ISIN"));
   if (iS < 0 || iN < 0) return out;
-  for (const l of lines) { if (!l) continue; const c = splitCsv(l); const symbol = String(c[iS] || "").toUpperCase(); if (/^[A-Z0-9&-]{1,20}$/.test(symbol) && c[iN]) out.push({ symbol, name: c[iN].replace(/\s+/g, " "), exchange: "NSE", isin: c[iI] || null }); }
+  for (const l of lines) { if (!l) continue; const c = splitCsv(l); const symbol = String(c[iS] || "").toUpperCase(); if (/^[A-Z0-9&-]{1,20}$/.test(symbol) && c[iN]) out.push({ symbol, name: c[iN].replace(/\s+/g, " "), exchange: "NSE", isin: iI >= 0 ? String(c[iI] || "").trim() || null : null }); }
   return out;
 }
 const titleCase = s => (/[a-z]/.test(s) ? s : s.toLowerCase().replace(/\b([a-z])/g, m => m.toUpperCase()).replace(/\b(Ltd|Limited)\b/g, "Ltd"));

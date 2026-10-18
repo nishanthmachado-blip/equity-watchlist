@@ -592,3 +592,9 @@ tr.fav-row>td{background-color:color-mix(in srgb,#e11d48 4%,var(--card-bg,#fff))
 .md-seg.us-cur button{display:inline-flex;align-items:center;border:0;border-radius:0;padding:6px 14px;font-size:13px;background:transparent;box-shadow:none;white-space:nowrap}
 .md-seg.us-cur button+button{border-left:1px solid var(--line,#dce4ee)}
 .md-seg.us-cur button.active{background:var(--navy,#183b62);color:#fff;box-shadow:none}
+/* v5.15: picking a fund closes the add form and brings the fund into view */
+#fundView .fd-top{scroll-margin-top:12px}
+#fdBody.fd-flash{animation:fdFlash 1.1s ease-out}
+@keyframes fdFlash{0%{box-shadow:0 0 0 3px color-mix(in srgb,var(--ix,#2563eb) 45%,transparent);border-radius:14px}100%{box-shadow:0 0 0 3px transparent;border-radius:14px}}
+@media (prefers-reduced-motion:reduce){#fdBody.fd-flash{animation:none}}
+.fd-loading{padding:24px 0}

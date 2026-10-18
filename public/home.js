@@ -1132,9 +1132,22 @@
   function fdTabs() {
     $("#fdTabs").innerHTML = fdList.map(f => `<button type="button" class="viewTab${f.id === fdActive ? " active" : ""}" data-fd="${esc(f.id)}" title="${f.ageDays > 45 ? `Portfolio is ${f.ageDays} days old` : ""}">${f.source ? "⚡ " : ""}${esc(f.name)} <span class="tab-badge${f.ageDays > 45 ? " stale" : ""}">${f.count}</span></button>`).join("");
   }
-  async function fdOpen(id) {
+  // reveal: the user picked this fund (tab, save, fetch): close the add-a-fund form and bring the fund into view.
+  // Background refreshes call without it and leave the scroll position alone.
+  const fdReveal = () => {
+    const top = $("#fundView .fd-top") || $("#fdBody"), y = top.getBoundingClientRect().top;
+    if (y < 0 || y > innerHeight * 0.35) top.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+    const b = $("#fdBody"); b.classList.remove("fd-flash"); void b.offsetWidth; b.classList.add("fd-flash");
+  };
+  async function fdOpen(id, { reveal = false } = {}) {
+    const switching = id !== fdActive;
     fdActive = id; fdTabs(); clearTimeout(fdPoll);
     const body = $("#fdBody");
+    if (reveal) {
+      $("#fdImport").hidden = true;
+      if (switching && id) body.innerHTML = `<p class="hint fd-loading">Loading ${esc(fdList.find(f => f.id === id)?.name || "fund")}…</p>`;
+      fdReveal();
+    }
     if (!id) { body.innerHTML = `<div class="fd-empty"><div class="fd-empty-ico">🧺</div><h2>See inside any mutual fund</h2><p>Load a fund's portfolio (Helios Flexi Cap, Trust MF Small Cap, any scheme) and every holding gets this app's valuation, growth lens and verdict, plus the fund's weighted P/E and how much it overlaps with what you already own.</p><button type="button" class="primary" id="fdAdd2">+ Add your first fund</button></div>`; $("#fdAdd2").onclick = fdShowImport; return; }
     try {
       const x = await get(`/api/funds/view?id=${encodeURIComponent(id)}`), s = x.summary, m = s.mix;
@@ -1144,9 +1157,9 @@
         <section class="metrics"><div><span>Weighted P/E</span><strong>${s.weightedPE ?? "—"}</strong></div><div><span>In buy zone</span><strong class="buy">${m.buy}%</strong></div><div><span>Growth-justified</span><strong>${s.growthJustified}%</strong></div><div><span>Overlap with your holdings</span><strong>${s.overlapWithYou}%<small style="font-size:14px;color:var(--muted)"> · ${s.sharedStocks} shared</small></strong></div></section>
         <div class="fd-mix" role="img" aria-label="Valuation mix by weight">${bar.map(([k, l, c]) => m[k] > 0 ? `<i style="width:${m[k]}%;background:${c}" title="${l}: ${m[k]}%"></i>` : "").join("")}</div>
         <div class="fd-legend">${bar.map(([k, l, c]) => `<span><i style="background:${c}"></i>${l} ${m[k]}%</span>`).join("")}${s.weightedGrowth !== null ? `<span>· weighted expected growth ${s.weightedGrowth}%/yr</span>` : ""}</div>
-        ${x.pending ? `<p class="mk-note">Fetching fundamentals for ${x.pending} holding(s) in the background; this page refreshes by itself.</p>` : ""}
+        ${x.matching ? `<p class="mk-note">Finding the NSE symbol for ${x.missing} holding(s) (by ISIN, then name); they get valued as soon as they match. This page refreshes by itself.</p>` : x.pending ? `<p class="mk-note">Fetching fundamentals for ${x.pending} holding(s) in the background; this page refreshes by itself.</p>` : ""}
         <section class="table-wrap"><table class="fd-table"><thead><tr><th>#</th><th>Stock</th><th>Weight</th><th>P/E</th><th>Sector P/E</th><th>ROCE / ROE</th><th>Verdict</th><th>Growth lens</th><th>You</th></tr></thead><tbody>
-        ${x.holdings.map((h, i) => `<tr${h.symbol ? ` data-sym="${esc(h.symbol)}"` : ""}><td>${i + 1}</td><td><div class="company">${esc(h.name)}</div><div class="ticker">${h.symbol ? esc(h.symbol) : '<span class="avoid">no symbol</span>'}${h.sector ? ` · ${esc(h.sector)}` : ""}</div></td><td><div class="fd-w"><b>${fmt(h.weight, 2)}%</b><span><i style="width:${Math.min(100, h.weight * 10)}%"></i></span></div></td>
+        ${x.holdings.map((h, i) => `<tr${h.symbol ? ` data-sym="${esc(h.symbol)}"` : ""}><td>${i + 1}</td><td><div class="company">${esc(h.name)}</div><div class="ticker">${h.symbol ? esc(h.symbol) : x.matching ? '<span class="hint">matching…</span>' : '<span class="avoid" title="Not listed on NSE (or not found): type the symbol with Update holdings">no symbol</span>'}${h.sector ? ` · ${esc(h.sector)}` : ""}</div></td><td><div class="fd-w"><b>${fmt(h.weight, 2)}%</b><span><i style="width:${Math.min(100, h.weight * 10)}%"></i></span></div></td>
           <td>${Number.isFinite(h.pe) ? fmt(h.pe) : "—"}</td><td>${Number.isFinite(h.sectorPe) ? `${h.sectorPeEst ? "~" : ""}${fmt(h.sectorPe)}` : "—"}</td><td>${Number.isFinite(h.roce) ? `${fmt(h.roce)}%` : "—"}</td>
           <td>${h.verdict ? `<span class="chip ${esc(h.verdictCls)}">${esc(h.verdict)}</span>` : h.symbol ? '<span class="hint">fetching…</span>' : "—"}</td>
           <td>${h.growth ? `<span class="chip ${({ under: "v-under", fair: "v-fair", pricey: "v-rich1", rich: "v-rich" })[h.growth.key]}" title="Expected ${h.growth.growth}%/yr vs ${h.growth.implied}%/yr priced in">${esc(h.growth.verdict)}</span>` : "—"}</td>
@@ -1157,7 +1170,7 @@
       $("#fdRefetch")?.addEventListener("click", async e => { const b = e.currentTarget; b.disabled = true; b.textContent = "Fetching…"; try { const r = await post("/api/funds/auto", { id }); window.toast(`✓ ${ui.esc(r.fund.name)}: ${r.fund.count} holdings${r.fund.asOf ? ` (as of ${ui.esc(r.fund.asOf)})` : ""}.`); await fdLoadList(); fdOpen(id); } catch (err) { window.toast(ui.esc(err.message), { kind: "bad" }); b.disabled = false; b.textContent = "↻ Refetch"; } });
       $("#fdUpdate").onclick = () => fdShowImport(x.fund);
       $("#fdDelete").onclick = async () => { if (await ui.confirm({ title: `Delete ${x.fund.name}?`, message: "Only the fund's saved portfolio is removed; the stocks stay tracked.", okText: "Delete fund", danger: true })) { await post("/api/funds/delete", { id }); await fdLoadList(); fdOpen(fdList[0]?.id || null); } };
-      if (x.pending && !$("#fundView").hidden) fdPoll = setTimeout(async () => { await loadValuation(); fdOpen(id); }, 10000);
+      if ((x.pending || x.matching) && !$("#fundView").hidden) fdPoll = setTimeout(async () => { await loadValuation(); fdOpen(id); }, 10000);
     } catch (e) { body.innerHTML = `<p class="hint">Could not load the fund: ${esc(e.message)}</p>`; }
   }
   function fdShowImport(fund = null) {
@@ -1177,7 +1190,7 @@
     b.classList.add("is-loading"); b.disabled = true; st.textContent = "Fetching… (up to half a minute)";
     try {
       const r = await post("/api/funds/auto", { id: $("#fdImport").dataset.id || null, name: fdAutoPick?.name || name, isin: fdAutoPick?.isin || "", link });
-      $("#fdImport").hidden = true; await fdLoadList(); await loadStocks(); fdOpen(r.fund.id);
+      $("#fdImport").hidden = true; await fdLoadList(); await loadStocks(); fdOpen(r.fund.id, { reveal: true });
       window.toast(`✓ ${ui.esc(r.fund.name)}: ${r.fund.count} holdings fetched${r.fund.asOf ? ` (as of ${ui.esc(r.fund.asOf)})` : ""}. Valuing them in the background.`);
     } catch (e) {
       let tried = []; try { tried = JSON.parse(e.body || "{}").tried || []; } catch { /* plain error */ }
@@ -1186,7 +1199,7 @@
   };
   $("#fdAutoAll").onclick = async () => { try { const r = await post("/api/funds/auto-all", {}); fdMeta.job = r.job; fdJobRender(); } catch (e) { window.toast(ui.esc(e.message), { kind: "bad" }); } };
   $("#fdCancel").onclick = () => { $("#fdImport").hidden = true; };
-  $("#fdTabs").addEventListener("click", e => { const b = e.target.closest("[data-fd]"); if (b) fdOpen(b.dataset.fd); });
+  $("#fdTabs").addEventListener("click", e => { const b = e.target.closest("[data-fd]"); if (b) fdOpen(b.dataset.fd, { reveal: true }); });
   $("#fdBody").addEventListener("click", e => { const tr = e.target.closest("tr[data-sym]"); if (!tr) return; openStockSheet(tr.dataset.sym, { back: "Back to Mutual fund X-ray" }); });
   const fdTakeFile = f => { if (!f) return; if (f.size > 15e6) { $("#fdStatus").textContent = "File is larger than 15 MB."; return; } const rd = new FileReader(); rd.onload = () => { fdData = { filename: f.name, data: String(rd.result).split(",")[1] }; $("#fdFileName").textContent = `📄 ${f.name} (${Math.round(f.size / 1024)} KB)`; }; rd.readAsDataURL(f); };
   $("#fdPick").onclick = () => $("#fdFile").click(); $("#fdFile").onchange = e => fdTakeFile(e.target.files[0]);
@@ -1219,7 +1232,7 @@
     for (let i = 0; i < fdRows.length; i += 10) {
       if (fdTables[idx] !== t) return;
       $("#fdStatus").textContent = `Matching symbols ${Math.min(i + 10, fdRows.length)} / ${fdRows.length}…`;
-      try { const r = await post("/api/funds/resolve", { items: fdRows.slice(i, i + 10).map(h => ({ name: h.name, isin: h.isin })) }); r.results.forEach((x, k) => { const h = fdRows[i + k]; if (h.how === "you") return; h.symbol = x.symbol; h.exchange = x.exchange || "NSE"; h.how = { saved: "remembered", watchlist: "your watchlist", screener: "Screener search", none: "not found", error: "search failed" }[x.how] || x.how; }); }
+      try { const r = await post("/api/funds/resolve", { items: fdRows.slice(i, i + 10).map(h => ({ name: h.name, isin: h.isin })) }); r.results.forEach((x, k) => { const h = fdRows[i + k]; if (h.how === "you") return; h.symbol = x.symbol; h.exchange = x.exchange || "NSE"; h.how = { saved: "remembered", isin: "ISIN (NSE list)", list: "company name", watchlist: "your watchlist", screener: "Screener search", later: "matched after saving", none: "not found", error: "search failed" }[x.how] || x.how; }); }
       catch (e) { fdRows.slice(i, i + 10).forEach(h => { if (h.how === "…") h.how = "search failed"; }); }
       draw();
     }
@@ -1230,7 +1243,7 @@
     const b = $("#fdSave"); b.classList.add("is-loading"); b.disabled = true;
     try {
       const x = await post("/api/funds/save", { id: $("#fdImport").dataset.id || null, name, asOf: $("#fdAsOf").value, holdings: fdRows.map(h => ({ name: h.name, isin: h.isin, weight: h.weight, sector: h.sector, symbol: h.symbol, exchange: h.exchange })) });
-      $("#fdImport").hidden = true; await fdLoadList(); await loadStocks(); fdOpen(x.id);
+      $("#fdImport").hidden = true; await fdLoadList(); await loadStocks(); fdOpen(x.id, { reveal: true });
       window.toast(`✓ ${ui.esc(name)} saved. Fetching fundamentals for its holdings in the background.`);
     } catch (e) { $("#fdSaveSt").textContent = e.message; } finally { b.classList.remove("is-loading"); b.disabled = false; }
   }
