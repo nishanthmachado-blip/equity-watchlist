@@ -812,14 +812,24 @@ function initTheme(){
   const wrap=document.createElement("span");wrap.className="theme-wrap";btn.parentNode.insertBefore(wrap,btn);wrap.appendChild(btn);
   const menu=document.createElement("div");menu.className="theme-menu";menu.setAttribute("role","menu");menu.hidden=true;
   const item=t=>`<button type="button" role="menuitemradio" data-theme-id="${t.id}" aria-checked="false"><span class="swatch">${t.sw.map(c=>`<i style="background:${c}"></i>`).join("")}</span><span class="tm-txt"><b>${t.name}</b>${t.desc?`<small>${t.desc}</small>`:""}</span></button>`;
-  menu.innerHTML=`<p class="tm-h">Colour themes</p>${THEMES.filter(t=>!t.group).map(item).join("")}<p class="tm-h">Full redesigns <small>new layout, type and shapes</small></p>${THEMES.filter(t=>t.group==="redesign").map(item).join("")}`;
+  menu.innerHTML=`<p class="tm-h">Text size <small>whole app, this browser</small></p><div class="tm-size" role="group" aria-label="Text size">${TEXT_SIZES.map(([z,l,t])=>`<button type="button" data-zoom="${z}" title="${t}" style="font-size:${Math.round(13*z)}px">${l}</button>`).join("")}</div><p class="tm-h">Colour themes</p>${THEMES.filter(t=>!t.group).map(item).join("")}<p class="tm-h">Full redesigns <small>new layout, type and shapes</small></p>${THEMES.filter(t=>t.group==="redesign").map(item).join("")}`;
   wrap.appendChild(menu);btn.setAttribute("aria-haspopup","menu");btn.setAttribute("aria-expanded","false");btn.title="Choose a theme";
   const close=()=>{menu.hidden=true;btn.setAttribute("aria-expanded","false")};
   btn.onclick=e=>{e.stopPropagation();menu.hidden=!menu.hidden;btn.setAttribute("aria-expanded",String(!menu.hidden));if(!menu.hidden)menu.querySelector('[aria-checked="true"]')?.focus()};
-  menu.onclick=e=>{const b=e.target.closest("[data-theme-id]");if(b){try{localStorage.setItem("equity-skin-chosen","1")}catch{}applyTheme(b.dataset.themeId);close();btn.focus()}};
+  menu.onclick=e=>{const zb=e.target.closest("[data-zoom]");if(zb){e.stopPropagation();applyZoom(Number(zb.dataset.zoom));return}const b=e.target.closest("[data-theme-id]");if(b){try{localStorage.setItem("equity-skin-chosen","1")}catch{}applyTheme(b.dataset.themeId);close();btn.focus()}};
   document.addEventListener("click",e=>{if(!wrap.contains(e.target))close()});
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!menu.hidden){close();btn.focus()}});
-  applyTheme(currentThemeId());
+  applyTheme(currentThemeId());applyZoom(currentZoom());
+}
+// Text size for the whole app (CSS zoom on the page, so every px-sized style scales together); remembered per browser.
+const TEXT_SIZES=[[0.8,"A−−","Smallest (80%)"],[0.9,"A−","Smaller (90%)"],[1,"A","Normal (100%)"],[1.1,"A+","Larger (110%)"]];
+function currentZoom(){let z=1;try{z=Number(localStorage.getItem("equity-zoom"))||1}catch{}return TEXT_SIZES.some(x=>x[0]===z)?z:1}
+function applyZoom(z){
+  if(!TEXT_SIZES.some(x=>x[0]===z))z=1;
+  document.documentElement.style.zoom=z===1?"":String(z);
+  try{if(z===1)localStorage.removeItem("equity-zoom");else localStorage.setItem("equity-zoom",String(z))}catch{}
+  document.querySelectorAll(".tm-size [data-zoom]").forEach(b=>b.setAttribute("aria-pressed",String(Number(b.dataset.zoom)===z)));
+  window.dispatchEvent(new Event("resize")); // charts re-measure
 }
 function setTheme(theme){applyTheme(theme==="dark"?"indigo-night":"indigo")}
 

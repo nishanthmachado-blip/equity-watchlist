@@ -1,5 +1,10 @@
 # Equity Watchlist MVP
 
+## v5.17.0: what changed — compact swing summary, text size
+- **Swing trading**: the second row of cards (To book profit, Deploy signals, Booked so far, Free cash) is now one slim line of coloured chips. A green chip means there's profit to book, blue means deploy signals, and red means a stop-loss hit or short of cash. **▾ Details** opens the full cards and **▴ Fewer cards** closes them; your choice is remembered.
+- **Text size for the whole app**: 🎨 theme menu → *Text size* → A−− (80%), A− (90%), A (100%), A+ (110%). Every screen scales together, the choice is remembered in this browser, and it applies before the page draws, so there's no flash.
+- Performance: browser-only change; `npm run perf` is all within budget.
+
 ## v5.16.0: what changed — fund X-ray matches every listed stock
 - **Why holdings showed "no symbol"**: each holding was looked up with a separate Screener search. Long portfolios (Bandhan Small Cap has 258 holdings) hit Screener's rate limit, so well-known stocks like Canara Bank, SBI and Titan were left unmatched.
 - **Now matched offline first**, in this order:

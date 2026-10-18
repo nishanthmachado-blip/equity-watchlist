@@ -2,6 +2,7 @@
 (() => {
   const $ = s => document.querySelector(s), esc = s => window.ui.esc(s);
   let sw = null, timer = null;
+  let swMore = (() => { try { return localStorage.getItem("sw-more") === "1"; } catch { return false; } })(); // second card row open?
   const api = async (url, body) => {
     const r = await fetch(url, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.message || `HTTP ${r.status}`); return j;
@@ -34,11 +35,21 @@
       <div><span>Value now</span><strong>${amt(t.value)}</strong>${priceNote}</div>
       <div class="${t.pnl > 0 ? "sw-up" : t.pnl < 0 ? "sw-down" : ""}"><span>Profit / loss</span><strong class="${cls(t.pnl)}">${sg(t.pnl)}</strong><small class="${cls(t.pnlPct)}">${pct(t.pnlPct)}</small>${priceNote}</div>
       ${t.pat ? `<div class="sw-pat${t.pat.net < 0 ? " neg" : ""}" title="If you sold every position now"><span>🧾 Profit after tax (PAT)</span><strong class="${cls(t.pat.net)}">${sg(t.pat.net)}</strong><small>if you book all now: P/L − STT ${inr(t.pat.stt)} − charges ${inr(t.pat.otherCharges)} − tax ${inr(t.pat.tax)}</small><button type="button" class="pat-btn" data-go="pat">How it is worked out</button></div>` : ""}
+      ${swMore ? `
       <div class="${t.takeProfit ? "sw-tp" : ""}"><span>🎯 To book profit</span><strong>${t.takeProfit}</strong>${t.stopHit ? `<small class="avoid">🛑 ${t.stopHit} at stop-loss</small>` : ""}</div>
       <div class="${t.deploy ? "sw-dp" : ""}"><span>💰 Deploy signals</span><strong>${t.deploy}</strong>${t.deployNow ? `<small>up to ${amt(t.deployNow)}</small>` : ""}</div>
       <div><span>Booked so far</span><strong class="${cls(v.realised.pnl)}">${sg(v.realised.pnl)}</strong><small>${v.realised.count} closed trade${v.realised.count === 1 ? "" : "s"}${v.realisedNet && v.realised.count ? ` · ≈ ${sg(v.realisedNet.net)} after tax & charges` : ""}</small></div>
       ${fin(t.cash) ? `<div class="${t.cashShort ? "sw-short" : ""}" title="Buys take from it, sales add to it. Change it in ⚙ Settings."><span>💵 Free cash</span><strong>${amt(t.cash)}</strong><small>${t.cashShort ? `signals need ${amt(t.deployNow)}: short by ${amt(t.cashShort)}` : t.deployNow ? `signals need ${amt(t.deployNow)}` : "for new swing buys"}</small></div>`
-        : `<div class="sw-setcash"><span>💵 Free cash</span><button type="button" class="linklike" data-go="cash">Set your swing cash</button><small>to see if you can cover deploy signals</small></div>`}`;
+        : `<div class="sw-setcash"><span>💵 Free cash</span><button type="button" class="linklike" data-go="cash">Set your swing cash</button><small>to see if you can cover deploy signals</small></div>`}` : ""}`;
+    // Second row (book profit / deploy / booked / free cash): a one-line strip unless you open it
+    const strip = [
+      `<span class="${t.takeProfit ? "on-tp" : ""}">🎯 <b>${t.takeProfit}</b> to book profit</span>`,
+      t.stopHit ? `<span class="on-bad">🛑 <b>${t.stopHit}</b> at stop-loss</span>` : "",
+      `<span class="${t.deploy ? "on-dp" : ""}">💰 <b>${t.deploy}</b> deploy signal${t.deploy === 1 ? "" : "s"}${t.deployNow ? ` · up to ${amt(t.deployNow)}` : ""}</span>`,
+      `<span>Booked <b class="${cls(v.realised.pnl)}">${sg(v.realised.pnl)}</b> · ${v.realised.count} trade${v.realised.count === 1 ? "" : "s"}</span>`,
+      fin(t.cash) ? `<span class="${t.cashShort ? "on-bad" : ""}">💵 Free cash <b>${amt(t.cash)}</b>${t.cashShort ? ` · short by ${amt(t.cashShort)}` : ""}</span>` : `<span><button type="button" class="linklike" data-go="cash">💵 Set your swing cash</button></span>`
+    ].filter(Boolean).join("");
+    $("#swMore").innerHTML = swMore ? `<button type="button" class="linklike sw-more-btn" data-more="0" aria-expanded="true">▴ Fewer cards</button>` : `<div class="sw-strip">${strip}<button type="button" class="linklike sw-more-btn" data-more="1" aria-expanded="false">▾ Details</button></div>`;
     renderScore(); renderLedger();
     const src = [...new Set([...v.positions, ...v.watch].map(r => r.priceSource).filter(Boolean))];
     $("#swStatus").innerHTML = `<b>Updated ${hm(v.checkedAt)}</b> · ${v.marketOpen ? "market open, auto-updates every minute" : "market closed"} · prices from ${esc(src.join(", ") || "—")}${v.pricePending ? ` · <span class="sw-pending">${v.pricePending} still loading…</span>` : ""}${t.unpriced ? ` · ${t.unpriced} without a price` : ""}`;
@@ -504,6 +515,7 @@
     $("#swExport").onclick = () => { if (!sw?.realised?.count && !sw?.positions?.length) { window.toast?.("Nothing to export yet.", { kind: "info" }); return; } const a = document.createElement("a"); a.href = "/api/swing/export.xlsx"; a.download = ""; document.body.append(a); a.click(); a.remove(); };
     $("#swRefresh").onclick = () => load(false, true);
     $("#swingView").addEventListener("click", async e => {
+      const mb = e.target.closest("[data-more]"); if (mb) { swMore = mb.dataset.more === "1"; try { localStorage.setItem("sw-more", swMore ? "1" : "0"); } catch { /* private mode */ } render(); return; }
       if (e.target.closest('[data-go="paste"]')) { pasteDialog(); return; }
       if (e.target.closest('[data-go="dip"]')) { dipAddDialog(); return; }
       if (e.target.closest('[data-go="pat"]')) { patDialog(); return; }
