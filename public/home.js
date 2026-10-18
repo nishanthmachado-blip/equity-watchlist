@@ -3,7 +3,7 @@
 // growthScore, valuation, loadValuation, loadStocks, loadPe, render).
 (() => {
   const post = (path, body = {}) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-    .then(async r => { const x = await r.json().catch(() => ({})); if (!r.ok) { const e = new Error(x.message || `HTTP ${r.status}`); e.status = r.status; throw e; } return x; });
+    .then(async r => { const x = await r.json().catch(() => ({})); if (!r.ok) { const e = new Error(x.message || `HTTP ${r.status}`); e.status = r.status; if (x.tried) e.tried = x.tried; throw e; } return x; });
   const get = path => fetch(path).then(async r => { const x = await r.json().catch(() => ({})); if (!r.ok) throw new Error(x.message || `HTTP ${r.status}`); return x; });
   const inr = v => Number.isFinite(v) ? `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}` : "—";
   const pc = v => Number.isFinite(v) ? `${fmt(v)}%` : "—";
@@ -373,7 +373,13 @@
     const hs = scoped.map(h => { const r = rowFor(h.symbol); return { ...h, weightPct: totalValue > 0 && Number.isFinite(h.value) ? Math.round(h.value / totalValue * 1000) / 10 : null, r, c: h.inWatchlist ? classify(r) : { key: "none", label: "Not on watchlist", cls: "v-none", tags: [] } }; });
     const cnt = f => hs.filter(h => matches(h, f)).length;
     if (!v.accounts.length) $("#pfSetup").open = true;
-    $("#pfAccounts").innerHTML = v.accounts.length ? `<ul class="flag-list">${v.accounts.map(a => `<li><div class="fcompany">${esc(a.brokerName || "Zerodha")} · ${esc(a.label)}</div><div class="fnote">${a.count} holdings · synced ${new Date(a.syncedAt).toLocaleString("en-IN")}</div></li>`).join("")}</ul>` : "No broker connected yet. Connect one, or import a CSV below.";
+    const accPlain = a => ((a.label || "").toLowerCase().includes(String(a.brokerName || "").toLowerCase()) ? a.label || "" : `${a.brokerName || "Zerodha"} · ${a.label || ""}`), accName = a => esc(accPlain(a));
+    const rmBtn = a => `<button type="button" class="ghost danger-text" data-pf-rm="${esc(a.userId)}" data-label="${esc(accPlain(a))}" data-n="${a.count}" data-imp="${a.imported ? 1 : 0}">Remove all</button>`;
+    $("#pfAccounts").innerHTML = v.accounts.length || v.hiddenAccounts?.length ? `<ul class="flag-list">${v.accounts.map(a => `<li><div class="fcompany">${esc(a.brokerName || "Zerodha")} · ${esc(a.label)} ${rmBtn(a)}</div><div class="fnote">${a.count} holdings · ${a.imported ? "imported" : "synced"} ${new Date(a.syncedAt).toLocaleString("en-IN")}</div></li>`).join("")}${(v.hiddenAccounts || []).map(a => `<li><div class="fcompany">${esc(a.brokerName)} · ${esc(a.label)} <button type="button" class="ghost" data-pf-unhide="${esc(a.userId)}">Show again</button></div><div class="fnote">removed from this app (${a.count} holdings kept out, even after a sync)</div></li>`).join("")}</ul>` : "No broker connected yet. Connect one, or import a CSV below.";
+    const inr0 = x => `₹${Math.round(x || 0).toLocaleString("en-IN")}`;
+    $("#pfHoldAccts").innerHTML = [...v.accounts.map(a => `<span class="us-acct${pfAccount === a.userId ? " on" : ""}">${accName(a)} <small>${a.imported ? "imported" : "synced"} · ${a.count} holding${a.count === 1 ? "" : "s"} · ${inr0(a.value)}</small>${rmBtn(a)}</span>`),
+      ...(v.hiddenAccounts || []).map(a => `<span class="us-acct off">${accName(a)} <small>synced · removed (${a.count})</small><button type="button" class="ghost" data-pf-unhide="${esc(a.userId)}">Show again</button></span>`),
+      v.accounts.length > 1 ? `<button type="button" class="ghost danger-text pf-clear" data-pf-rm-all="1">🗑 Remove all</button>` : ""].join("");
     $("#pfAccTabs").innerHTML = v.accounts.length ? [`<button type="button" class="viewTab${pfAccount === "all" ? " active" : ""}" data-acc="all">All accounts <span class="tab-badge">${v.holdings.length}</span></button>`, ...v.accounts.map(a => `<button type="button" class="viewTab${pfAccount === a.userId ? " active" : ""}" data-acc="${esc(a.userId)}">${(a.label || "").toLowerCase().includes(String(a.brokerName || "").toLowerCase()) ? "" : `<span class="acc-broker">${esc(a.brokerName)}</span> `}${esc(a.label)} <span class="tab-badge">${a.count}</span></button>`)].join("") : "";
     $("#pfCards").innerHTML = hs.length ? `<div><span>Holdings${pfAccount === "all" ? "" : " in this account"}</span><strong>${hs.length}</strong></div><div><span>Invested</span><strong>${inr(Math.round(totalInvested))}</strong><small>${unpriced ? `excl. ${unpriced} without a price` : "quantity × average cost"}</small></div><div><span>Current value</span><strong class="${plc(totalPnl)}">${inr(Math.round(totalValue))}</strong><small>at today's prices</small></div><div class="${totalPnl > 0 ? "pf-up" : totalPnl < 0 ? "pf-dn" : ""}"><span>Profit / loss</span><strong class="${plc(totalPnl)}">${pl(totalPnl)}</strong><small class="${plc(totalPnl)}">${plPct(totalPnl, totalInvested)}</small></div><div><span>In buy zone / expensive</span><strong><b class="buy">${cnt("buy")}</b> / ${cnt("expensive")}</strong></div>` : "";
     $("#pfFilters").innerHTML = FILTERS.map(([k, l]) => `<button type="button" class="pf-chip${pfFilter === k ? " active" : ""}" data-f="${k}">${l}<b>${cnt(k)}</b></button>`).join("");
@@ -401,6 +407,29 @@
     $("#pfNote").textContent = hs.length ? `Click a row to see the full valuation. ${hs.filter(h => !h.inWatchlist).length} holding(s) are not on the watchlist yet: use "Add all holdings & value them".` : "";
   }
   $("#pfAccTabs").addEventListener("click", e => { const b = e.target.closest("[data-acc]"); if (b) { pfAccount = b.dataset.acc; renderPortfolio(); } });
+  // Remove a broker account's holdings (or all): imported CSV accounts are deleted, synced ones hidden until Show again.
+  const pfRemove = async e => {
+    const rm = e.target.closest("[data-pf-rm]"), all = e.target.closest("[data-pf-rm-all]"), un = e.target.closest("[data-pf-unhide]");
+    if (!rm && !all && !un) return;
+    e.preventDefault(); e.stopPropagation();
+    try {
+      let out;
+      if (un) out = await post("/api/holdings/unhide", { account: un.dataset.pfUnhide });
+      else if (all) {
+        const n = pf?.holdings?.length || 0;
+        if (!await window.ui.confirm({ title: "Remove all Indian holdings?", message: `All ${n} holdings from every broker account leave this app (and Net worth, Swing, Ask AI): imported CSV accounts are deleted; synced accounts (Kite, Angel One, Dhan, Groww, INDmoney) are kept out even after a sync until you press Show again. Their mutual funds and US stocks stay. Nothing changes at your broker.`, okText: "Remove all", danger: true })) return;
+        out = await post("/api/holdings/remove", { all: true });
+      } else {
+        const imp = rm.dataset.imp === "1", n = rm.dataset.n, label = rm.dataset.label;
+        if (!await window.ui.confirm({ title: `Remove all ${label} holdings?`, message: imp ? `The ${n} imported holdings of ${label} are deleted from this app. Nothing changes at your broker; you can import the CSV again any time.` : `The ${n} holdings from the ${label} sync are kept out of this app and Net worth (even after the next sync) until you press Show again. Its mutual funds and US stocks stay. Nothing changes at your broker.`, okText: "Remove all", danger: true })) return;
+        out = await post("/api/holdings/remove", { account: rm.dataset.pfRm });
+      }
+      pf = out; if (pfAccount !== "all" && !pf.accounts.some(a => a.userId === pfAccount)) pfAccount = "all";
+      renderPortfolio(); window.toast?.(out.notice || "Done.", { kind: "ok" });
+    } catch (err) { window.toast?.(err.message, { kind: "error" }); }
+  };
+  $("#pfHoldAccts").addEventListener("click", pfRemove);
+  $("#pfAccounts").addEventListener("click", pfRemove);
   window.openHoldingsFor = userId => { pfAccount = userId || "all"; setView("portfolio"); };
   $("#intGoHoldings").onclick = () => setView("portfolio");
 
@@ -1089,9 +1118,19 @@
 
   // ---- Mutual fund X-ray ----------------------------------------------------------------------------------------------------
   let fdList = [], fdActive = null, fdPoll = null, fdTables = null, fdRows = null, fdData = null;
-  async function fdLoadList() { try { fdList = (await get("/api/funds")).funds; } catch { fdList = []; } }
+  let fdMeta = { heldWithout: [], job: null }, fdJobPoll = null;
+  async function fdLoadList() { try { const x = await get("/api/funds"); fdList = x.funds; fdMeta = { heldWithout: x.heldWithout || [], job: x.job || null }; } catch { fdList = []; } fdJobRender(); }
+  function fdJobRender() {
+    const j = fdMeta.job, n = fdMeta.heldWithout.length, b = $("#fdAutoAll"), p = $("#fdJob");
+    b.hidden = !n && !j?.running; b.disabled = !!j?.running; b.textContent = n ? `⚡ Auto-fetch my funds (${n})` : "⚡ Auto-fetch my funds";
+    b.title = n ? `No X-ray yet for: ${fdMeta.heldWithout.map(f => f.name).join(", ")}` : "";
+    const show = j && (j.running || (j.endedAt && Date.now() - j.endedAt < 10 * 60e3));
+    p.hidden = !show;
+    if (show) p.innerHTML = j.running ? `${j.kind === "refresh" ? "Refreshing month-old portfolios" : "Fetching your funds' portfolios"}: ${j.done} of ${j.total}…` : `Done: ${j.ok.length} fetched${j.ok.length ? ` (${esc(j.ok.join(", "))})` : ""}${j.failed.length ? ` · ${j.failed.length} not found automatically: ${j.failed.map(f => `<b>${esc(f.name)}</b>`).join(", ")} — add them with a fund-house link or by upload` : ""}.`;
+    clearTimeout(fdJobPoll); if (j?.running && !$("#fundView").hidden) fdJobPoll = setTimeout(async () => { const was = fdList.length; await fdLoadList(); fdTabs(); if (fdList.length !== was && !fdActive) fdOpen(fdList[0]?.id || null); }, 4000);
+  }
   function fdTabs() {
-    $("#fdTabs").innerHTML = fdList.map(f => `<button type="button" class="viewTab${f.id === fdActive ? " active" : ""}" data-fd="${esc(f.id)}">${esc(f.name)} <span class="tab-badge">${f.count}</span></button>`).join("");
+    $("#fdTabs").innerHTML = fdList.map(f => `<button type="button" class="viewTab${f.id === fdActive ? " active" : ""}" data-fd="${esc(f.id)}" title="${f.ageDays > 45 ? `Portfolio is ${f.ageDays} days old` : ""}">${f.source ? "⚡ " : ""}${esc(f.name)} <span class="tab-badge${f.ageDays > 45 ? " stale" : ""}">${f.count}</span></button>`).join("");
   }
   async function fdOpen(id) {
     fdActive = id; fdTabs(); clearTimeout(fdPoll);
@@ -1101,7 +1140,7 @@
       const x = await get(`/api/funds/view?id=${encodeURIComponent(id)}`), s = x.summary, m = s.mix;
       const bar = [["buy", "In buy zone", "var(--good)"], ["wait", "Wait / fair", "var(--warn)"], ["expensive", "Expensive", "var(--bad)"], ["unvalued", "Not valued yet", "var(--mute-bg)"]];
       body.innerHTML = `<div class="fd-head"><div><h2>${esc(x.fund.name)}</h2><p class="hint">${x.fund.asOf ? `Portfolio as of ${esc(x.fund.asOf)} · ` : ""}${s.count} equity holdings · updated ${new Date(x.fund.updatedAt).toLocaleDateString("en-IN")}</p></div>
-          <div class="toolbar" style="margin:0"><button type="button" class="ghost" id="fdUpdate">Update holdings</button><button type="button" class="ghost" id="fdDelete">Delete fund</button></div></div>
+          <div class="toolbar" style="margin:0">${fdList.find(f => f.id === id)?.source ? '<button type="button" class="ghost" id="fdRefetch" title="Fetch the latest portfolio again">↻ Refetch</button>' : ""}<button type="button" class="ghost" id="fdUpdate">Update holdings</button><button type="button" class="ghost" id="fdDelete">Delete fund</button></div></div>
         <section class="metrics"><div><span>Weighted P/E</span><strong>${s.weightedPE ?? "—"}</strong></div><div><span>In buy zone</span><strong class="buy">${m.buy}%</strong></div><div><span>Growth-justified</span><strong>${s.growthJustified}%</strong></div><div><span>Overlap with your holdings</span><strong>${s.overlapWithYou}%<small style="font-size:14px;color:var(--muted)"> · ${s.sharedStocks} shared</small></strong></div></section>
         <div class="fd-mix" role="img" aria-label="Valuation mix by weight">${bar.map(([k, l, c]) => m[k] > 0 ? `<i style="width:${m[k]}%;background:${c}" title="${l}: ${m[k]}%"></i>` : "").join("")}</div>
         <div class="fd-legend">${bar.map(([k, l, c]) => `<span><i style="background:${c}"></i>${l} ${m[k]}%</span>`).join("")}${s.weightedGrowth !== null ? `<span>· weighted expected growth ${s.weightedGrowth}%/yr</span>` : ""}</div>
@@ -1112,6 +1151,10 @@
           <td>${h.verdict ? `<span class="chip ${esc(h.verdictCls)}">${esc(h.verdict)}</span>` : h.symbol ? '<span class="hint">fetching…</span>' : "—"}</td>
           <td>${h.growth ? `<span class="chip ${({ under: "v-under", fair: "v-fair", pricey: "v-rich1", rich: "v-rich" })[h.growth.key]}" title="Expected ${h.growth.growth}%/yr vs ${h.growth.implied}%/yr priced in">${esc(h.growth.verdict)}</span>` : "—"}</td>
           <td>${h.held ? '<span class="chip v-none">You hold</span>' : ""}</td></tr>`).join("")}</tbody></table></section>`;
+      { const meta = fdList.find(f => f.id === id), src = meta?.source; const note = document.createElement("p"); note.className = "hint fd-src";
+        note.innerHTML = `${src ? `⚡ Fetched automatically from ${src.kind === "link" ? `the fund house's file (<a href="${esc(src.url)}" target="_blank" rel="noopener">link</a>)` : esc(new URL(src.url).hostname)}; refreshed every month. ` : "Uploaded by you. "}${meta?.ageDays > 45 ? `<span class="avoid">This portfolio is ${meta.ageDays} days old${src ? "" : ": upload the latest month"}.</span>` : ""}`;
+        body.querySelector(".fd-head")?.after(note); }
+      $("#fdRefetch")?.addEventListener("click", async e => { const b = e.currentTarget; b.disabled = true; b.textContent = "Fetching…"; try { const r = await post("/api/funds/auto", { id }); window.toast(`✓ ${ui.esc(r.fund.name)}: ${r.fund.count} holdings${r.fund.asOf ? ` (as of ${ui.esc(r.fund.asOf)})` : ""}.`); await fdLoadList(); fdOpen(id); } catch (err) { window.toast(ui.esc(err.message), { kind: "bad" }); b.disabled = false; b.textContent = "↻ Refetch"; } });
       $("#fdUpdate").onclick = () => fdShowImport(x.fund);
       $("#fdDelete").onclick = async () => { if (await ui.confirm({ title: `Delete ${x.fund.name}?`, message: "Only the fund's saved portfolio is removed; the stocks stay tracked.", okText: "Delete fund", danger: true })) { await post("/api/funds/delete", { id }); await fdLoadList(); fdOpen(fdList[0]?.id || null); } };
       if (x.pending && !$("#fundView").hidden) fdPoll = setTimeout(async () => { await loadValuation(); fdOpen(id); }, 10000);
@@ -1119,10 +1162,29 @@
   }
   function fdShowImport(fund = null) {
     $("#fdImport").hidden = false; $("#fdImport").dataset.id = fund?.id || ""; $("#fdName").value = fund?.name || ""; $("#fdAsOf").value = fund?.asOf || "";
-    $("#fdPreview").innerHTML = ""; $("#fdStatus").textContent = ""; fdData = null; $("#fdFileName").textContent = ""; $("#fdPaste").value = "";
+    $("#fdPreview").innerHTML = ""; $("#fdStatus").textContent = ""; fdData = null; $("#fdFileName").textContent = ""; $("#fdPaste").value = ""; $("#fdAutoQ").value = fund?.name || ""; $("#fdAutoLink").value = fdList.find(f => f.id === fund?.id)?.source?.link || ""; $("#fdAutoSt").innerHTML = ""; fdAutoPick = null;
     $("#fdImport").scrollIntoView({ behavior: "smooth", block: "start" }); $("#fdName").focus();
   }
   $("#fdAdd").onclick = () => fdShowImport();
+  // automatic fetch: pick the fund (AMFI list), optionally give the fund house link
+  let fdAutoPick = null, fdAutoRes = [], fdAutoT = null;
+  const fdAutoDraw = () => { $("#fdAutoDrop").innerHTML = fdAutoRes.map((r, i) => `<button type="button" class="mf-opt" data-i="${i}">${esc(r.name)}<small>${esc(r.isin)}</small></button>`).join(""); };
+  $("#fdAutoQ").addEventListener("input", () => { fdAutoPick = null; clearTimeout(fdAutoT); const q = $("#fdAutoQ").value.trim(); if (q.length < 3) { fdAutoRes = []; fdAutoDraw(); return; } fdAutoT = setTimeout(async () => { try { fdAutoRes = (await get(`/api/funds/search?q=${encodeURIComponent(q)}`)).results.slice(0, 8); } catch { fdAutoRes = []; } fdAutoDraw(); }, 250); });
+  $("#fdAutoDrop").addEventListener("click", e => { const b = e.target.closest("[data-i]"); if (!b) return; fdAutoPick = fdAutoRes[Number(b.dataset.i)]; $("#fdAutoQ").value = fdAutoPick.name; fdAutoRes = []; fdAutoDraw(); });
+  $("#fdAutoBtn").onclick = async () => {
+    const b = $("#fdAutoBtn"), st = $("#fdAutoSt"), name = $("#fdAutoQ").value.trim(), link = $("#fdAutoLink").value.trim();
+    if (!name && !link) { st.textContent = "Type the fund's name (and pick it from the list), or paste the fund house's portfolio link."; return; }
+    b.classList.add("is-loading"); b.disabled = true; st.textContent = "Fetching… (up to half a minute)";
+    try {
+      const r = await post("/api/funds/auto", { id: $("#fdImport").dataset.id || null, name: fdAutoPick?.name || name, isin: fdAutoPick?.isin || "", link });
+      $("#fdImport").hidden = true; await fdLoadList(); await loadStocks(); fdOpen(r.fund.id);
+      window.toast(`✓ ${ui.esc(r.fund.name)}: ${r.fund.count} holdings fetched${r.fund.asOf ? ` (as of ${ui.esc(r.fund.asOf)})` : ""}. Valuing them in the background.`);
+    } catch (e) {
+      let tried = []; try { tried = JSON.parse(e.body || "{}").tried || []; } catch { /* plain error */ }
+      st.innerHTML = `<span class="avoid">${esc(e.message)}</span>${(e.tried || tried).length ? `<details><summary>What was tried</summary><ul>${(e.tried || tried).map(t => `<li>${esc(t)}</li>`).join("")}</ul></details>` : ""} Give the fund house's portfolio page link, or upload / paste below.`;
+    } finally { b.classList.remove("is-loading"); b.disabled = false; }
+  };
+  $("#fdAutoAll").onclick = async () => { try { const r = await post("/api/funds/auto-all", {}); fdMeta.job = r.job; fdJobRender(); } catch (e) { window.toast(ui.esc(e.message), { kind: "bad" }); } };
   $("#fdCancel").onclick = () => { $("#fdImport").hidden = true; };
   $("#fdTabs").addEventListener("click", e => { const b = e.target.closest("[data-fd]"); if (b) fdOpen(b.dataset.fd); });
   $("#fdBody").addEventListener("click", e => { const tr = e.target.closest("tr[data-sym]"); if (!tr) return; openStockSheet(tr.dataset.sym, { back: "Back to Mutual fund X-ray" }); });
@@ -1139,6 +1201,7 @@
       // pick the sheet whose title matches the fund name (AMC workbooks have one sheet per scheme)
       const want = normFd($("#fdName").value); let idx = 0; if (want) { const i = fdTables.findIndex(t => normFd(`${t.title} ${t.sheet}`).includes(want) || want.split(" ").filter(w => w.length > 3).every(w => normFd(`${t.title} ${t.sheet}`).includes(w))); if (i >= 0) idx = i; }
       if (!$("#fdName").value.trim()) $("#fdName").value = fdTables[idx].title.replace(/\s*\(.*$/, "").slice(0, 80);
+      if (!$("#fdAsOf").value.trim() && fdTables[idx].asOf) $("#fdAsOf").value = fdTables[idx].asOf;
       fdPreview(idx); st.textContent = "";
     } catch (e) { st.textContent = e.message; } finally { b.classList.remove("is-loading"); b.disabled = false; }
   };

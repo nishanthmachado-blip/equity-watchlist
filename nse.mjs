@@ -88,13 +88,15 @@ export function refreshFromNse(cached, nse) {
 
 // Any NSE JSON API with the same cookie / browser-header handshake and cooldown as the quote call (market-wide lists such as
 // 52-week highs, most active securities, volume gainers). Best effort: NSE blocks many non-browser clients.
-export async function fetchNseJson(apiPath, { referer = "https://www.nseindia.com/market-data/live-equity-market", fetchImpl = fetch } = {}) {
+// soft: a refusal (403 / 429) of this one request does not pause every other NSE request (used for index lists, which
+// NSE refuses for some indices while quotes still work)
+export async function fetchNseJson(apiPath, { referer = "https://www.nseindia.com/market-data/live-equity-market", fetchImpl = fetch, soft = false } = {}) {
   if (!/^\/api\/[A-Za-z0-9\-_/?=&.%]+$/.test(apiPath)) throw new Error("bad NSE path");
   const cd = nseCooldown(); if (cd) throw new NseBlocked(cd);
   const cookie = await cookies(fetchImpl);
   const res = await fetchImpl(`${NSE_BASE()}${apiPath}`, withTimeout({ headers: { ...BROWSER, Accept: "*/*", "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin", Referer: referer, cookie } }));
   if (res.status === 401) { cookieCache = null; throw new Error("NSE session expired (HTTP 401)"); }
-  if (res.status === 403 || res.status === 429) throw block(apiPath, res.status);
+  if (res.status === 403 || res.status === 429) { if (soft) throw Object.assign(new Error(`NSE refused this request (HTTP ${res.status})`), { refused: true }); throw block(apiPath, res.status); }
   if (res.status === 404) throw new Error(`NSE has no ${apiPath} endpoint (404)`);
   if (!res.ok) throw new Error(`NSE HTTP ${res.status}`);
   return res.json();

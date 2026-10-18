@@ -8,6 +8,7 @@
     <nav class="side-nav" aria-label="View">
       <p class="side-label">Main</p>
       <button id="viewHome" class="viewTab active" title="Value a stock"><span class="ico" aria-hidden="true">🔎</span><span class="lbl">Value a stock</span></button>
+      <button id="viewFavs" class="viewTab" data-goto="favs" title="Favourites"><span class="ico" aria-hidden="true">❤️</span><span class="lbl">Favourites</span></button>
       <button id="viewLists" class="viewTab" title="Watchlists"><span class="ico" aria-hidden="true">⭐</span><span class="lbl">Watchlists</span></button>
       <button id="viewMarket" class="viewTab" title="Market today"><span class="ico" aria-hidden="true">📈</span><span class="lbl">Market today</span></button>
       <button id="viewIndices" class="viewTab" data-goto="indices" title="Smart indices"><span class="ico" aria-hidden="true">🧠</span><span class="lbl">Smart indices</span></button>
@@ -224,6 +225,11 @@
         <p class="vs-fine" id="mdRules"></p>
       </div>
     </section>
+    <section id="favView" data-feature-view="favs" hidden>
+      <section class="toolbar fav-tools"><div class="fav-add"><input id="favQ" placeholder="Add a favourite: company or NSE symbol" autocomplete="off" aria-label="Add a favourite"><div class="mf-drop" id="favDrop"></div></div><span class="hint" id="favNote"></span></section>
+      <div class="fav-grid" id="favGrid"></div>
+      <p class="hint">Tap the ♡ next to any stock, anywhere in the app (valuation, holdings, swing, watchlists, Smart indices, Market pulse…), to make it a favourite: it gets a red border and a ❤ on every screen. Tap ❤ again to remove it.</p>
+    </section>
     <section id="idxView" data-feature-view="indices" hidden>
       <p class="hint">Every stock inside an NSE index, with this app's valuation (where it has the fundamentals), momentum from the index data and a <b>smart score</b> that explains itself. Pick the good ones and add them to your watchlist in one go.</p>
       <div class="idx-picker" id="idxPicker"></div>
@@ -248,11 +254,24 @@
     </section>
     <section id="usView" hidden>
       <section class="report-card us-hold" id="usHold">
-        <div class="nw-head"><h3>💼 My US holdings <span class="hint">INDmoney · Vested · any US broker, in $ and ₹</span></h3><span class="hint" id="usHoldNote"></span></div>
+        <div class="nw-head"><h3>💼 My US holdings <span class="hint">INDmoney · Vested · any US broker, in $ and ₹</span></h3><span class="us-cur-wrap"><span class="hint" id="usHoldNote"></span><span class="md-seg us-cur" id="usCur" role="group" aria-label="Show amounts in"><button type="button" data-cur="inr" class="active">₹ INR</button><button type="button" data-cur="usd">$ USD</button></span></span></div>
+        <nav class="views sub pf-acc" id="usAccTabs" aria-label="Broker"></nav>
         <section class="metrics" id="usHoldCards"></section>
+        <div class="us-compare" id="usCompare"></div>
         <div class="toolbar"><button type="button" class="primary" id="usHoldImport">⬆ Import Vested / broker statement</button><button type="button" class="ghost" id="usHoldAdd">+ Add a holding</button><button type="button" class="ghost danger-text" id="usHoldClear" hidden>🗑 Remove all</button><span id="usHoldStatus" class="hint" role="status"></span></div>
         <div class="us-accts" id="usHoldAccts"></div>
-        <div class="table-wrap"><table class="us-hold-table"><thead><tr><th>Stock</th><th class="num">Shares</th><th class="num">Avg cost</th><th class="num">Price</th><th class="num">Invested</th><th class="num">Current value</th><th class="num">P/L</th><th>Account</th><th></th></tr></thead><tbody id="usHoldRows"></tbody></table></div>
+        <section class="pf-bar" aria-label="Filter and sort US holdings">
+          <div class="md-seg" id="usPl"><button type="button" data-pl="all" class="active">All</button><button type="button" data-pl="profit">In profit</button><button type="button" data-pl="loss">In loss</button></div>
+          <label class="pf-sel">Invested<select id="usInv"><option value="0">Any</option><option value="25000">₹25 K+</option><option value="50000">₹50 K+</option><option value="100000">₹1 L+</option><option value="300000">₹3 L+</option><option value="500000">₹5 L+</option><option value="-50000">Under ₹50 K</option></select></label>
+          <label class="pf-sel">P/L %<select id="usPct"><option value="">Any</option><option value="50:">+50% or more</option><option value="20:">+20% or more</option><option value="0:20">0 to +20%</option><option value="-10:0">0 to −10%</option><option value="-20:-10">−10% to −20%</option><option value=":-20">−20% or worse</option></select></label>
+          <label class="pf-sel">P/L ₹<select id="usAbs"><option value="">Any</option><option value="100000:">+₹1 L or more</option><option value="25000:">+₹25 K or more</option><option value=":-25000">−₹25 K or worse</option><option value=":-100000">−₹1 L or worse</option></select></label>
+          <label class="pf-sel">Sort<select id="usSort"><option value="value">Current value</option><option value="invested">Invested</option><option value="pnl">P/L ₹</option><option value="pnlPct">P/L %</option><option value="xirr">XIRR</option><option value="day">Day change %</option><option value="weight">% of total</option><option value="name">Name A–Z</option></select></label>
+          <button type="button" class="ghost pf-dir" id="usDir">↓ High to low</button>
+          <input id="usQ" placeholder="Search US holdings" autocomplete="off" aria-label="Search US holdings">
+          <button type="button" class="linklike" id="usReset" hidden>Clear filters</button>
+        </section>
+        <p class="pf-sum" id="usSum"></p>
+        <div class="table-wrap"><table class="us-hold-table"><thead><tr><th>Stock</th><th class="num">Shares</th><th class="num">Avg cost</th><th class="num">Price</th><th class="num">Invested</th><th class="num">Current value</th><th class="num">P/L</th><th class="num">XIRR</th><th class="num">% of total</th><th>Account</th><th></th></tr></thead><tbody id="usHoldRows"></tbody></table></div>
         <details class="us-howto"><summary>How to bring in INDmoney and Vested</summary>
           <p><b>INDmoney</b>: Connect brokers → <b>INDmoney</b> (log in once). Its sync brings your Indian stocks, mutual funds <i>and</i> US stocks; the US ones appear here automatically and are re-priced live in dollars.</p>
           <p><b>Vested</b>: Vested has no API for personal accounts. In the Vested app or website open <b>Portfolio → Holdings</b> and download the statement (or copy the table), then press <b>Import Vested / broker statement</b>. Any file with columns like <i>Symbol, Quantity, Average price</i> works (CSV or Excel), or type lines like <code>AAPL 10 150.25</code>. Importing again replaces that account's holdings.</p>
@@ -271,7 +290,7 @@
     </section>
     <section id="taxView" hidden>
       <p class="hint">Long- vs short-term gains on what you hold and what you sold this financial year, from your Zerodha Console tradebook (first in, first out, like the tax rules). Listed shares and equity funds: <b>long term after 12 months</b>, taxed 12.5% above ₹1.25 lakh a year; short term taxed 20% (Finance Act 2024 rates, unchanged in Budget 2026). An estimate to plan with, not tax advice: confirm with your CA or Console's Tax P&amp;L.</p>
-      <section class="toolbar"><button type="button" class="primary" id="txPick">⬆ Import tradebook (CSV / Excel)</button><button type="button" class="ghost" id="txClear">Clear tradebook</button><input type="file" id="txFile" accept=".csv,.xlsx,.txt" hidden><span id="txStatus" class="hint" role="status"></span></section>
+      <section class="toolbar"><button type="button" class="primary" id="txPick">⬆ Import tradebook (CSV / Excel)</button><button type="button" class="ghost" id="txClear">Clear tradebook</button><input type="file" id="txFile" accept=".csv,.xlsx,.xls,.txt" hidden><span id="txStatus" class="hint" role="status"></span></section>
       <div id="txAcct" class="tx-acct"></div>
       <div id="txImports"></div>
       <div id="txEmpty" class="fd-empty"><div class="fd-empty-ico">🧾</div><h2>Import your tradebook to see your tax position</h2>
@@ -333,12 +352,20 @@
     </section>
 
     <section id="fundView" hidden>
-      <div class="fd-top"><nav class="views sub fd-tabs" id="fdTabs" aria-label="Saved funds"></nav><button type="button" class="primary" id="fdAdd">+ Add a fund</button></div>
+      <div class="fd-top"><nav class="views sub fd-tabs" id="fdTabs" aria-label="Saved funds"></nav><button type="button" class="ghost" id="fdAutoAll" hidden title="Fetch the portfolio of every fund you hold that has no X-ray yet">⚡ Auto-fetch my funds</button><button type="button" class="primary" id="fdAdd">+ Add a fund</button></div>
+      <p class="hint fd-job" id="fdJob" hidden></p>
       <section id="fdImport" class="report-card fd-import" hidden>
         <h3>Add a mutual fund</h3>
+        <div class="fd-auto">
+          <b>⚡ Fetch the holdings automatically</b>
+          <div class="toolbar"><div class="fd-auto-q"><input id="fdAutoQ" placeholder="Fund name, e.g. Parag Parikh Flexi Cap Direct" autocomplete="off"><div class="mf-drop" id="fdAutoDrop"></div></div><input id="fdAutoLink" placeholder="Fund house portfolio page or file link (optional)" style="min-width:260px"><button type="button" class="primary" id="fdAutoBtn">Fetch holdings</button></div>
+          <p class="hint">Tries the fund house's monthly portfolio (when you give its page or file link: it is remembered and re-checked every month) and a free holdings API. If both fail, upload or paste below.</p>
+          <div id="fdAutoSt" class="hint"></div>
+        </div>
+        <p class="fd-or">— or upload / paste the portfolio —</p>
         <p class="hint">Every fund house publishes its full portfolio each month (a SEBI rule), usually as an Excel file under <b>Downloads</b>, <b>Disclosures</b> or <b>Monthly portfolio</b> on its website (for example Helios MF or Trust MF). Upload that file, or copy the holdings table from Value Research / Moneycontrol and paste it below. Only equity holdings are kept.</p>
         <div class="toolbar"><input id="fdName" placeholder="Fund name, e.g. Helios Flexi Cap Fund" style="min-width:280px"><input id="fdAsOf" placeholder="Portfolio date (optional), e.g. Sep 2026" style="min-width:200px;flex:0"></div>
-        <div class="fd-drop" id="fdDrop" tabindex="0"><input type="file" id="fdFile" accept=".xlsx,.csv,.txt" hidden><b>Drop the portfolio Excel / CSV here</b> or <button type="button" class="ghost" id="fdPick">choose a file</button><div class="hint" id="fdFileName"></div></div>
+        <div class="fd-drop" id="fdDrop" tabindex="0"><input type="file" id="fdFile" accept=".xlsx,.xls,.csv,.txt" hidden><b>Drop the portfolio Excel (.xlsx or .xls) / CSV here</b> or <button type="button" class="ghost" id="fdPick">choose a file</button><div class="hint" id="fdFileName"></div></div>
         <details><summary>…or paste a table</summary><textarea id="fdPaste" rows="6" style="width:100%" placeholder="Company	Sector	% of assets&#10;HDFC Bank Ltd.	Banks	8.12%"></textarea></details>
         <div class="toolbar"><button type="button" class="primary" id="fdRead">Read holdings</button><button type="button" class="ghost" id="fdCancel">Cancel</button><span id="fdStatus" class="hint"></span></div>
         <div id="fdPreview"></div>
@@ -349,6 +376,7 @@
     <section id="portfolioView" hidden>
       <p class="hint">Your holdings from every broker, one tab per account. To sync Kite, Angel One, Dhan or Groww, or import an INDmoney CSV, open <b>Add or sync holdings</b> below the table. Read-only: this app never places orders.</p>
       <nav class="views sub pf-acc" id="pfAccTabs" aria-label="Broker account"></nav>
+      <div class="us-accts pf-accts" id="pfHoldAccts" aria-label="Broker accounts"></div>
       <section class="metrics" id="pfCards" aria-label="Portfolio summary"></section>
       <section class="toolbar" id="pfFilters" aria-label="Filter holdings"></section>
       <section class="pf-bar" aria-label="Filter and sort holdings">
@@ -580,6 +608,7 @@
   <script src="indices.js"></script>
   <script src="week.js"></script>
   <script src="ai.js"></script>
+  <script src="favs.js"></script>
   <script src="mobile.js"></script>
   <script src="prices.js" defer></script>
 <script src="freshness.js"></script>

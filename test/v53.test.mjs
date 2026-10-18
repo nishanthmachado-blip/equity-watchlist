@@ -103,3 +103,10 @@ test("MF rows from a CSV / paste, and valuing at the newer AMFI NAV", () => {
   const old = valueFund({ isin: "INF846K01DP8", units: 10, nav: 130, navDate: "2026-10-20", value: 1300 }, amfi); // the statement is newer
   assert.deepEqual([old.value, old.navSource], [1300, "statement"]);
 });
+
+test("US holdings: buy dates from a statement column, any common format", async () => {
+  const { anyDay, parseUsHoldings } = await import("../holdings-extra.mjs");
+  assert.deepEqual(["2024-03-15", "15/03/2024", "15-Mar-2024", "Mar 15, 2024", ""].map(anyDay), ["2024-03-15", "2024-03-15", "2024-03-15", "2024-03-15", null]);
+  const r = parseUsHoldings([{ rows: [["Symbol", "Quantity", "Average Price", "Purchase Date"], ["AAPL", "10", "150", "01/06/2023"]] }]);
+  assert.equal(r[0].boughtOn, "2023-06-01");
+});

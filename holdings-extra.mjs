@@ -24,6 +24,7 @@ const HEAD = {
   name: /^(name|company|company name|stock|stock name|security|security name|description|instrument name|asset|asset name)$/,
   qty: /^(qty|quantity|units|shares|no of shares|number of shares|total shares|shares held|holding|holdings qty|quantity held)$/,
   avg: /^(avg|average|avg price|average price|avg buy price|average buy price|avg cost|average cost|buy price|avg cost per share|cost per share|average cost per share|purchase price|avg purchase price)$/,
+  date: /^(date|buy date|purchase date|bought on|first buy date|first purchase date|invested on|trade date|order date)$/,
   invested: /^(invested|investment|invested amount|amount invested|total investment|cost|cost basis|total cost|invested value|cost value|buy value)$/,
   investedInr: /^(invested inr|investment inr|invested amount inr|invested rs|invested in inr)$/,
   price: /^(price|ltp|current price|last price|market price|cmp)$/,
@@ -50,7 +51,7 @@ export function parseUsHoldings(tables, text = "") {
         if (!symbol && !name) continue;
         if (/^(total|grand total|cash)$/i.test(name || symbol || "")) continue;
         const avg = m.avg !== undefined ? num(r[m.avg]) : null, invested = m.invested !== undefined ? num(r[m.invested]) : null;
-        out.push({ symbol: symbol || null, name: name || symbol, qty: r4(qty), avgUsd: avg ?? (invested !== null ? r4(invested / qty) : null), investedUsd: invested ?? (avg !== null ? r2(avg * qty) : null), investedInr: m.investedInr !== undefined ? num(r[m.investedInr]) : null });
+        out.push({ symbol: symbol || null, name: name || symbol, qty: r4(qty), avgUsd: avg ?? (invested !== null ? r4(invested / qty) : null), investedUsd: invested ?? (avg !== null ? r2(avg * qty) : null), investedInr: m.investedInr !== undefined ? num(r[m.investedInr]) : null, boughtOn: m.date !== undefined ? anyDay(r[m.date]) : null });
       }
       if (out.length && (!best || out.length > best.length)) best = out;
       break;
@@ -93,6 +94,14 @@ export function usHoldingsView(items, prices = {}, fx = null) {
 // AMFI's daily NAV file (https://www.amfiindia.com/spages/NAVAll.txt):
 // "Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date"
 const MONTHS = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" };
+// "2024-03-15", "15/03/2024", "15-Mar-2024", "Mar 15, 2024" → "2024-03-15"
+export function anyDay(v) {
+  const s = String(v ?? "").trim(); if (!s) return null;
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/); if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  const iso = isoDay(s); if (iso) return iso;
+  const d = Date.parse(s); return Number.isFinite(d) ? new Date(d + 12 * 3600e3).toISOString().slice(0, 10) : null;
+}
 export const isoDay = s => { const m = String(s || "").trim().match(/^(\d{1,2})[-/ ]([A-Za-z]{3})[A-Za-z]*[-/ ](\d{4})$/); return m && MONTHS[m[2].toLowerCase()] ? `${m[3]}-${MONTHS[m[2].toLowerCase()]}-${m[1].padStart(2, "0")}` : null; };
 export function parseAmfiNav(text) {
   const out = {}; let amc = null;

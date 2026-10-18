@@ -1,5 +1,63 @@
 # Equity Watchlist MVP
 
+## v5.14.0: what changed — old Excel (.xls) files work everywhere
+- **Mutual fund X-ray reads `.xls` (Excel 97-2003)**, the format Helios and many other fund houses still use for monthly portfolios. Upload it as-is; there's no need to re-save it as .xlsx. A new built-in reader (`xls.mjs`, no new dependency) handles:
+  - shared strings split across records
+  - numbers in every Excel encoding
+  - cached formula results
+  - `.xls` files that are really HTML tables or Excel 2003 XML
+  - Password-protected and Excel 95 files get a clear message.
+- **Auto-fetch** follows `.xls` portfolio links on fund house pages too, instead of stopping with "save as .xlsx".
+- **Fund name and portfolio date are filled in from the file**: "Helios Flexi Cap Fund · 30 Sep 2026" instead of "Helios Mutual Fund". This includes Excel's numeric dates.
+- The tradebook, US holdings and mutual fund imports also accept `.xls`.
+- Performance: `npm run perf` is all within budget with no baseline change. The reader only runs when a file is uploaded.
+
+## v5.13.0: what changed — US holdings in ₹ or $
+- **₹ INR / $ USD toggle** on *US stocks → My US holdings*, next to the dollar rate. It switches every amount at once: the summary cards, the broker comparison (Vested vs INDmoney), the account chips, the table, the summary line, sorting and the filters (Invested and P/L use $ steps in $ mode). The other currency stays in small text underneath. Your choice is remembered in this browser.
+- In $, P/L % is the stocks' own return. In ₹ it also includes the rupee's move against the dollar, so the two can differ. XIRR stays in ₹ terms.
+- A cost known only in rupees (an INDmoney sync) is shown in $ at today's rate and marked ≈.
+- Performance: `npm run perf` is all within budget, with no baseline change and no new server calls (the switch happens in the browser).
+
+## v5.12.0: what changed — remove Indian broker holdings
+- **My holdings** now shows one chip per broker account (synced or imported, holdings count, current value) with **Remove all**, plus **🗑 Remove all** for every account at once. Each asks to confirm first. The same buttons are in *Add or sync holdings → 1. Get your holdings*.
+- **Imported (CSV) accounts** are deleted; import the CSV again any time.
+- **Synced accounts** (Kite, Angel One, Dhan, Groww, INDmoney) are hidden, not disconnected. Their stocks stay out of every screen (My holdings, Net worth, Swing, Ask AI and the rest) even after the next sync, until you press **Show again**. That account's mutual funds and US stocks are not touched. Nothing changes at your broker.
+- Each login can only remove its own accounts.
+- Performance: `npm run perf` is all within budget with no baseline change.
+
+## v5.11.0: what changed — ❤ Favourites
+
+- Every stock row in the app has a **♡**: valuation table, watchlists, My holdings, swing positions, dip list and watchlist, swing ideas, Smart indices, Market pulse, mutual fund X-ray, the valuation card on Value a stock. Tap it to make the stock a favourite; tap ❤ again to remove it.
+- A favourite shows a **red border and ❤ on every screen** (on phones the card's border turns red).
+- New **Favourites** screen (menu → Main): a card per favourite with price and today's move, valuation, fair value and upside, buy zone, what you hold (long term, swing or watch list) and the next result / dividend, with Details and ✨ Ask AI; add favourites by name there too.
+- Ask AI knows your favourites. Favourites are private to your login.
+
+## v5.10.0: what changed — Mutual fund X-ray fetches fund portfolios automatically
+
+- **⚡ Auto-fetch my funds**: every fund you hold (Zerodha Coin, INDmoney, CAS, by hand) that has no X-ray yet gets its portfolio fetched and linked in one go (Net worth's look-through uses it straight away). Funds it can't find are listed.
+- **⚡ Fetch the holdings automatically** when adding a fund: pick it by name (the official AMFI list) and optionally paste the **fund house's portfolio page or file link**. On a page the newest monthly portfolio file is followed; in a workbook with one sheet per scheme the sheet for this fund is used. The link is remembered.
+- Sources, in order: the fund house link (official, most complete), then a free holdings API (**mfdata.in**, `MFDATA_BASE` to change; its endpoints are read from its OpenAPI description). Every attempt is shown when nothing works.
+- Auto-fetched funds (⚡ on the tab) are **refreshed every month** when the X-ray is opened; "↻ Refetch" does it now. A portfolio over 45 days old is flagged.
+- Fixed: Excel files written by some tools (relationships listed Target-first) read as empty; they now open (also helps tradebook and statement imports).
+
+## v5.9.0: what changed — US holdings by broker (INDmoney vs Vested), XIRR, filters
+
+US stocks → My US holdings:
+- **Broker tabs** (All brokers · INDmoney · Vested · …): the cards, the table and the totals show only that broker.
+- **Which broker is doing better**: a comparison table with each broker's holdings, invested, value now, P/L, P/L % and **XIRR**, the best one marked; click a broker to switch to it.
+- **XIRR** (yearly return, counting how long the money was invested) per holding, per broker and overall, in rupees. It needs the buy date: a "Purchase date" column in the imported statement is read automatically; for INDmoney's synced holdings (which come without dates) or anything else press 📅 on the row. With some dates missing the XIRR covers the dated holdings and says how many.
+- **Filters and sort like My holdings**: All · In profit · In loss, Invested (₹25 K+ … ₹5 L+, under ₹50 K), P/L % and P/L ₹ bands, search, sort by value, invested, P/L ₹, P/L %, XIRR, day change, % of total or name; a line totals what is shown. Remembered in this browser.
+
+## v5.8.1: what changed — smart-beta indices load even when NSE refuses them
+
+NSE's live index API often refuses requests for strategy (smart-beta) indices from servers (HTTP 403) while it still serves the broad ones. Before, that one refusal also paused every NSE request for 5 minutes, so the smart-beta indices showed "Could not load from NSE" (and a broad index opened next failed too). Now:
+- a refused index list no longer pauses NSE for anything else (quotes, broad indices keep working);
+- the app falls back to the index's official constituents file from **niftyindices.com** (known file names for Nifty500 Quality 50, Nifty200 Momentum 30, Nifty500 Momentum 50, the Quality 30s, Alpha 50, Value 50 / 30, Low Volatility 30, Dividend Opportunities 50 and the broad indices), priced from NSE's daily closes and live quotes (prices fill in within a few seconds);
+- after a refusal it goes straight to the file for 30 minutes instead of asking NSE again; NSE's exact index name (from its own index list) is used for the request.
+If neither source answers, "import it here" (bottom of the page) still takes the CSV you download from niftyindices.com.
+
+Also fixed: a price alert set to repeat "once a day" could fire twice between midnight and 5:30 am IST (the day was read in UTC).
+
 ## v5.8.0: what changed — works properly on phones, and installs as an app
 
 **Phones (any browser).** Every table turns into cards on a phone: the stock's name on top, each figure labelled underneath (current value and P/L first on My holdings), less useful columns hidden, empty "—" cells dropped, and the action buttons full-width and easy to tap. Swing positions keep their status colour on the card's edge, and the dividend / results decision joins its card. The header shrinks to a one-line title with icon buttons; warning banners are compact; dialogs open as bottom sheets with the buttons always in reach; form fields are 16 px so iPhone does not zoom in when you tap one; the bottom tabs are Value · Holdings · Swing · Net worth · More; the ✨ Ask AI button sits above the tabs (it used to cover "More"). Checked on every screen at 390 px (iPhone), 820 px (tablet) and phone landscape: nothing runs off the screen.

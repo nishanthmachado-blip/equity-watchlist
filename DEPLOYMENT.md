@@ -266,6 +266,8 @@ Use this option if the team standardises on ALBs.
 | `AI_KEY_SECRET` | random, kept in `DATA_DIR/ai-secret.json` | Secret that encrypts each user's Anthropic API key. Set it (long random string) so keys survive a lost data folder secret; changing it means users re-enter their key |
 | `ANTHROPIC_API_KEY` | – | Optional: lets the **owner** use Ask AI without entering a key (members always need their own) |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | For a proxy / gateway; the server needs outbound HTTPS to it |
+| `NIFTYINDICES_BASE` | `https://www.niftyindices.com` | Where index constituents files come from when NSE refuses an index list (outbound HTTPS to www.niftyindices.com) |
+| `MFDATA_BASE` | `https://mfdata.in` | Holdings API tried when a fund's portfolio is fetched automatically (outbound HTTPS to it, and to the fund houses' sites for portfolio links) |
 | `AMFI_NAV_URL` | AMFI NAVAll.txt | Daily mutual fund NAV file (shared by all users, refreshed every 6 h when funds are viewed) |
 | `STOOQ_BASE` | `https://stooq.com` | US price source tried before Yahoo (`YAHOO_CHART_BASE` also serves US prices and USD/INR) |
 

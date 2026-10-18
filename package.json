@@ -1,6 +1,6 @@
 {
   "name": "equity-watchlist-mvp",
-  "version": "5.8.0",
+  "version": "5.14.0",
   "private": true,
   "type": "module",
   "scripts": {

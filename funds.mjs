@@ -2,6 +2,7 @@
 // Moneycontrol), keep the equity holdings with their weights, and summarise them with this app's valuations. Pure + a tiny
 // dependency-free .xlsx reader (zip + XML).
 import zlib from "node:zlib";
+import { readXls, isCfb, readXlsText } from "./xls.mjs";
 
 // ---- minimal .xlsx reader ------------------------------------------------------------------------------------------
 function unzip(buf) {
@@ -27,8 +28,9 @@ export function readXlsx(buf) {
   const shared = files.has("xl/sharedStrings.xml") ? [...files.get("xl/sharedStrings.xml")().matchAll(/<si>([\s\S]*?)<\/si>/g)].map(m => xmlText(m[1])) : [];
   const wb = files.has("xl/workbook.xml") ? files.get("xl/workbook.xml")() : "";
   const rels = files.has("xl/_rels/workbook.xml.rels") ? files.get("xl/_rels/workbook.xml.rels")() : "";
-  const relMap = new Map([...rels.matchAll(/<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g)].map(m => [m[1], m[2].replace(/^\/?xl\//, "")]));
-  let sheets = [...wb.matchAll(/<sheet[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"/g)].map(m => ({ name: xmlText(m[1]), path: `xl/${relMap.get(m[2]) || ""}` }));
+  // attributes come in any order (Excel writes Id first, other tools Target first)
+  const relMap = new Map([...rels.matchAll(/<Relationship\b([^>]*)\/?>/g)].map(m => [/\bId="([^"]+)"/.exec(m[1])?.[1], /\bTarget="([^"]+)"/.exec(m[1])?.[1]]).filter(([k, v]) => k && v).map(([k, v]) => [k, v.replace(/^\/?xl\//, "")]));
+  let sheets = [...wb.matchAll(/<sheet\b([^>]*)\/?>/g)].map(m => ({ name: xmlText(/\bname="([^"]+)"/.exec(m[1])?.[1] || ""), path: `xl/${relMap.get(/\br:id="([^"]+)"/.exec(m[1])?.[1]) || ""}` })).filter(x => x.name);
   if (!sheets.length) sheets = [...files.keys()].filter(k => /^xl\/worksheets\/sheet\d+\.xml$/.test(k)).map((path, i) => ({ name: `Sheet${i + 1}`, path }));
   return sheets.filter(s => files.has(s.path)).map(s => {
     const xml = files.get(s.path)(), rows = [];
@@ -46,13 +48,41 @@ export function readXlsx(buf) {
   });
 }
 
+// Any spreadsheet the user uploads or a fund house links to: .xlsx, old .xls (Excel 97-2003), an HTML / XML table saved
+// as .xls, else CSV / tab-separated text.
+export function readSheetFile(buf, filename = "") {
+  if (buf.length > 4 && buf.readUInt32LE(0) === 0x04034b50) return readXlsx(buf);
+  if (isCfb(buf)) return readXls(buf);
+  if (/\.xls$/i.test(filename) || /^\s*<(\?xml|html|table|!doctype)/i.test(buf.subarray(0, 200).toString("utf8"))) { const t = readXlsText(buf); if (t?.length) return t; }
+  return [{ name: filename || "file", rows: parseDelimited(buf.toString("utf8")) }];
+}
+// Scheme name and portfolio date from the first rows of an AMC sheet ("SCHEME NAME : Helios Flexi Cap Fund (...)",
+// "PORTFOLIO STATEMENT AS ON : 46295" where the date is an Excel day number, or "Portfolio Statement as on September 30,2026").
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+export function sheetInfo(rows, fallback = "") {
+  const top = rows.slice(0, 10), cells = top.flat().map(c => String(c || "").trim()).filter(Boolean);
+  let title = null;
+  for (const r of top) { const i = r.findIndex(c => /^scheme( name)?\s*:?$/i.test(String(c || "").trim())); if (i >= 0) { title = r.slice(i + 1).find(c => String(c || "").trim()); if (title) break; } }
+  title ||= cells.find(c => /fund|scheme/i.test(c) && !/^(.*mutual fund|scheme name\s*:?)$/i.test(c) && !/portfolio statement|name of the instrument/i.test(c)) || cells.find(c => /fund|scheme/i.test(c)) || fallback;
+  title = String(title).replace(/^scheme name\s*:?\s*/i, "").trim();
+  let asOf = null;
+  for (const r of top) {
+    const cs = r.map(c => String(c || "").trim()), i = cs.findIndex(c => /as on|as at|period ended/i.test(c)); if (i < 0) continue;
+    const after = cs[i].replace(/.*?(as on|as at|period ended)\s*:?\s*/i, "").trim() || cs.slice(i + 1).find(Boolean) || "";
+    if (/^\d{5}(\.\d+)?$/.test(after) && +after > 30000 && +after < 80000) { const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(+after) * 864e5); asOf = `${d.getUTCDate()} ${MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`; }
+    else if (after) asOf = after.slice(0, 30);
+    if (asOf) break;
+  }
+  return { title: title.slice(0, 120), asOf };
+}
+
 // ---- tables ----------------------------------------------------------------------------------------------------------------
 export function parseDelimited(text) {
   const lines = String(text || "").replace(/\r/g, "").split("\n").filter(l => l.trim());
   const delim = lines.slice(0, 5).some(l => l.includes("\t")) ? "\t" : ",";
   return lines.map(l => { const out = []; let cell = "", q = false; for (let i = 0; i < l.length; i++) { const c = l[i]; if (q) { if (c === '"' && l[i + 1] === '"') { cell += '"'; i++; } else if (c === '"') q = false; else cell += c; } else if (c === '"') q = true; else if (c === delim) { out.push(cell.trim()); cell = ""; } else cell += c; } out.push(cell.trim()); return out; });
 }
-const NOT_EQUITY = /treps|tri-?party|reverse repo|repo|cash|net (current )?(receivable|assets)|payable|margin|treasury|t-?bill|government|g-?sec|sdl|bond|debenture|ncd|commercial paper|certificate of deposit|\bcp\b|\bcd\b|mutual fund units|\bunits\b|derivative|futures?|options?|total|grand total|sub ?total|equity & equity related|listed \/ awaiting|^nil$/i;
+export const NOT_EQUITY = /treps|tri-?party|reverse repo|repo|cash|net (current )?(receivable|assets)|payable|margin|treasury|t-?bill|government|g-?sec|sdl|bond|debenture|ncd|commercial paper|certificate of deposit|\bcp\b|\bcd\b|mutual fund units|\bunits\b|derivative|futures?|options?|total|grand total|sub ?total|equity & equity related|listed \/ awaiting|^nil$/i;
 const num = v => { const x = Number(String(v ?? "").replace(/[%,₹\s]/g, "")); return Number.isFinite(x) ? x : null; };
 // Finds the holdings table inside rows: a header with a name column and a % weight column; keeps equity rows with weight > 0.
 export function extractHoldings(rows) {

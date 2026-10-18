@@ -44,6 +44,7 @@ export function buildContext(data, { privacy = "amounts" } = {}) {
     const n = data.networth;
     out.push(`\n## Net worth mix\n${pctMode ? "" : `Total assets ${L(n.assets)}, liabilities ${L(n.liabilities)}. `}${(n.mix || []).map(m => `${m.label} ${r1(m.pct)}%`).join(", ")}`);
   }
+  if (data.favourites?.length) out.push(`\nMy favourite stocks (ones I keep an eye on): ${data.favourites.slice(0, 60).join(", ")}`);
   const H = data.holdings || [];
   if (H.length) {
     out.push(`\n## Long-term holdings (${H.length})\nsymbol | ${pctMode ? "" : "qty | avg | "}price | ${pctMode ? "weight" : "invested | value"} | P/L% | valuation view | fair value (base) | buy zone | P/E vs sector | stance`);

@@ -38,7 +38,7 @@
     const out = await window.ui.dialog({
       title: "Import mutual funds", icon: "🧺", okText: "Import", wide: true,
       message: "Your CAMS / KFintech CAS (PDF) brings every fund at once, with units and cost. A CSV / Excel with Scheme name (or ISIN), Units and Invested works too. A new CAS replaces the previous one.",
-      bodyHtml: `<div class="nw-form"><label class="ui-field"><span>CAS PDF, CSV or Excel</span><input class="ui-input" type="file" name="file" accept=".pdf,.csv,.xlsx,.txt"></label>
+      bodyHtml: `<div class="nw-form"><label class="ui-field"><span>CAS PDF, CSV or Excel</span><input class="ui-input" type="file" name="file" accept=".pdf,.csv,.xlsx,.xls,.txt"></label>
         <label class="ui-field" data-pw><span>PDF password (your PAN in capitals, or the one you set)</span><input class="ui-input" type="password" name="pw" autocomplete="off" autocapitalize="characters"></label></div>
         <p class="ui-hint">The password is used once to open the file and is not saved.</p>`,
       onOpen: box => { box.querySelector("[name=file]").onchange = e => { file = e.target.files[0] || null; box.querySelector("[data-pw]").hidden = !!file && !/\.pdf$/i.test(file.name); }; },

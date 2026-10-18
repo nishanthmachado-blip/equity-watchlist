@@ -23,7 +23,8 @@ export function sanitizeRule(b = {}, prev = null) {
   return { id: prev?.id || `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, symbol, exchange: b.exchange === "BSE" ? "BSE" : "NSE", name: txt(b.name, 80) || prev?.name || symbol, type, value, note: txt(b.note, 120) || null, repeat: b.repeat === "daily" ? "daily" : "once", active: b.active !== false, createdAt: prev?.createdAt || new Date().toISOString(), lastFired: prev?.lastFired || null, firedCount: prev?.firedCount || 0 };
 }
 export const describeRule = r => `${RULE_TYPES[r.type].label}${r.value !== null ? ` ${r.type === "move" ? `${r.value}%` : r.type === "volume" ? `${r.value}×` : `₹${r.value.toLocaleString("en-IN")}`}` : ""}`;
-const firedToday = (r, day) => r.lastFired && r.lastFired.slice(0, 10) === day;
+// the IST day it last fired (a UTC time stamp would read as "yesterday" before 05:30 IST)
+const firedToday = (r, day) => (r.lastFiredDay ? r.lastFiredDay === day : !!r.lastFired && r.lastFired.slice(0, 10) === day);
 // Live check: q = { price, prevClose, high, low } (52-week range when known). Returns an alert or null.
 export function checkLiveRule(r, q, day) {
   if (!r.active || !RULE_TYPES[r.type].live || !(q?.price > 0) || firedToday(r, day)) return null;
@@ -50,6 +51,6 @@ export function checkEodRule(r, bars, day) {
   return detail ? fire(r, detail, day) : null;
 }
 function fire(r, detail, day) {
-  return { rule: { ...r, lastFired: new Date().toISOString(), firedCount: (r.firedCount || 0) + 1, active: r.repeat === "daily" ? r.active : false },
+  return { rule: { ...r, lastFired: new Date().toISOString(), lastFiredDay: day, firedCount: (r.firedCount || 0) + 1, active: r.repeat === "daily" ? r.active : false },
     event: { key: `rule-${r.id}-${day}`, at: new Date().toISOString(), type: "rule", symbol: r.symbol, title: `${r.name}: ${describeRule(r).toLowerCase()}`, detail: `${detail}${r.note ? ` Note: ${r.note}` : ""}${r.repeat === "once" ? " (alert switched off; turn it on again in Alerts)" : ""}` } };
 }

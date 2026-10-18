@@ -532,3 +532,63 @@ body.ai-open .ai-fab{display:none}
 .pf-bar .md-seg{flex:none;max-width:none}
 .pf-bar .md-seg button{flex:none;flex-direction:row}
 .pf-bar .md-seg button b{display:inline!important;margin-left:4px}
+/* v5.9 US holdings: broker tabs and comparison */
+#usAccTabs:empty,.us-compare:empty{display:none}
+#usAccTabs{margin:4px 0 10px}
+.us-compare{margin:10px 0 6px}
+.us-cmp{width:100%;min-width:0!important;border-collapse:collapse;font-size:13px;background:var(--card-bg,#fff);border:1px solid var(--line,#e5e7eb);border-radius:12px;overflow:hidden}
+.us-cmp th{position:static;background:var(--paper,#f3f4f9);color:var(--muted,#64748b);font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:8px 10px}
+.us-cmp td{padding:8px 10px;border-top:1px solid var(--line,#eef2f6)}
+.us-cmp tbody tr{cursor:pointer}.us-cmp tbody tr.on{background:color-mix(in srgb,var(--ix,#4f46e5) 8%,transparent)}
+.us-best{font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;background:#dcfce7;color:#166534;margin-left:4px}
+.us-compare .hint{margin:6px 0 0;font-size:12px}
+.us-compare{overflow-x:auto}
+/* v5.10 X-ray auto-fetch */
+.fd-auto{border:1px solid var(--line,#e5e7eb);border-radius:14px;padding:12px 14px;margin:8px 0 6px;background:color-mix(in srgb,var(--ix,#4f46e5) 4%,var(--card-bg,#fff))}
+.fd-auto .toolbar{margin:8px 0 4px;align-items:flex-start}
+.fd-auto-q{position:relative;flex:1;min-width:260px}.fd-auto-q input{width:100%}
+.fd-auto-q .mf-drop{position:absolute;left:0;right:0;top:100%;z-index:20;background:var(--card-bg,#fff);border-radius:10px;box-shadow:0 12px 30px -12px rgba(15,23,42,.35)}
+.fd-auto details{margin-top:4px}.fd-auto ul{margin:4px 0;padding-left:18px;font-size:12px}
+.fd-or{text-align:center;color:var(--muted,#64748b);font-size:12px;margin:12px 0 4px}
+.fd-job{margin:6px 0 10px}
+.fd-src{margin:-4px 0 10px}
+.tab-badge.stale{background:#fee2e2!important;color:#991b1b!important}
+/* v5.11 favourites */
+.fav-btn{border:0!important;background:transparent!important;padding:0 6px 0 0!important;margin:0;min-height:0!important;min-width:0!important;font-size:16px;line-height:1;color:#9ca3af;cursor:pointer;vertical-align:-1px;box-shadow:none!important}
+.fav-btn:hover{color:#e11d48;transform:scale(1.15)}
+.fav-btn.on{color:#e11d48}
+tr.fav-row{outline:2px solid #e11d48;outline-offset:-2px;background:color-mix(in srgb,#e11d48 5%,transparent)}
+tr.fav-row>td{background-color:color-mix(in srgb,#e11d48 4%,var(--card-bg,#fff))}
+.wk-row.fav-row,.sw-idea.fav-row{outline:2px solid #e11d48;outline-offset:2px;border-radius:8px}
+.vs-card.fav-card{border:2px solid #e11d48!important;box-shadow:0 0 0 4px color-mix(in srgb,#e11d48 12%,transparent)}
+.vs-card h2 .fav-btn{font-size:22px}
+.fav-tools{align-items:center}
+.fav-add{position:relative;flex:1;max-width:520px}.fav-add input{width:100%}
+.fav-add .mf-drop{position:absolute;left:0;right:0;top:100%;z-index:20;background:var(--card-bg,#fff);border-radius:10px;box-shadow:0 12px 30px -12px rgba(15,23,42,.35)}
+.fav-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin:8px 0 14px}
+.fav-card-item{background:var(--card-bg,#fff);border:2px solid #e11d48;border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 8px 24px -18px rgba(225,29,72,.6)}
+.fav-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.fav-top .company{font-size:16px}
+.fav-price{text-align:right;display:flex;flex-direction:column}.fav-price b{font-size:18px}
+.fav-facts{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}
+.fav-facts span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#64748b);font-weight:700}
+.fav-facts b{font-size:13.5px}
+.fav-ev{font-size:12.5px;background:var(--paper,#f3f4f9);border-radius:8px;padding:6px 8px}
+.fav-acts{display:flex;gap:6px;flex-wrap:wrap}
+@media (max-width:699px){
+  main .table-wrap:not(.m-keep) tr.fav-row{border:2px solid #e11d48!important;outline:0;box-shadow:0 6px 18px -12px rgba(225,29,72,.55)}
+  .fav-btn{font-size:19px;padding-right:8px!important}
+}
+.fav-card-item.fav-row{outline:0}.fav-card-item .company .fav-btn{font-size:18px}
+/* v5.12: broker account chips on My holdings (remove / show again) */
+.pf-accts{margin:6px 0 12px}
+.us-acct.on{border-color:var(--accent,#2563eb)}
+.pf-clear{padding:5px 12px;border-radius:999px;font-size:13px}
+#pfAccounts .fcompany button{margin-left:8px;padding:2px 9px;font-size:12px;border-radius:999px}
+@media (max-width:700px){.pf-accts .us-acct{flex-wrap:wrap;border-radius:12px}}
+/* v5.13: ₹ / $ toggle on US holdings */
+.us-cur-wrap{display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap}
+.md-seg.us-cur{display:inline-flex!important;flex:0 0 auto;flex-direction:row;flex-wrap:nowrap;gap:0;border:1px solid var(--line,#dce4ee);border-radius:999px;overflow:hidden;padding:0;width:auto!important}
+.md-seg.us-cur button{display:inline-flex;align-items:center;border:0;border-radius:0;padding:6px 14px;font-size:13px;background:transparent;box-shadow:none;white-space:nowrap}
+.md-seg.us-cur button+button{border-left:1px solid var(--line,#dce4ee)}
+.md-seg.us-cur button.active{background:var(--navy,#183b62);color:#fff;box-shadow:none}

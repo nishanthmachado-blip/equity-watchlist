@@ -26,7 +26,7 @@ const PAGES = [
   ["Results & dividends", "/api/events/upcoming"], ["Returns vs index", "/api/returns", { warm: 500, cold: 4000 }], ["Alerts", "/api/alerts"],
   ["Watchlists", "/api/lists"], ["Price status", "/api/prices/status"], ["Tax view", "/api/tax"], ["Dividend income", "/api/dividend-income"],
   ["Accumulate", "/api/accumulate"], ["My price alerts", "/api/rules"], ["Model portfolio", "/api/model"], ["Focus list", "/api/portfolio/focus"],
-  ["Ask AI status", "/api/ai/status"], ["Ask AI: what gets sent", "/api/ai/preview", { warm: 600 }], ["Smart indices", "/api/indices"], ["Market pulse (this week)", "/api/market/week"], ["Smart index: Nifty500 Quality 50", "/api/indices/view?name=NIFTY500%20QUALITY%2050", { cold: 5000 }]
+  ["Ask AI status", "/api/ai/status"], ["Ask AI: what gets sent", "/api/ai/preview", { warm: 600 }], ["Smart indices", "/api/indices"], ["Market pulse (this week)", "/api/market/week"], ["Mutual fund X-ray", "/api/funds"], ["Favourites", "/api/favourites/view"], ["Smart index: Nifty500 Quality 50", "/api/indices/view?name=NIFTY500%20QUALITY%2050", { cold: 5000 }]
 ];
 const STATIC = [["/", 120], ["/app.js", 120], ["/styles.css", 120]];
 const STATIC_GZ_BUDGET_KB = 900; // all scripts + styles, compressed

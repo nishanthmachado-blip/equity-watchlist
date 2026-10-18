@@ -11,6 +11,7 @@
   const cls = v => (v > 0 ? "pl-up" : v < 0 ? "pl-dn" : "");
   const short = s => String(s).replace(/^NIFTY\s*/i, "Nifty ").replace(/\b(\d+)\b/g, "$1").replace(/\bQUALITY\b/i, "Quality").replace(/\bMOMENTUM\b/i, "Momentum").replace(/\bVALUE\b/i, "Value").replace(/\bLOW VOLATILITY\b/i, "Low Vol").replace(/\bLOW-VOLATILITY\b/i, "Low-Vol").replace(/\bALPHA\b/i, "Alpha").replace(/\bDIVIDEND OPPORTUNITIES\b/i, "Dividend Opp.").replace(/\bNEXT\b/i, "Next").replace(/MIDCAP/i, "Midcap").replace(/SMALLCAP/i, "Smallcap");
   const FILTERS = [["all", "All"], ["top", "Smart score 70+"], ["undervalued", "Undervalued"], ["momentum", "Momentum leaders"], ["pullback", "Pullback in uptrend"], ["near-low", "Near 52w low"], ["new", "Not in my watchlist"], ["held", "I hold"]];
+  const pricePolls = {};
   let home = null, view = null, current = localStorageGet("idx-current") || "NIFTY500 QUALITY 50", filter = "all", sort = { k: "score", dir: -1 }, sel = new Set(), poll = null, lists = [];
   function localStorageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
   function localStorageSet(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
@@ -55,7 +56,10 @@
     $("#idxAdd").disabled = !sel.size; $("#idxAdd").textContent = sel.size ? `＋ Add ${sel.size} to watchlist` : "＋ Add selected to watchlist";
     const j = v.valueJob; $("#idxValue").disabled = !!j?.running || !v.fundamentalsMissing;
     $("#idxStatus").textContent = j?.running ? `Valuing ${j.name}: ${j.done} of ${j.total}…` : j?.note || "";
-    clearTimeout(poll); if ((v.pending || j?.running) && !$("#idxView").hidden) poll = setTimeout(() => load(false), v.pending ? 2500 : 6000);
+    // prices for a list that came from a constituents file arrive a few seconds later: look again (a few times)
+    const noPrice = v.rows.length && v.rows.filter(r => !fin(r.price)).length > v.rows.length / 4;
+    if (noPrice) { pricePolls[v.name] = (pricePolls[v.name] || 0) + 1; } else delete pricePolls[v.name];
+    clearTimeout(poll); if ((v.pending || j?.running || (noPrice && pricePolls[v.name] <= 4)) && !$("#idxView").hidden) poll = setTimeout(() => load(false), v.pending ? 2500 : 6000);
   }
   async function load(resetSel = true) {
     try {

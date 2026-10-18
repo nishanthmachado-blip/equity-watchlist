@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { fetchFundamentalsForStock, yahooCooldown, yahooQuotes, yahooSummary } from "./fundamentals-yahoo.mjs";
 import { MODEL, computeAll, computeValuation, sanitizeEntry, parseCsv, FIELDS } from "./valuation.mjs";
 import { fetchScreener, screenerCooldown, screenerConfig, fetchScreenerExtras, searchScreener, resetScreener, fetchScreenerPrice } from "./screener.mjs";
-import { readXlsx, parseDelimited, extractHoldings, fundSummary } from "./funds.mjs";
+import { readSheetFile, sheetInfo, parseDelimited, extractHoldings, fundSummary } from "./funds.mjs";
 import { fetchNseQuote, mergeNse, refreshFromNse, nseCooldown, fetchNseJson, fetchNseHistory, resetNse, lastNseStatus, NSE_ARCHIVE_BASE } from "./nse.mjs";
 import { LADDERS, DEFAULT_SETTINGS, sanitizeBuy, positionRow, stress, exposure } from "./plan.mjs";
 import { addSnapshots, performance, compare } from "./tracker.mjs";
@@ -38,7 +38,7 @@ import { buildXlsx } from "./xlsx.mjs";
 import { isEtf, indexFor, parseAllIndices, etfLens, etfType } from "./etf.mjs";
 import { parseNseActions, parseYahooEvents, mergeActions, adjustPosition, adjustWatch } from "./corpactions.mjs";
 import { parseNseEvents, parseYahooCalendar, eventsFor, swingEventAdvice } from "./events.mjs";
-import { returnsView, indexTwin, swingFlows, dividendsReceived, forwardDividends } from "./returns.mjs";
+import { returnsView, indexTwin, swingFlows, dividendsReceived, forwardDividends, xirr } from "./returns.mjs";
 import { logIdeas, judgeIdea, ideaStats } from "./ideastrack.mjs";
 import { RULE_TYPES, sanitizeRule, describeRule, checkLiveRule, checkEodRule } from "./alertrules.mjs";
 import { morningDigest, eveningDigest } from "./digest.mjs";
@@ -56,6 +56,7 @@ import { ensureLists, createList, renameList, deleteList, setMembers, prune, DEF
 import { METRICS, OPS, PRESETS, sanitizeThesis, evaluateThesis, trackBreaks } from "./thesis.mjs";
 import { AI_MODELS, AI_DEFAULTS, PRIVACY as AI_PRIVACY, sealKey, openKey, looksLikeKey, buildContext, SYSTEM as AI_SYSTEM, TOOLS as AI_TOOLS, sseParser, messageCollector, monthKey, friendlyApiError } from "./ai.mjs";
 import { addMarketDay, movers as marketMovers, indexChanges } from "./movers.mjs";
+import { fetchFromApi, fetchFromLink } from "./fundsource.mjs";
 import { SMART_INDICES, normIndex, parseAllIndices as parseIndexList, parseIndexStocks, parseIndexCsv, fillFromBars, smartRows, indexSummary } from "./indices.mjs";
 import { parseUsHoldings, usHoldingsView, cleanUsTicker, parseAmfiNav, searchAmfi, pdfLines, parseCas, parseMfRows, valueFund } from "./holdings-extra.mjs";
 
@@ -560,15 +561,25 @@ function parseCsvLoose(text) {
   return rows;
 }
 const brokerOf = a => a.broker || "zerodha";
-function kiteAccountsSummary(store) { return Object.entries(store.accounts || {}).map(([userId, a]) => ({ userId, broker: brokerOf(a), brokerName: BROKER_LABELS[brokerOf(a)] || brokerOf(a), clientId: a.clientId || userId, label: a.label, syncedAt: a.syncedAt, count: a.holdings?.length || 0, priceNote: a.priceNote || null, via: a.via || (brokerOf(a) === "zerodha" ? "mcp" : "api") })); }
+// Indian broker holdings removed in the app: imported (CSV) accounts are deleted; synced ones are listed in store.hiddenEq and
+// their stock holdings are left out everywhere (holdings, net worth, swing, Ask AI...) until "Show again". Funds and US
+// holdings of the same account are not touched. A sync keeps refreshing them, so Show again brings back current data.
+const isImportedAcct = a => a?.via === "csv" || a?.via === "manual";
+function visibleHoldStore(store) {
+  const hid = new Set(store?.hiddenEq || []); if (!hid.size) return store;
+  const accounts = {}; for (const [id, a] of Object.entries(store.accounts || {})) accounts[id] = hid.has(id) ? { ...a, holdings: [], hiddenEq: true } : a;
+  return { ...store, accounts };
+}
+const readHoldStore = async () => visibleHoldStore(await readJson(U.kiteHoldingsFile, { accounts: {} }));
+function kiteAccountsSummary(store) { return Object.entries(store.accounts || {}).filter(([id]) => !(store.hiddenEq || []).includes(id)).map(([userId, a]) => ({ userId, broker: brokerOf(a), brokerName: BROKER_LABELS[brokerOf(a)] || brokerOf(a), clientId: a.clientId || userId, label: a.label, syncedAt: a.syncedAt, count: a.holdings?.length || 0, priceNote: a.priceNote || null, via: a.via || (brokerOf(a) === "zerodha" ? "mcp" : "api") })); }
 // Combines every synced broker account into one row per symbol, and attaches what the rest of the app knows about it:
 // valuation, thesis status, watchlist rating and a rule-based stance (accumulate / hold / ...).
 async function kiteHoldingsView() {
-  const [store, { stocks, fundamentals, rows: vrows }] = await Promise.all([readJson(U.kiteHoldingsFile, { accounts: {} }), computeRows()]);
+  const [store, { stocks, fundamentals, rows: vrows }] = await Promise.all([readHoldStore(), computeRows()]);
   const accounts = Object.entries(store.accounts || {});
   const thesisBySym = accounts.length ? new Map((await thesisView()).rows.map(r => [r.symbol, r])) : new Map();
   const bySym = new Map(stocks.map(s => [symOf(s), s])), vBySym = new Map(vrows.map(r => [String(r.symbol || "").toUpperCase(), r]));
-  const merged = new Map();
+  const merged = new Map(), accTot = new Map();
   // Dhan and Groww may return holdings without a price (no data plan). Value those at a live price another broker returned
   // for the same symbol, else at the watchlist price, and say so.
   const livePrice = new Map();
@@ -590,6 +601,7 @@ async function kiteHoldingsView() {
     if (row.syncPrice == null && h.lastPrice != null) { row.syncPrice = row.kitePrice = h.lastPrice; row.dayChangePct ??= h.dayChangePct; }
     row.qty += h.qty; row.invested += h.invested || 0; row.value += h.value || 0; row.pnl += h.pnl || 0;
     row.priceFromWatchlist ||= priceFromWatchlist;
+    { const t = accTot.get(userId) || { invested: 0, value: 0 }; t.invested += h.invested || 0; t.value += h.value || 0; accTot.set(userId, t); }
     row.accounts.push({ userId, broker: brokerOf(acct), brokerName: BROKER_LABELS[brokerOf(acct)] || brokerOf(acct), label: acct.label, qty: h.qty, avgPrice: h.avgPrice });
     merged.set(h.symbol, row);
   }
@@ -606,13 +618,15 @@ async function kiteHoldingsView() {
       thesis: th ? { status: th.status, reasons: th.reasons, conditions: th.conditions } : null };
   }).sort((a, b) => b.value - a.value);
   const sum = k => r2(holdings.reduce((a, h) => a + h[k], 0)), count = a => holdings.filter(h => h.stance.action === a).length;
-  const brokersHeld = [...new Set(accounts.map(([, a]) => brokerOf(a)))].map(b => BROKER_LABELS[b] || b);
-  return { accounts: kiteAccountsSummary(store), brokers: brokersHeld, holdings, totals: { invested: sum("invested"), value: sum("value"), pnl: sum("pnl"), count: holdings.length, notInWatchlist: holdings.filter(h => !h.inWatchlist).length, watchlistNotHeld: stocks.filter(s => symOf(s) && !merged.has(symOf(s))).length, stance: { accumulate: count("Accumulate"), hold: count("Hold"), dontAdd: count("Hold (don't add)"), review: count("Review"), trim: count("Trim"), noView: count("No view") } } };
+  const brokersHeld = [...new Set(accounts.filter(([, a]) => !a.hiddenEq).map(([, a]) => brokerOf(a)))].map(b => BROKER_LABELS[b] || b);
+  const raw = store.hiddenEq?.length ? await readJson(U.kiteHoldingsFile, { accounts: {} }) : null;
+  const hiddenAccounts = (store.hiddenEq || []).map(id => { const a = raw?.accounts?.[id] || {}; return { userId: id, broker: brokerOf(a), brokerName: BROKER_LABELS[brokerOf(a)] || brokerOf(a), label: a.label || id, count: (a.holdings || []).length, syncedAt: a.syncedAt || null }; });
+  return { accounts: kiteAccountsSummary(store).map(a => ({ ...a, imported: isImportedAcct(store.accounts[a.userId]), invested: r2(accTot.get(a.userId)?.invested || 0), value: r2(accTot.get(a.userId)?.value || 0) })), hiddenAccounts, brokers: brokersHeld, holdings, totals: { invested: sum("invested"), value: sum("value"), pnl: sum("pnl"), count: holdings.length, notInWatchlist: holdings.filter(h => !h.inWatchlist).length, watchlistNotHeld: stocks.filter(s => symOf(s) && !merged.has(symOf(s))).length, stance: { accumulate: count("Accumulate"), hold: count("Hold"), dontAdd: count("Hold (don't add)"), review: count("Review"), trim: count("Trim"), noView: count("No view") } } };
 }
 // Re-checks every thesis against the latest numbers. First-break dates and status flips are stored, and a flip is
 // written to the change history (field "thesis") so it appears in Reports -> Change history.
 async function thesisView() {
-  const [store, { stocks, fundamentals, rows }, kiteStore] = await Promise.all([readJson(U.thesesFile, {}), computeRows(), readJson(U.kiteHoldingsFile, { accounts: {} })]);
+  const [store, { stocks, fundamentals, rows }, kiteStore] = await Promise.all([readJson(U.thesesFile, {}), computeRows(), readHoldStore()]);
   const rowBySym = new Map(rows.map(r => [String(r.symbol || "").toUpperCase(), r])), bySym = new Map(stocks.map(x => [symOf(x), x]));
   const held = new Set(Object.values(kiteStore.accounts || {}).flatMap(a => (a.holdings || []).map(h => h.symbol)));
   const now = new Date().toISOString(); let dirty = false; const flips = [], out = [];
@@ -712,8 +726,9 @@ async function freshnessView() {
   if (fresh.length && ok.length > fresh.length) warnings.push({ id: `newdev:${fresh[0].at}`, level: "bad", text: `New sign-in to your account from ${fresh[0].device}${fresh[0].place ? ` in ${fresh[0].place}` : fresh[0].ip ? ` (${fresh[0].ip})` : ""} on ${new Date(fresh[0].at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })}. If this was not you, sign out other devices and change your password.`, action: { label: "Review sign-ins", account: "activity" } });
   const bad = act.events.filter(e => e.kind === "wrong password" && Date.now() - e.at < 864e5);
   if (bad.length >= 3) warnings.push({ id: `badpw:${bad[0].at}`, level: "warn", text: `${bad.length} wrong-password attempts on your account in the last 24 hours (latest from ${bad[0].device}${bad[0].ip ? `, ${bad[0].ip}` : ""}).`, action: { label: "Review sign-ins", account: "activity" } });
-  const store = await readJson(U.kiteHoldingsFile, { accounts: {} });
+  const store = await readHoldStore();
   for (const [id, a] of Object.entries(store.accounts || {})) {
+    if (a.hiddenEq && !(a.mf || []).length && !(a.us || []).length) continue; // removed in the app: no sync reminders
     const broker = BROKER_LABELS[a.broker || "zerodha"] || a.broker || "Zerodha";
     if (weekdaysSince(a.syncedAt) >= 2) warnings.push({ id: `sync:${id}`, level: "warn", text: `${broker} · ${a.label || id}: holdings last synced ${a.syncedAt ? ageText(a.syncedAt) : "never"}. Values and P/L on My holdings and Net worth may be out of date.`, action: { label: "Sync now", view: "integrations" } });
     if (a.mfError && (a.broker || "zerodha") === "zerodha") warnings.push({ id: `mf:${id}`, level: "info", text: `Zerodha · ${a.label || id}: mutual funds could not be read on the last sync (${a.mfError}).`, action: { label: "Net worth", view: "networth" } });
@@ -739,7 +754,7 @@ async function freshnessView() {
 // ---- Tax view: Zerodha Console tradebook → FIFO lots → long / short term, harvesting ideas ----
 const taxFile = () => userFile("tradebook.json");
 async function taxHoldings(account = "all") {
-  const [view0, store] = await Promise.all([kiteHoldingsView(), readJson(U.kiteHoldingsFile, { accounts: {} })]);
+  const [view0, store] = await Promise.all([kiteHoldingsView(), readHoldStore()]);
   // one account: its own holdings (each PAN has its own ₹1.25 L exemption), priced like the combined view
   const view = account === "all" ? view0 : { holdings: (store.accounts?.[account]?.holdings || []).map(h => { const v = view0.holdings.find(x => x.symbol === h.symbol); const price = v && v.qty ? v.value / v.qty : h.lastPrice || h.avgPrice; return { ...h, company: v?.company || h.symbol, value: price * h.qty }; }) };
   if (account !== "all") store.accounts = { [account]: store.accounts?.[account] || {} };
@@ -787,7 +802,7 @@ async function indexBars(key) {
 }
 // Holdings of one account (or all) with today's price
 async function holdingsOf(account = "all") {
-  const [store, stocks] = await Promise.all([readJson(U.kiteHoldingsFile, { accounts: {} }), readWatchlist()]);
+  const [store, stocks] = await Promise.all([readHoldStore(), readWatchlist()]);
   const wl = new Map(stocks.map(x => [symOf(x), x])), merged = new Map();
   for (const [id, a] of Object.entries(store.accounts || {})) {
     if (account !== "all" && id !== account) continue;
@@ -808,7 +823,7 @@ async function allDividends(symbols) {
   for (const a of ce.actions || []) if (a.kind === "dividend" && a.amount > 0 && symbols.has(a.symbol)) m.set(`${a.symbol}:${a.exDate}`, { symbol: a.symbol, exDate: a.exDate, amount: a.amount, source: "NSE" });
   return [...m.values()];
 }
-const accountsList = async () => Object.entries((await readJson(U.kiteHoldingsFile, { accounts: {} })).accounts || {}).map(([id, a]) => ({ id, label: a.label || id, broker: a.brokerName || a.broker || "" }));
+const accountsList = async () => Object.entries((await readHoldStore()).accounts || {}).map(([id, a]) => ({ id, label: a.label || id, broker: a.brokerName || a.broker || "" }));
 async function returnsPage(account = "all") {
   const [tb, holdings, accounts, sw] = await Promise.all([readJson(taxFile(), { trades: [] }), holdingsOf(account), accountsList(), readJson(swingFile(), {})]);
   const single = accounts.length === 1 ? accounts[0].id : null;
@@ -1074,7 +1089,7 @@ async function checkEodRules() {
 }
 // Everything you track with its upcoming events (shared by the Home panel, heads-up alerts and the digests)
 async function upcomingEvents({ pastDays = 3, aheadDays = 30 } = {}) {
-  const [ce, stocks, sw, hold] = await Promise.all([corpEvents(), readWatchlist(), readJson(swingFile(), {}), readJson(U.kiteHoldingsFile, { accounts: {} })]);
+  const [ce, stocks, sw, hold] = await Promise.all([corpEvents(), readWatchlist(), readJson(swingFile(), {}), readHoldStore()]);
   const today = istDay(), where = new Map(), qty = new Map();
   const tag = (sym, t) => { if (!sym) return; sym = String(sym).toUpperCase(); (where.get(sym) || where.set(sym, new Set()).get(sym)).add(t); };
   for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) { tag(h.symbol, "holding"); const k = String(h.symbol).toUpperCase(); qty.set(k, (qty.get(k) || 0) + (Number(h.qty) || 0)); }
@@ -1142,7 +1157,7 @@ const ddmmyyyy = d => { const [y, m, dd2] = d.split("-"); return `${dd2}-${m}-${
 const shiftDay = (day, n) => { const d = new Date(`${day}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 async function corpUniverse() { // symbols the decisions are needed for: swing positions / watchlist and holdings, every account
   const set = new Set();
-  await forEachUser(async () => { const [st, hold] = await Promise.all([readJson(swingFile(), {}), readJson(U.kiteHoldingsFile, { accounts: {} })]); for (const x of [...(st.positions || []), ...(st.watch || [])]) set.add(x.symbol); for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol) set.add(String(h.symbol).toUpperCase()); });
+  await forEachUser(async () => { const [st, hold] = await Promise.all([readJson(swingFile(), {}), readHoldStore()]); for (const x of [...(st.positions || []), ...(st.watch || [])]) set.add(x.symbol); for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol) set.add(String(h.symbol).toUpperCase()); });
   return set;
 }
 async function refreshCorpEvents({ force = false } = {}) {
@@ -1356,7 +1371,7 @@ const eodRecent = (bars, days = 6) => bars.length && Date.now() / 1000 - bars.at
 async function eodUniverse() {
   const set = new Set(["NIFTYBEES"]);
   await forEachUser(async () => {
-    const [stocks, st, hold] = await Promise.all([readWatchlist(), readJson(swingFile(), {}), readJson(U.kiteHoldingsFile, { accounts: {} })]);
+    const [stocks, st, hold] = await Promise.all([readWatchlist(), readJson(swingFile(), {}), readHoldStore()]);
     for (const x of stocks) if (symOf(x) && (x.exchange || "NSE") === "NSE") set.add(symOf(x));
     for (const x of [...(st.positions || []), ...(st.watch || [])]) if ((x.exchange || "NSE") === "NSE") set.add(x.symbol);
     for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol) set.add(String(h.symbol).toUpperCase());
@@ -1712,7 +1727,7 @@ async function amfiNav({ wait = false } = {}) {
 }
 // US holdings: INDmoney (from its sync: its values are in rupees) + statements you imported (Vested, any broker) + by hand
 async function usHoldingItems() {
-  const [store, other] = await Promise.all([readJson(U.kiteHoldingsFile, { accounts: {} }), readJson(otherFile(), {})]);
+  const [store, other] = await Promise.all([readHoldStore(), readJson(otherFile(), {})]);
   const items = [];
   const hidden = new Set(other.hiddenUs || []);
   for (const [id, a] of Object.entries(store.accounts || {})) for (const [i, u] of (a.us || []).entries()) {
@@ -1721,6 +1736,8 @@ async function usHoldingItems() {
     items.push({ key: `${id}:${sym || i}`, id: null, source: "sync", accountId: id, account: a.label || id, symbol: sym, name: u.name || sym, qty: Number.isFinite(u.qty) ? u.qty : null, avgUsd: null, investedUsd: null, investedInr: Number.isFinite(u.invested) ? u.invested : null, valueInr: Number.isFinite(u.value) ? u.value : null, syncedAt: a.syncedAt || null });
   }
   for (const u of other.us || []) items.push({ key: `us:${u.id}`, ...u, source: u.source || "import", syncedAt: u.importedAt || null });
+  const dates = other.usDates || {}; // buy dates set from the page (synced holdings carry none)
+  for (const it of items) it.boughtOn = dates[it.key] || it.boughtOn || null;
   return items;
 }
 async function usHoldings() {
@@ -1728,8 +1745,16 @@ async function usHoldings() {
   const [{ prices, errors }, fx] = await Promise.all([syms.length ? usPricesFast(syms) : { prices: {}, errors: [] }, items.length ? usdInr() : null]);
   const v = usHoldingsView(items, prices, fx?.rate || null);
   const groupKey = i => (i.source === "sync" ? `sync|${i.accountId}` : `own|${i.account}`);
-  const accounts = [...new Map(items.map(i => [groupKey(i), { key: groupKey(i), source: i.source === "sync" ? "sync" : "own", accountId: i.accountId || null, account: i.account, count: items.filter(x => groupKey(x) === groupKey(i)).length, valueInr: Math.round(v.rows.filter(r => groupKey(r) === groupKey(i)).reduce((a, r) => a + (r.valueInr || 0), 0)), at: i.syncedAt }])).values()];
-  const [store, other] = await Promise.all([readJson(U.kiteHoldingsFile, { accounts: {} }), readJson(otherFile(), {})]);
+  // XIRR in rupees from the buy date (cost in ₹ as paid, or at today's rate when only $ is known) to today's value
+  const today = istDay();
+  const flowsOf = rs => rs.filter(r => r.boughtOn && r.boughtOn < today && r.investedInr > 0 && r.valueInr > 0).flatMap(r => [{ date: r.boughtOn, amount: -r.investedInr }, { date: today, amount: r.valueInr }]);
+  const pct = x => (Number.isFinite(x) ? Math.round(x * 1000) / 10 : null);
+  for (const r of v.rows) { r.accountKey = groupKey(r); const f = flowsOf([r]); r.xirr = f.length ? pct(xirr(f)) : null; }
+  const summary = rs => { const pr = rs.filter(r => Number.isFinite(r.valueInr) && Number.isFinite(r.investedInr)), inv = pr.reduce((a, r) => a + r.investedInr, 0), val = pr.reduce((a, r) => a + r.valueInr, 0), f = flowsOf(rs), dated = rs.filter(r => r.boughtOn).length;
+    return { count: rs.length, investedInr: Math.round(inv), valueInr: Math.round(val), pnlInr: Math.round(val - inv), pnlPct: inv > 0 ? Math.round((val / inv - 1) * 1000) / 10 : null, xirr: f.length ? pct(xirr(f)) : null, dated, investedUsd: Math.round(rs.reduce((a, r) => a + (r.investedUsd || 0), 0) * 100) / 100, valueUsd: Math.round(rs.reduce((a, r) => a + (r.valueUsd || 0), 0) * 100) / 100 }; };
+  const accounts = [...new Map(items.map(i => [groupKey(i), { key: groupKey(i), source: i.source === "sync" ? "sync" : "own", accountId: i.accountId || null, account: i.account, at: i.syncedAt }])).values()].map(a => ({ ...a, ...summary(v.rows.filter(r => r.accountKey === a.key)) }));
+  v.all = summary(v.rows);
+  const [store, other] = await Promise.all([readHoldStore(), readJson(otherFile(), {})]);
   const hiddenAccounts = (other.hiddenUs || []).map(id => ({ accountId: id, account: store.accounts?.[id]?.label || id, count: (store.accounts?.[id]?.us || []).length }));
   return { ...v, fxAt: fx?.at || null, accounts, hiddenAccounts, priceErrors: errors.slice(0, 3) };
 }
@@ -1737,7 +1762,7 @@ async function usHoldings() {
 const fundKeyName = n => String(n || "").toLowerCase().replace(/\b(plan|option|fund|scheme|the|direct|regular|growth|idcw|dividend|payout|reinvestment)\b|[^a-z0-9]/g, "");
 async function importedFunds(syncedRaw = null) {
   const [other, amfi] = await Promise.all([readJson(otherFile(), {}), amfiNav()]);
-  const synced = syncedRaw || Object.values((await readJson(U.kiteHoldingsFile, { accounts: {} })).accounts || {}).flatMap(a => a.mf || []);
+  const synced = syncedRaw || Object.values((await readHoldStore()).accounts || {}).flatMap(a => a.mf || []);
   const syncedIsins = new Set(synced.map(f => f.isin).filter(i => /^INF/.test(i || ""))), syncedNames = new Set(synced.map(f => fundKeyName(f.name)));
   return (other.mf || []).map(f => {
     const v = valueFund(f, amfi), dup = syncedIsins.has(f.isin) || (!!f.name && syncedNames.has(fundKeyName(v.amfiName || f.name)));
@@ -1798,7 +1823,7 @@ async function weekView({ period = "week", universe = "nifty500" } = {}) {
     const nm = universe === "nifty500" ? "NIFTY 500" : "NIFTY 50", c = idx.lists[normIndex(nm)];
     if (c?.rows?.length) { set = new Set(c.rows.map(r => r.symbol)); label = universe === "nifty500" ? "Nifty 500" : "Nifty 50"; } else { indexData(nm).catch(() => {}); label += ` (the ${nm} list is still loading)`; }
   } else if (universe === "mine") {
-    const [stocks, hold, sw] = await Promise.all([readWatchlist(), readJson(U.kiteHoldingsFile, { accounts: {} }), readJson(swingFile(), {})]);
+    const [stocks, hold, sw] = await Promise.all([readWatchlist(), readHoldStore(), readJson(swingFile(), {})]);
     set = new Set([...stocks.map(symOf), ...Object.values(hold.accounts || {}).flatMap(a => (a.holdings || []).map(h => String(h.symbol).toUpperCase())), ...(sw.positions || []).map(p => p.symbol), ...(sw.watch || []).map(w => w.symbol)]);
     label = "My watchlist, holdings and swing";
   }
@@ -1816,20 +1841,53 @@ let idxValueJob = { running: false, name: null, done: 0, total: 0, failed: 0, at
 async function idxStore() { return (idxMem ||= await readJson(indexCacheFile, { lists: {}, all: null })); }
 const idxTtl = () => (marketIsOpen() ? 15 * 60e3 : 6 * 3600e3);
 // best-effort file names of the constituents CSV on NSE's archive (niftyindices format), tried when the live API is blocked
-const idxCsvUrls = name => { const k = String(name).toLowerCase().replace(/[^a-z0-9]/g, ""); const camel = String(name).replace(/^NIFTY\s*/i, "nifty").replace(/\s+([A-Za-z])/g, (m, c) => c.toUpperCase()).replace(/\s+/g, "").replace(/-/g, ""); return [`${NSE_ARCHIVE_BASE()}/content/indices/ind_${k}list.csv`, `${NSE_ARCHIVE_BASE()}/content/indices/ind_${camel.charAt(0).toLowerCase() + camel.slice(1)}_list.csv`]; };
+// The constituents file (niftyindices.com format) for an index: known file names first, then the usual patterns.
+// Used when NSE's live API refuses the request (it often throttles or blocks servers) — no NSE session needed.
+const IDX_FILES = { NIFTY50: "ind_nifty50list.csv", NIFTYNEXT50: "ind_niftynext50list.csv", NIFTY100: "ind_nifty100list.csv", NIFTY200: "ind_nifty200list.csv", NIFTYMIDCAP150: "ind_niftymidcap150list.csv", NIFTYSMALLCAP250: "ind_niftysmallcap250list.csv", NIFTY500: "ind_nifty500list.csv",
+  NIFTY200MOMENTUM30: "ind_nifty200Momentum30_list.csv", NIFTY500MOMENTUM50: "ind_nifty500Momentum50_list.csv", NIFTY500QUALITY50: "ind_nifty500Quality50_list.csv", NIFTY100QUALITY30: "ind_nifty100Quality30list.csv", NIFTY200QUALITY30: "ind_nifty200Quality30_list.csv",
+  NIFTYMIDCAP150QUALITY50: "ind_niftymidcap150quality50list.csv", NIFTYALPHA50: "ind_nifty_Alpha_Index.csv", NIFTY500VALUE50: "ind_nifty500Value50_list.csv", NIFTY200VALUE30: "ind_nifty200Value30_list.csv", NIFTY100LOWVOLATILITY30: "ind_Nifty100LowVolatility30list.csv",
+  NIFTYDIVIDENDOPPORTUNITIES50: "ind_niftydivopp50list.csv", NIFTYALPHALOWVOLATILITY30: "ind_nifty_Alpha_LowVol30list.csv", NIFTYBANK: "ind_niftybanklist.csv", NIFTYIT: "ind_niftyitlist.csv", NIFTYPHARMA: "ind_niftypharmalist.csv", NIFTYAUTO: "ind_niftyautolist.csv", NIFTYFMCG: "ind_niftyfmcglist.csv", NIFTYMETAL: "ind_niftymetallist.csv" };
+const NIFTYINDICES_BASE = () => (process.env.NIFTYINDICES_BASE || "https://www.niftyindices.com").replace(/\/+$/, "");
+const idxCsvUrls = name => {
+  const words = String(name).trim().split(/[\s-]+/).filter(Boolean);
+  const camel = words.map((w, i) => (i === 0 ? w.toLowerCase() : /^[A-Za-z]/.test(w) ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w)).join("");
+  const lower = words.join("").toLowerCase();
+  const files = [...new Set([IDX_FILES[normIndex(name)], `ind_${camel}_list.csv`, `ind_${camel}list.csv`, `ind_${lower}list.csv`, `ind_${lower}_list.csv`].filter(Boolean))];
+  return [...files.map(f => `${NIFTYINDICES_BASE()}/IndexConstituent/${f}`), ...files.map(f => `${NSE_ARCHIVE_BASE()}/content/indices/${f}`)];
+};
+// Prices for a constituents file: the live store, then NSE's daily closes for the whole market (last ~5 weeks), then saved history
+async function priceIndexRows(rows) {
+  const mk = await marketStore(), days = mk.days || [], last = days.at(-1), C = d => mk.closes?.[d] || {};
+  const back = k => days[Math.max(0, days.length - 1 - k)];
+  const out = [];
+  for (const row of rows) {
+    let r = fillFromBars(row, await eodBars(row.symbol));
+    const l = C(last)[row.symbol]?.[0], p1 = C(back(1))[row.symbol]?.[0], p21 = C(back(21))[row.symbol]?.[0];
+    if (!(r.price > 0) && l > 0) r = { ...r, price: l };
+    if (r.pChange == null && l > 0 && p1 > 0) r.pChange = Math.round((l / p1 - 1) * 1e4) / 100;
+    if (r.ch30d == null && l > 0 && p21 > 0 && days.length > 21) r.ch30d = Math.round((l / p21 - 1) * 1e4) / 100;
+    const q = livePriceCache.get(`NSE:${row.symbol}`); if (q?.price > 0 && !(r.price > 0)) r = { ...r, price: q.price };
+    out.push(r);
+  }
+  return out;
+}
+const idxNseSkip = new Map();
 async function fetchIndexNow(name) {
+  // NSE's exact name for the index (from its index list), so the live API gets what it expects
+  const live = (await idxStore()).all?.list || [], exact = live.find(x => normIndex(x.name) === normIndex(name))?.name || name;
   let err = null;
-  try { const j = parseIndexStocks(await fetchNseJson(`/api/equity-stockIndices?index=${encodeURIComponent(name)}`, { referer: "https://www.nseindia.com/market-data/live-equity-market" })); if (j.rows.length) return { ...j, source: "NSE live", at: Date.now() }; err = "NSE returned no stocks for this index"; }
-  catch (e) { err = e.message; }
-  for (const u of idxCsvUrls(name)) {
+  // after NSE refuses an index list, go straight to the constituents file for 30 minutes (no hammering NSE)
+  if (Date.now() < (idxNseSkip.get(normIndex(exact)) || 0)) err = "NSE refused this index list earlier";
+  else try { const j = parseIndexStocks(await fetchNseJson(`/api/equity-stockIndices?index=${encodeURIComponent(exact)}`, { referer: "https://www.nseindia.com/market-data/live-equity-market", soft: true })); if (j.rows.length) return { ...j, source: "NSE live", at: Date.now() }; err = "NSE returned no stocks for this index"; }
+  catch (e) { err = e.message; if (e.refused) idxNseSkip.set(normIndex(exact), Date.now() + 30 * 60e3); }
+  for (const u of idxCsvUrls(exact)) {
     try {
-      const r = await fetch(u, { signal: AbortSignal.timeout(8000), headers: { "User-Agent": "Mozilla/5.0" } }); if (!r.ok) continue;
+      const r = await fetch(u, { signal: AbortSignal.timeout(8000), headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", Accept: "text/csv,*/*", Referer: `${NIFTYINDICES_BASE()}/` } }); if (!r.ok) continue;
       const rows = parseIndexCsv(await r.text()); if (!rows.length) continue;
-      const filled = []; for (const row of rows) filled.push(fillFromBars(row, await eodBars(row.symbol)));
-      return { index: null, rows: filled, source: "NSE index file + daily closes", at: Date.now() };
+      return { index: null, rows: await priceIndexRows(rows), source: `${u.includes("niftyindices") ? "niftyindices.com" : "NSE archive"} list + daily closes (NSE live: ${String(err).slice(0, 60)})`, at: Date.now() };
     } catch { /* next */ }
   }
-  throw new Error(err || "not available");
+  throw new Error(`${err || "not available"}; the niftyindices.com list could not be downloaded either`);
 }
 // Cached constituents; refreshed in the background. Waits (up to 4 s) only the first time an index was never loaded.
 async function indexData(name, { force = false } = {}) {
@@ -1859,11 +1917,14 @@ async function indicesHome() {
 }
 async function indexView(name, opts = {}) {
   const meta = SMART_INDICES.find(x => normIndex(x.name) === normIndex(name)) || { name, group: "NSE index", blurb: null };
+  ensureMarketDays().catch(() => {}); // daily closes price an index that came from a constituents file
   const { cached, pending, error } = await indexData(meta.name, opts);
   if (!cached) return { name: meta.name, meta, rows: [], summary: null, pending, error, valueJob: idxValueJob };
-  const [fundamentals, stocks, hold, sw, scan] = await Promise.all([readFundamentals(), readWatchlist(), readJson(U.kiteHoldingsFile, { accounts: {} }), readJson(swingFile(), {}), readJson(swingScanFile, { snaps: {} })]);
+  const [fundamentals, stocks, hold, sw, scan] = await Promise.all([readFundamentals(), readWatchlist(), readHoldStore(), readJson(swingFile(), {}), readJson(swingScanFile, { snaps: {} })]);
   const live = new Map(); for (const r of cached.rows) { const q = livePriceCache.get(`NSE:${r.symbol}`); if (q?.price > 0 && (!r.price || (q.at || 0) > cached.at)) live.set(r.symbol, q.price); }
   const rows0 = cached.rows.map(r => (live.has(r.symbol) ? { ...r, price: live.get(r.symbol) } : r));
+  const unpriced = rows0.filter(r => !(r.price > 0)).slice(0, 80);
+  if (unpriced.length) livePrices(unpriced.map(r => ({ symbol: r.symbol, exchange: "NSE", name: r.name })), 10 * 60e3, { budgetMs: 0 }).catch(() => {}); // prices fill in on the next refresh
   // this app's valuation for every constituent whose fundamentals are known (fetched for anyone's watchlist, or by "Value this index")
   const withF = rows0.filter(r => fundamentals[r.symbol]);
   const vrows = withF.length ? computeAll(withF.map((r, i) => ({ id: `idx${i}`, company: r.name, ticker: r.symbol, marketSymbol: r.symbol, price: r.price, low: r.low52, high: r.high52 })), fundamentals) : [];
@@ -1887,6 +1948,103 @@ function startIndexValuation(view, limit = 120) {
     }
   })().finally(() => { idxValueJob.running = false; idxValueJob.endedAt = Date.now(); });
   return idxValueJob;
+}
+
+// ---- Mutual fund X-ray: fetch a fund's portfolio automatically (holdings API, or the fund house's monthly file) ----
+async function saveXrayFund({ id = null, name, asOf = null, holdings, source = null }) {
+  const st = await readJson(U.fundsFile, { funds: [] });
+  const fid = id && st.funds.some(f => f.id === id) ? id : `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+  const prev = st.funds.find(f => f.id === fid);
+  const fund = { id: fid, name: String(name).slice(0, 80), asOf: asOf ? String(asOf).slice(0, 30) : null, updatedAt: new Date().toISOString(), holdings, source: source || prev?.source || null };
+  st.funds = [...st.funds.filter(f => f.id !== fid), fund]; await writeJson(U.fundsFile, st);
+  const map = await readJson(nameMapFile, {}); for (const h of holdings) if (h.symbol) map[h.isin || normName(h.name)] = { symbol: h.symbol, exchange: h.exchange || "NSE", label: null }; await writeJson(nameMapFile, map);
+  for (const h of holdings) if (h.symbol) await ensureInPool(h.symbol, h.exchange || "NSE", h.name, `Added from fund X-ray (${fund.name}).`);
+  queueFill(holdings.filter(h => h.symbol).map(h => h.symbol), 150).catch(() => {});
+  return fund;
+}
+// ids: { id, name, isin, link } → tries the fund house link (given or saved), then the holdings API; saves on success
+async function autoFetchFund(ids) {
+  const amfi = await amfiNav({ wait: true }), st = await readJson(U.fundsFile, { funds: [] }), prev = ids.id ? st.funds.find(f => f.id === ids.id) : null;
+  let isin = /^INF[0-9A-Z]{9}$/.test(ids.isin || "") ? ids.isin : prev?.source?.isin || null;
+  if (!isin && ids.name) isin = searchAmfi(amfi, ids.name, 1)[0]?.isin || null;
+  const a = isin ? amfi[isin] : null, code = a?.[2] || prev?.source?.code || null, name = String(ids.name || prev?.name || a?.[3] || "").trim();
+  if (!name && !isin) throw new Error("Pick the fund (type its name).");
+  const link = String(ids.link || prev?.source?.link || "").trim() || null;
+  if (link && !/^https?:\/\/[^\s]+$/i.test(link)) throw new Error("The portfolio link must start with http(s)://");
+  const tried = [];
+  let got = null;
+  if (link) { const r = await fetchFromLink(link, name); tried.push(...r.tried); if (r.holdings?.length) got = r; }
+  if (!got) { const r = await fetchFromApi({ isin, code, name }); tried.push(...r.tried); if (r.holdings?.length) got = r; }
+  if (!got) return { ok: false, name, isin, tried };
+  // NSE symbols for the holdings (ISIN / name, the same matching as an upload)
+  const holdings = got.holdings.map(h => ({ ...h, exchange: "NSE" }));
+  for (let i = 0; i < holdings.length; i += 15) {
+    const chunk = holdings.slice(i, i + 15), res = await resolveHoldingSymbols(chunk.map(h => ({ name: h.name, isin: /^INE[A-Z0-9]{9}$/.test(h.isin || "") ? h.isin : null })));
+    res.forEach((x, k) => { if (!chunk[k].symbol && x?.symbol) { chunk[k].symbol = x.symbol; chunk[k].exchange = x.exchange || "NSE"; } });
+  }
+  const fund = await saveXrayFund({ id: prev?.id || null, name: prev?.name || name.replace(/\s*-\s*(direct|regular).*$/i, "").slice(0, 80), asOf: got.asOf || null, holdings: holdings.map(h => ({ name: h.name, isin: h.isin, weight: h.weight, sector: h.sector || null, symbol: h.symbol || null, exchange: h.exchange })),
+    source: { kind: got.source.kind, url: got.source.url, page: got.source.page || null, link, isin, code, fetchedAt: new Date().toISOString() } });
+  return { ok: true, fund: { id: fund.id, name: fund.name, count: fund.holdings.length, asOf: fund.asOf, source: fund.source }, tried };
+}
+const xrayJobs = new Map(); // per user
+const XJ = () => { const id = currentUser().id; if (!xrayJobs.has(id)) xrayJobs.set(id, { running: false, done: 0, total: 0, ok: [], failed: [], at: null, kind: null }); return xrayJobs.get(id); };
+// every fund you hold (Zerodha / INDmoney sync, CAS, by hand) that has no X-ray portfolio yet: fetch and link it
+function startXrayAll() {
+  const xrayJob = XJ(); if (xrayJob.running) return xrayJob;
+  Object.assign(xrayJob, { running: true, done: 0, total: 0, ok: [], failed: [], at: Date.now(), kind: "all", endedAt: null });
+  (async () => {
+    const held = (await syncedMutualFunds()).filter(f => !f.fundId);
+    const seen = new Set(), todo = held.filter(f => { const k = f.isin || normName(f.name); if (seen.has(k)) return false; seen.add(k); return true; });
+    xrayJob.total = todo.length;
+    for (const f of todo) {
+      try {
+        const r = await autoFetchFund({ name: f.amfiName || f.name, isin: /^INF/.test(f.isin || "") ? f.isin : null });
+        if (r.ok) {
+          xrayJob.ok.push(f.name);
+          const nw = await readJson(networthFile(), {}); const links = { ...(nw.links || {}) };
+          for (const g of held) if ((g.isin && g.isin === f.isin) || normName(g.name) === normName(f.name)) links[g.key] = r.fund.id;
+          await writeJson(networthFile(), { ...nw, links });
+        } else xrayJob.failed.push({ name: f.name, why: r.tried.slice(-2).join("; ") || "not found" });
+      } catch (e) { xrayJob.failed.push({ name: f.name, why: e.message }); }
+      xrayJob.done++;
+    }
+  })().finally(() => { xrayJob.running = false; xrayJob.endedAt = Date.now(); });
+  return xrayJob;
+}
+// funds with an automatic source are refreshed when their portfolio is over a month old (new month's disclosure)
+function refreshStaleXray(funds) {
+  const xrayJob = XJ(); if (xrayJob.running) return;
+  const due = funds.filter(f => f.source && Date.now() - Date.parse(f.updatedAt || 0) > 32 * 864e5 && !(Date.now() - Date.parse(f.source.lastTry || 0) < 24 * 3600e3)).slice(0, 6);
+  if (!due.length) return;
+  Object.assign(xrayJob, { running: true, done: 0, total: due.length, ok: [], failed: [], at: Date.now(), kind: "refresh", endedAt: null });
+  (async () => {
+    for (const f of due) {
+      try { const r = await autoFetchFund({ id: f.id, name: f.name }); if (r.ok) xrayJob.ok.push(f.name); else { xrayJob.failed.push({ name: f.name, why: r.tried.slice(-1)[0] || "not found" }); const st = await readJson(U.fundsFile, { funds: [] }); const g = st.funds.find(x => x.id === f.id); if (g?.source) { g.source.lastTry = new Date().toISOString(); await writeJson(U.fundsFile, st); } } }
+      catch (e) { xrayJob.failed.push({ name: f.name, why: e.message }); }
+      xrayJob.done++;
+    }
+  })().finally(() => { xrayJob.running = false; xrayJob.endedAt = Date.now(); });
+}
+
+// ---- Favourites: stocks you heart anywhere in the app (per user) ----
+const favFile = () => userFile("favourites.json");
+async function favouritesView() {
+  const fav = (await readJson(favFile(), { symbols: [] })).symbols || [];
+  if (!fav.length) return { symbols: [], rows: [] };
+  const [{ rows }, hv, sw, ce, master] = await Promise.all([computeRows(), kiteHoldingsView(), readJson(swingFile(), {}), corpEvents(), scripMaster().catch(() => ({ list: [] }))]);
+  const bySym = new Map(rows.map(r => [String(r.symbol).toUpperCase(), r])), held = new Map(hv.holdings.map(h => [h.symbol, h]));
+  const names = new Map((master.list || []).filter(x => x.exchange === "NSE").map(x => [x.symbol, x.name]));
+  const prices = await livePrices(fav.map(sym => ({ symbol: sym, exchange: "NSE" })), 60e3, { budgetMs: 1200 });
+  const today = istDay();
+  return { symbols: fav, rows: fav.map(sym => {
+    const r = bySym.get(sym), q = prices.get(sym), h = held.get(sym), p = (sw.positions || []).find(x => x.symbol === sym), w = (sw.watch || []).find(x => x.symbol === sym);
+    const price = q?.price ?? r?.price ?? null, ev = eventsFor(sym, { events: ce.events || [], actions: ce.actions || [], today, pastDays: 0, aheadDays: 30 })[0] || null;
+    return { symbol: sym, name: r?.company || names.get(sym) || sym, price, prevClose: q?.prevClose ?? null, dayPct: q?.prevClose > 0 && price ? Math.round((price / q.prevClose - 1) * 1e4) / 100 : null, priceSource: q?.source || null,
+      inWatchlist: !!r, view: r?.view && r.view !== "No fundamentals" ? r.view : null, verdict: r?.verdict?.label || null, verdictCls: r?.verdict?.cls || null, fair: r?.fairValue?.base ?? null, upside: Number.isFinite(r?.upsideToBase) ? Math.round(r.upsideToBase * 100) : null, zone: r?.zoneLow ? [r.zoneLow, r.zoneHigh] : null, pe: r?.pe ?? null,
+      held: h ? { qty: h.qty, value: h.value, pnl: h.pnl, pnlPct: h.invested ? Math.round((h.value / h.invested - 1) * 1000) / 10 : null } : null,
+      swing: p ? { qty: p.qty, avg: p.avgPrice, pnlPct: price ? Math.round((price / p.avgPrice - 1) * 1000) / 10 : null } : w ? { watch: true, buyBelow: w.buyBelow, dip: w.list === "dip" } : null,
+      event: ev ? { label: ev.label, date: ev.date, days: ev.days, kind: ev.kind, amount: ev.amount ?? null } : null };
+  }) };
 }
 
 // ---- Ask AI: Claude with the user's own Anthropic key ----
@@ -1920,7 +2078,7 @@ async function aiSnapshot() {
     view: h.valuation?.view || null, fair: h.valuation?.fairValue?.base ?? null, zone: h.valuation?.zoneLow ? `${h.valuation.zoneLow}-${h.valuation.zoneHigh}` : null, pe: h.valuation?.pe ?? null, sectorPe: h.valuation?.fairMultiple ?? null, stance: h.stance ? `${h.stance.action}: ${h.stance.summary || ""}` : null }));
   const mistakes = (sw.journal?.byMistake || []).filter(g => g.trades && !/unreviewed|none/i.test(g.key || g.label || "")).sort((a, b) => b.trades - a.trades).slice(0, 3).map(g => `${g.label || g.key} (${g.trades} trades, ₹${g.pnl})`).join(", ");
   return {
-    today: istDay(), holdings,
+    today: istDay(), holdings, favourites: (await readJson(favFile(), { symbols: [] })).symbols || [],
     swing: { positions: sw.positions, watch: sw.watch, totals: sw.totals, score: sw.score ? { trades: sw.score.trades, winRate: sw.score.winRate, avgWinPct: sw.score.avgWinPct, avgLossPct: sw.score.avgLossPct, avgHoldDays: sw.score.avgHoldDays } : null, realised: sw.realised?.pnl, mistakes },
     networth: nw ? { assets: nw.totals?.assets, liabilities: nw.totals?.liabilities, mix: (nw.classes || []).map(c => ({ label: c.label, pct: c.pct })) } : null,
     us, mf: mf.map(f => ({ name: f.name, invested: f.invested, value: f.value })),
@@ -2016,7 +2174,7 @@ async function aiChat(req, res, b) {
 // ---- Net worth: synced stocks + Kite mutual funds + everything entered by hand ----
 const networthFile = () => userFile("networth.json");
 async function syncedMutualFunds() {
-  const store = await readJson(U.kiteHoldingsFile, { accounts: {} }), links = (await readJson(networthFile(), {})).links || {};
+  const store = await readHoldStore(), links = (await readJson(networthFile(), {})).links || {};
   const xr = (await readJson(U.fundsFile, { funds: [] })).funds;
   const out = [], amfi = await amfiNav();
   const add = (f, key, account, accountLabel, syncedAt, extra = {}) => {
@@ -2046,7 +2204,7 @@ async function networthView() {
     for (const a of h.accounts) { const r = per.get(a.userId) || { value: 0, invested: 0 }; r.value += px * a.qty; r.invested += (a.avgPrice || 0) * a.qty; per.set(a.userId, r); }
   }
   const stocks = view.accounts.map(a => ({ account: a.userId, label: `${a.brokerName || "Zerodha"} · ${a.label}`, value: Math.round(per.get(a.userId)?.value || 0), invested: Math.round(per.get(a.userId)?.invested || 0) || null, syncedAt: a.syncedAt }));
-  const accts = Object.entries((await readJson(U.kiteHoldingsFile, { accounts: {} })).accounts || {});
+  const accts = Object.entries((await readHoldStore()).accounts || {});
   let intl;
   try { intl = (await usHoldings()).rows.filter(r => Number.isFinite(r.valueInr)).map(r => ({ key: r.key, name: `${r.name}${r.symbol && r.symbol !== r.name ? ` (${r.symbol})` : ""} · ${r.account}`, value: Math.round(r.valueInr), invested: Number.isFinite(r.investedInr) ? Math.round(r.investedInr) : null, syncedAt: r.priceDate || r.syncedAt })); }
   catch { intl = accts.flatMap(([id, a]) => (a.us || []).map((u, i) => ({ key: `${id}:${u.symbol || i}`, name: `${u.name}${u.symbol ? ` (${u.symbol})` : ""} · ${a.label || id}`, value: u.value, invested: u.invested, syncedAt: a.syncedAt }))); }
@@ -2061,7 +2219,7 @@ async function networthView() {
     const next = addSnapshot(history, today, nw.totals);
     if (JSON.stringify(next.at(-1)) !== JSON.stringify(history.find(h => h.day === today))) { history = next; await writeJson(networthFile(), { ...st, items, history }); }
   }
-  const mfAccounts = Object.entries((await readJson(U.kiteHoldingsFile, { accounts: {} })).accounts || {}).filter(([, a]) => (a.broker || "zerodha") === "zerodha" || Array.isArray(a.mf)).map(([id, a]) => ({ userId: id, label: a.label, mfSyncedAt: a.mfSyncedAt || null, mfError: a.mfError || null, mfCount: (a.mf || []).length }));
+  const mfAccounts = Object.entries((await readHoldStore()).accounts || {}).filter(([, a]) => (a.broker || "zerodha") === "zerodha" || Array.isArray(a.mf)).map(([id, a]) => ({ userId: id, label: a.label, mfSyncedAt: a.mfSyncedAt || null, mfError: a.mfError || null, mfCount: (a.mf || []).length }));
   const goals = (Array.isArray(st.goals) ? st.goals : []).map(g => goalStatus(g, { net: nw.totals.net, investable: nw.totals.investable, history, today }));
   const staleManual = items.filter(i => Date.now() - new Date(i.updatedAt).getTime() > 90 * 864e5).length;
   const otherAssets = accts.flatMap(([, a]) => (a.otherAssets || []).map(o => ({ ...o, account: a.label }))).filter(o => o.value > 0);
@@ -2442,7 +2600,7 @@ async function appHandler(req, res, url) {
       }
       if (url.pathname === "/api/brokers/status" && req.method === "GET") {
         const list = (await Promise.all(Object.values(brokers).map(c => c.status()))).map(s => brokerMcp[s.id] ? { ...s, mcp: brokerMcp[s.id].config() } : s);
-        return reply(res, 200, { brokers: list, readOnlyRoutes: READ_ONLY_ROUTES, accounts: kiteAccountsSummary(await readJson(U.kiteHoldingsFile, { accounts: {} })) });
+        return reply(res, 200, { brokers: list, readOnlyRoutes: READ_ONLY_ROUTES, accounts: kiteAccountsSummary(await readHoldStore()) });
       }
       const m = url.pathname.match(/^\/api\/brokers\/(angel|dhan|groww|indmoney)\/(login|sync|disconnect|settings)$/);
       if (!m || req.method !== "POST") return reply(res, 404, { message: "Unknown broker operation." });
@@ -2497,7 +2655,7 @@ async function appHandler(req, res, url) {
       const slotId = url.searchParams.get("slot") || "main";
       let kc; try { kc = await kiteFor(slotId); } catch (e) { return reply(res, 404, { message: e.message }); }
       const slotLabel = (await kiteSlotList()).find(x => x.id === slotId)?.label;
-      if (op === "status" && req.method === "GET") return reply(res, 200, { ...(await kc.status()), readOnlyTools: READ_ONLY_TOOLS, accounts: kiteAccountsSummary(await readJson(U.kiteHoldingsFile, { accounts: {} })) });
+      if (op === "status" && req.method === "GET") return reply(res, 200, { ...(await kc.status()), readOnlyTools: READ_ONLY_TOOLS, accounts: kiteAccountsSummary(await readHoldStore()) });
       if (op === "tools" && req.method === "GET") { try { return reply(res, 200, { tools: await kc.listTools() }); } catch (e) { return fail(e); } }
       if (op === "login" && req.method === "POST") { try { return reply(res, 200, await kc.login()); } catch (e) { return fail(e); } }
       if (op === "diagnose" && req.method === "GET") return reply(res, 200, await kc.diagnose());
@@ -2514,7 +2672,7 @@ async function appHandler(req, res, url) {
       if (op === "remove-account" && req.method === "POST") {
         const { userId } = await readBody(req); const store = await readJson(U.kiteHoldingsFile, { accounts: {} });
         if (!store.accounts?.[userId]) return reply(res, 404, { message: "Unknown account." });
-        delete store.accounts[userId]; await writeJson(U.kiteHoldingsFile, store);
+        delete store.accounts[userId]; if (store.hiddenEq) store.hiddenEq = store.hiddenEq.filter(x => x !== userId); await writeJson(U.kiteHoldingsFile, store);
         return reply(res, 200, await kiteHoldingsView());
       }
       return reply(res, 404, { message: "Unknown Kite operation." });
@@ -2559,7 +2717,7 @@ async function appHandler(req, res, url) {
         const b = await readBody(req), st = await readJson(taxFile(), { trades: [], imports: [] });
         if (op === "import") {
           let tables;
-          if (b.data) { const buf = Buffer.from(String(b.data), "base64"); if (buf.length > 20e6) throw new Error("File is larger than 20 MB."); tables = buf.readUInt32LE(0) === 0x04034b50 ? readXlsx(buf) : [{ rows: parseDelimited(buf.toString("utf8")) }]; }
+          if (b.data) { const buf = Buffer.from(String(b.data), "base64"); if (buf.length > 20e6) throw new Error("File is larger than 20 MB."); tables = readSheetFile(buf, b.filename || ""); }
           else tables = [{ rows: parseDelimited(String(b.text || "")) }];
           const parsed = tables.map(t => parseTradebook(t.rows)).sort((a, z) => z.trades.length - a.trades.length)[0];
           if (!parsed?.trades.length) throw new Error(parsed?.note || "No trades found in that file.");
@@ -2611,7 +2769,7 @@ async function appHandler(req, res, url) {
           let notice = null;
           if (op === "holdings/import") {
             let tables = [];
-            if (b.data) { const buf = Buffer.from(String(b.data), "base64"); if (buf.length > 10e6) throw new Error("File is larger than 10 MB."); tables = buf.readUInt32LE(0) === 0x04034b50 ? readXlsx(buf) : [{ rows: parseDelimited(buf.toString("utf8")) }]; }
+            if (b.data) { const buf = Buffer.from(String(b.data), "base64"); if (buf.length > 10e6) throw new Error("File is larger than 10 MB."); tables = readSheetFile(buf, b.filename || ""); }
             else if (b.text && /[,\t]/.test(String(b.text).split(/\r?\n/)[0] || "") && /qty|quantity|shares|units/i.test(String(b.text).split(/\r?\n/)[0])) tables = [{ rows: parseDelimited(String(b.text)) }];
             const rows = parseUsHoldings(tables, b.data ? "" : String(b.text || ""));
             if (!rows.length) throw new Error("No holdings found. Expected columns like Symbol, Quantity, Average price (USD), or lines like “AAPL 10 150.25”.");
@@ -2623,7 +2781,8 @@ async function appHandler(req, res, url) {
             if (!sym) throw new Error("Enter the US ticker (e.g. AAPL)."); if (!(qty > 0)) throw new Error("Enter the number of shares (fractions are fine).");
             if (avg !== null && !(avg > 0)) throw new Error("Average price must be in dollars, above 0."); if (invInr !== null && !(invInr > 0)) throw new Error("Invested in rupees must be above 0.");
             const prev = b.id ? st.us.find(u => u.id === b.id) : null;
-            const row = { id: prev?.id || crypto.randomUUID().slice(0, 8), source: prev?.source || "manual", account: prev?.account || label, symbol: sym, name: String(b.name || "").trim().slice(0, 80) || prev?.name || sym, qty: Math.round(qty * 1e4) / 1e4, avgUsd: avg, investedUsd: avg ? Math.round(avg * qty * 100) / 100 : null, investedInr: invInr, importedAt: new Date().toISOString() };
+            const bought = b.boughtOn ? String(b.boughtOn).slice(0, 10) : prev?.boughtOn || null; if (bought && !/^\d{4}-\d{2}-\d{2}$/.test(bought)) throw new Error("Buy date: YYYY-MM-DD.");
+            const row = { id: prev?.id || crypto.randomUUID().slice(0, 8), source: prev?.source || "manual", account: prev?.account || label, symbol: sym, name: String(b.name || "").trim().slice(0, 80) || prev?.name || sym, qty: Math.round(qty * 1e4) / 1e4, avgUsd: avg, investedUsd: avg ? Math.round(avg * qty * 100) / 100 : null, investedInr: invInr, boughtOn: bought, importedAt: new Date().toISOString() };
             st.us = prev ? st.us.map(u => (u.id === prev.id ? row : u)) : [...st.us, row];
           } else if (op === "holdings/delete") {
             // one holding (id), one imported account (account), one synced account (syncId: hidden, the sync keeps them out), or everything (all)
@@ -2633,6 +2792,11 @@ async function appHandler(req, res, url) {
             else st.us = b.id ? st.us.filter(u => u.id !== b.id) : b.account ? st.us.filter(u => u.account !== b.account) : st.us;
             if (st.us.length === before && (st.hiddenUs || []).length === hid0) throw new Error("Nothing to remove.");
             notice = b.all ? "All US holdings removed." : b.syncId ? "Removed. Its synced US holdings stay out (Show again brings them back)." : b.account ? `${b.account}: all holdings removed.` : null;
+          } else if (op === "holdings/date") { // buy date (and ₹ paid) for any holding, synced ones included: used for XIRR
+            const key = String(b.key || "").slice(0, 120), d = b.boughtOn ? String(b.boughtOn).slice(0, 10) : null;
+            if (!key) throw new Error("Which holding?"); if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error("Buy date: YYYY-MM-DD.");
+            st.usDates = { ...(st.usDates || {}) }; if (d) st.usDates[key] = d; else delete st.usDates[key];
+            if (key.startsWith("us:") && b.investedInr !== undefined) { const inr = b.investedInr === "" || b.investedInr == null ? null : Number(String(b.investedInr).replace(/[,₹\s]/g, "")); st.us = st.us.map(u => (`us:${u.id}` === key ? { ...u, investedInr: inr > 0 ? inr : null } : u)); }
           } else if (op === "holdings/unhide") {
             st.hiddenUs = (st.hiddenUs || []).filter(x => x !== b.syncId); notice = "Synced US holdings shown again.";
           } else return reply(res, 404, { message: "Unknown US operation." });
@@ -2800,11 +2964,24 @@ async function appHandler(req, res, url) {
         if (op === "import") { // the constituents CSV from niftyindices.com, when NSE's live data is blocked
           const name = String(b.name || "").slice(0, 80), rows = parseIndexCsv(String(b.csv || "").slice(0, 400000));
           if (!name || !rows.length) throw new Error("Choose the index and its constituents CSV (from niftyindices.com: Company Name, Industry, Symbol, Series, ISIN Code).");
-          const filled = []; for (const row of rows) filled.push(fillFromBars(row, await eodBars(row.symbol)));
+          const filled = await priceIndexRows(rows);
           const st = await idxStore(); st.lists[normIndex(name)] = { name, index: null, rows: filled, source: "Imported file + daily closes", at: Date.now() }; await writeJson(indexCacheFile, st);
           return reply(res, 200, await indexView(name));
         }
         return reply(res, 404, { message: "Unknown index operation." });
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/favourites" || url.pathname === "/api/favourites/view") { // ❤ favourites
+      try {
+        if (req.method === "GET" && url.pathname === "/api/favourites") return reply(res, 200, { symbols: (await readJson(favFile(), { symbols: [] })).symbols || [] });
+        if (req.method === "GET") return reply(res, 200, await favouritesView());
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown favourites operation." });
+        const b = await readBody(req), sym = String(b.symbol || "").trim().toUpperCase();
+        if (!/^[A-Z0-9&.-]{1,20}$/.test(sym)) throw new Error("Which stock?");
+        const st = await readJson(favFile(), { symbols: [] }); let list = (st.symbols || []).filter(x => x !== sym);
+        if (b.on !== false) { if (list.length >= 200) throw new Error("At most 200 favourites."); list = [sym, ...list]; }
+        await writeJson(favFile(), { symbols: list });
+        return reply(res, 200, { symbols: list });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname.startsWith("/api/ai/")) { // Ask AI
@@ -2859,7 +3036,7 @@ async function appHandler(req, res, url) {
             catch (e) { if (e.needPassword) return reply(res, 400, { message: e.message, needPassword: true }); throw e; }
             if (!funds.length) throw new Error("No fund balances found in that PDF. Use the CAMS / KFintech Consolidated Account Statement (CAS), detailed or summary.");
           } else {
-            const tables = buf ? (buf.readUInt32LE(0) === 0x04034b50 ? readXlsx(buf) : [{ rows: parseDelimited(buf.toString("utf8")) }]) : [{ rows: parseDelimited(String(b.text || "")) }];
+            const tables = buf ? (readSheetFile(buf, b.filename || "")) : [{ rows: parseDelimited(String(b.text || "")) }];
             const rows = parseMfRows(tables, buf ? "" : String(b.text || "")); if (!rows.length) throw new Error("No funds found. Expected columns like Scheme name (or ISIN), Units, Invested.");
             const amfi = await amfiNav({ wait: true });
             funds = rows.map(r => { const isin = r.isin || searchAmfi(amfi, r.name, 1)[0]?.isin || null; return { isin, name: r.name || amfi[isin]?.[3] || isin, folio: r.folio, units: r.units, cost: r.cost, nav: null, navDate: null, value: null }; });
@@ -2997,7 +3174,13 @@ async function appHandler(req, res, url) {
     if (url.pathname.startsWith("/api/funds")) {
       const op = url.pathname.slice("/api/funds".length).replace(/^\//, "");
       try {
-        if (req.method === "GET" && !op) { const st = await readJson(U.fundsFile, { funds: [] }); return reply(res, 200, { funds: st.funds.map(f => ({ id: f.id, name: f.name, asOf: f.asOf, count: f.holdings.length, updatedAt: f.updatedAt })) }); }
+        if (req.method === "GET" && !op) {
+          const st = await readJson(U.fundsFile, { funds: [] }); refreshStaleXray(st.funds);
+          const held = await syncedMutualFunds().catch(() => []), missing = held.filter(f => !f.fundId);
+          return reply(res, 200, { funds: st.funds.map(f => ({ id: f.id, name: f.name, asOf: f.asOf, count: f.holdings.length, updatedAt: f.updatedAt, source: f.source ? { kind: f.source.kind, url: f.source.url, link: f.source.link || null } : null, ageDays: Math.floor((Date.now() - Date.parse(f.updatedAt || 0)) / 864e5) })),
+            heldWithout: missing.map(f => ({ name: f.name, isin: f.isin })).slice(0, 40), job: XJ() });
+        }
+        if (req.method === "GET" && op === "search") return reply(res, 200, { results: searchAmfi(await amfiNav({ wait: true }), url.searchParams.get("q"), 10) });
         if (req.method === "GET" && op === "view") {
           const st = await readJson(U.fundsFile, { funds: [] }), f = st.funds.find(x => x.id === url.searchParams.get("id"));
           if (!f) return reply(res, 404, { message: "Unknown fund." });
@@ -3010,25 +3193,22 @@ async function appHandler(req, res, url) {
         const b = await readBody(req);
         if (op === "parse") {
           let tables;
-          if (b.data) { const buf = Buffer.from(String(b.data), "base64"); if (buf.length > 15e6) throw new Error("File is larger than 15 MB."); tables = /\.xlsx$/i.test(b.filename || "") || buf.readUInt32LE(0) === 0x04034b50 ? readXlsx(buf) : [{ name: b.filename || "file", rows: parseDelimited(buf.toString("utf8")) }]; }
+          if (b.data) { const buf = Buffer.from(String(b.data), "base64"); if (buf.length > 15e6) throw new Error("File is larger than 15 MB."); tables = readSheetFile(buf, b.filename || ""); }
           else tables = [{ name: "Pasted table", rows: parseDelimited(b.text || "") }];
-          const found = tables.map(t => { const x = extractHoldings(t.rows); const title = t.rows.slice(0, 6).flat().find(c => c && /fund|scheme/i.test(c)) || t.name; return { sheet: t.name, title: String(title).slice(0, 120), holdings: x.holdings, note: x.note }; }).filter(t => t.holdings.length >= 3).sort((a, z) => z.holdings.length - a.holdings.length);
+          const found = tables.map(t => { const x = extractHoldings(t.rows), info = sheetInfo(t.rows, t.name); return { sheet: t.name, title: info.title, asOf: info.asOf, holdings: x.holdings, note: x.note }; }).filter(t => t.holdings.length >= 3).sort((a, z) => z.holdings.length - a.holdings.length);
           if (!found.length) return reply(res, 400, { message: "No equity holdings table found. Use the AMC's monthly portfolio file (Excel), or copy the holdings table (company name and % of net assets) from Value Research or Moneycontrol and paste it." });
           return reply(res, 200, { tables: found.slice(0, 40) });
         }
+        if (op === "auto") { const r = await autoFetchFund({ id: b.id || null, name: String(b.name || "").slice(0, 160), isin: String(b.isin || "").toUpperCase(), link: b.link ? String(b.link).slice(0, 600) : null }); return r.ok ? reply(res, 200, r) : reply(res, 422, { message: `Could not fetch the holdings of ${r.name || "this fund"} automatically.`, tried: r.tried }); }
+        if (op === "auto-all") return reply(res, 200, { job: startXrayAll() });
         if (op === "resolve") { const items = (Array.isArray(b.items) ? b.items : []).slice(0, 15).map(i => ({ name: String(i.name || "").slice(0, 120), isin: /^INE[A-Z0-9]{9}$/.test(i.isin || "") ? i.isin : null })); return reply(res, 200, { results: await resolveHoldingSymbols(items) }); }
         if (op === "save") {
           const name = String(b.name || "").trim().slice(0, 80); if (!name) throw new Error("Give the fund a name.");
           const holdings = (Array.isArray(b.holdings) ? b.holdings : []).map(h => ({ name: String(h.name || "").slice(0, 120), isin: /^INE[A-Z0-9]{9}$/.test(h.isin || "") ? h.isin : null, weight: Number(h.weight) || 0, sector: h.sector ? String(h.sector).slice(0, 60) : null, symbol: /^[A-Z0-9&-]{1,20}$/.test(String(h.symbol || "").toUpperCase()) ? String(h.symbol).toUpperCase() : null, exchange: h.exchange === "BSE" ? "BSE" : "NSE" })).filter(h => h.name && h.weight > 0).slice(0, 300);
           if (!holdings.length) throw new Error("No holdings to save.");
-          const st = await readJson(U.fundsFile, { funds: [] }); const id = b.id && st.funds.some(f => f.id === b.id) ? b.id : `f${Date.now().toString(36)}`;
-          const fund = { id, name, asOf: String(b.asOf || "").slice(0, 30) || null, updatedAt: new Date().toISOString(), holdings };
-          st.funds = [...st.funds.filter(f => f.id !== id), fund]; await writeJson(U.fundsFile, st);
           // learn the confirmed mappings, track the stocks, and fetch their fundamentals in the background
-          const map = await readJson(nameMapFile, {}); for (const h of holdings) if (h.symbol) map[h.isin || normName(h.name)] = { symbol: h.symbol, exchange: h.exchange, label: null }; await writeJson(nameMapFile, map);
-          for (const h of holdings) if (h.symbol) await ensureInPool(h.symbol, h.exchange, h.name, `Added from fund X-ray (${name}).`);
-          queueFill(holdings.filter(h => h.symbol).map(h => h.symbol), 150).catch(() => {});
-          return reply(res, 200, { ok: true, id });
+          const fund = await saveXrayFund({ id: b.id || null, name, asOf: b.asOf || null, holdings });
+          return reply(res, 200, { ok: true, id: fund.id });
         }
         if (op === "delete") { const st = await readJson(U.fundsFile, { funds: [] }); st.funds = st.funds.filter(f => f.id !== b.id); await writeJson(U.fundsFile, st); return reply(res, 200, { ok: true }); }
         return reply(res, 404, { message: "Unknown fund operation." });
@@ -3242,6 +3422,32 @@ async function appHandler(req, res, url) {
       try { const qt = await yahooQuote(symbol, ex); Object.assign(out, { price: qt.price, low: qt.low, high: qt.high }); } catch (e) { out.priceError = e.message; }
       if (ex === "NSE" && !nseCooldown()) { try { const n = await fetchNseQuote(symbol); Object.assign(out, { pe: n.pe, sectorPe: n.sectorPe, sector: n.sector, price: out.price ?? n.price }); } catch { /* optional */ } }
       return reply(res, 200, out);
+    }
+    if ((url.pathname === "/api/holdings/remove" || url.pathname === "/api/holdings/unhide") && req.method === "POST") {
+      // Remove one broker account's (or every account's) stock holdings from this app. Imported CSV accounts are deleted;
+      // synced ones are hidden (kept out of every screen even after a re-sync) until Show again. Nothing changes at a broker.
+      const b = await readBody(req), store = await readJson(U.kiteHoldingsFile, { accounts: {} }); store.accounts ||= {};
+      const hid = new Set(store.hiddenEq || []); let notice;
+      if (url.pathname.endsWith("/unhide")) {
+        const id = String(b.account || "");
+        if (b.all) hid.clear(); else if (!hid.delete(id)) return reply(res, 404, { message: "That account is not removed." });
+        notice = b.all ? "Removed accounts are shown again." : `${store.accounts[id]?.label || id} is shown again.`;
+      } else {
+        const ids = b.all ? Object.keys(store.accounts).filter(id => !hid.has(id) && (store.accounts[id].holdings || []).length) : [String(b.account || "")];
+        if (!ids.length) return reply(res, 400, { message: "Nothing to remove." });
+        let deleted = 0, hidden = 0, n = 0;
+        for (const id of ids) {
+          const a = store.accounts[id]; if (!a) return reply(res, 404, { message: "Unknown account." });
+          if (hid.has(id)) continue;
+          n += (a.holdings || []).length;
+          if (isImportedAcct(a) && !(a.mf || []).length && !(a.us || []).length) { delete store.accounts[id]; deleted++; } else { hid.add(id); hidden++; }
+        }
+        notice = `Removed ${n} holding${n === 1 ? "" : "s"}${deleted ? ` · ${deleted} imported account${deleted === 1 ? "" : "s"} deleted` : ""}${hidden ? ` · ${hidden} synced account${hidden === 1 ? "" : "s"} hidden until you press Show again` : ""}.`;
+      }
+      store.hiddenEq = [...hid].filter(id => store.accounts[id]);
+      if (!store.hiddenEq.length) delete store.hiddenEq;
+      await writeJson(U.kiteHoldingsFile, store);
+      return reply(res, 200, { ...(await kiteHoldingsView()), notice });
     }
     if (url.pathname === "/api/holdings/import" && req.method === "POST") {
       // Brokers with no public holdings API (INDmoney, or any app that exports a statement): paste/upload a CSV with

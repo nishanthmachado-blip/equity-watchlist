@@ -1,11 +1,11 @@
 {
-  "at": "2026-10-17T15:45:34.623Z",
+  "at": "2026-10-18T02:34:07.036Z",
   "node": "v22.22.0",
   "endpoints": {
     "/api/stocks": {
-      "cold": 44,
-      "p50": 7,
-      "p95": 15,
+      "cold": 31,
+      "p50": 11,
+      "p95": 16,
       "kb": 71,
       "status": 200,
       "budget": {
@@ -14,9 +14,9 @@
       }
     },
     "/api/valuation": {
-      "cold": 25,
+      "cold": 30,
       "p50": 16,
-      "p95": 28,
+      "p95": 33,
       "kb": 154,
       "status": 200,
       "budget": {
@@ -25,9 +25,9 @@
       }
     },
     "/api/holdings": {
-      "cold": 25,
-      "p50": 17,
-      "p95": 19,
+      "cold": 27,
+      "p50": 18,
+      "p95": 20,
       "kb": 85,
       "status": 200,
       "budget": {
@@ -36,9 +36,9 @@
       }
     },
     "/api/swing": {
-      "cold": 1541,
-      "p50": 24,
-      "p95": 44,
+      "cold": 1562,
+      "p50": 27,
+      "p95": 56,
       "kb": 38,
       "status": 200,
       "budget": {
@@ -47,9 +47,9 @@
       }
     },
     "/api/swing/summary": {
-      "cold": 19,
-      "p50": 19,
-      "p95": 23,
+      "cold": 24,
+      "p50": 23,
+      "p95": 36,
       "kb": 1,
       "status": 200,
       "budget": {
@@ -58,9 +58,9 @@
       }
     },
     "/api/networth": {
-      "cold": 1531,
-      "p50": 18,
-      "p95": 30,
+      "cold": 1536,
+      "p50": 21,
+      "p95": 36,
       "kb": 13,
       "status": 200,
       "budget": {
@@ -69,9 +69,9 @@
       }
     },
     "/api/mf": {
-      "cold": 4,
-      "p50": 3,
-      "p95": 5,
+      "cold": 6,
+      "p50": 6,
+      "p95": 16,
       "kb": 2,
       "status": 200,
       "budget": {
@@ -80,10 +80,10 @@
       }
     },
     "/api/us/holdings": {
-      "cold": 3,
-      "p50": 3,
-      "p95": 5,
-      "kb": 2,
+      "cold": 6,
+      "p50": 5,
+      "p95": 6,
+      "kb": 3,
       "status": 200,
       "budget": {
         "warm": 300,
@@ -91,9 +91,9 @@
       }
     },
     "/api/us?list=mine": {
-      "cold": 3,
-      "p50": 3,
-      "p95": 5,
+      "cold": 4,
+      "p50": 4,
+      "p95": 10,
       "kb": 0,
       "status": 200,
       "budget": {
@@ -102,9 +102,9 @@
       }
     },
     "/api/events/upcoming": {
-      "cold": 4,
-      "p50": 3,
-      "p95": 10,
+      "cold": 6,
+      "p50": 5,
+      "p95": 8,
       "kb": 0,
       "status": 200,
       "budget": {
@@ -114,8 +114,8 @@
     },
     "/api/returns": {
       "cold": 2029,
-      "p50": 15,
-      "p95": 26,
+      "p50": 20,
+      "p95": 46,
       "kb": 4,
       "status": 200,
       "budget": {
@@ -124,9 +124,9 @@
       }
     },
     "/api/alerts": {
-      "cold": 7,
-      "p50": 7,
-      "p95": 11,
+      "cold": 8,
+      "p50": 8,
+      "p95": 16,
       "kb": 5,
       "status": 200,
       "budget": {
@@ -135,9 +135,9 @@
       }
     },
     "/api/lists": {
-      "cold": 6,
+      "cold": 7,
       "p50": 3,
-      "p95": 4,
+      "p95": 5,
       "kb": 1,
       "status": 200,
       "budget": {
@@ -146,7 +146,7 @@
       }
     },
     "/api/prices/status": {
-      "cold": 2,
+      "cold": 3,
       "p50": 2,
       "p95": 4,
       "kb": 0,
@@ -157,9 +157,9 @@
       }
     },
     "/api/tax": {
-      "cold": 12,
-      "p50": 9,
-      "p95": 13,
+      "cold": 16,
+      "p50": 14,
+      "p95": 18,
       "kb": 14,
       "status": 200,
       "budget": {
@@ -168,9 +168,9 @@
       }
     },
     "/api/dividend-income": {
-      "cold": 3,
-      "p50": 3,
-      "p95": 3,
+      "cold": 6,
+      "p50": 4,
+      "p95": 6,
       "kb": 0,
       "status": 200,
       "budget": {
@@ -179,9 +179,9 @@
       }
     },
     "/api/accumulate": {
-      "cold": 7,
-      "p50": 6,
-      "p95": 22,
+      "cold": 10,
+      "p50": 15,
+      "p95": 35,
       "kb": 0,
       "status": 200,
       "budget": {
@@ -190,9 +190,9 @@
       }
     },
     "/api/rules": {
-      "cold": 1,
-      "p50": 1,
-      "p95": 2,
+      "cold": 3,
+      "p50": 2,
+      "p95": 3,
       "kb": 1,
       "status": 200,
       "budget": {
@@ -201,9 +201,9 @@
       }
     },
     "/api/model": {
-      "cold": 29,
-      "p50": 23,
-      "p95": 32,
+      "cold": 39,
+      "p50": 32,
+      "p95": 40,
       "kb": 10,
       "status": 200,
       "budget": {
@@ -212,9 +212,9 @@
       }
     },
     "/api/portfolio/focus": {
-      "cold": 17,
-      "p50": 12,
-      "p95": 27,
+      "cold": 20,
+      "p50": 20,
+      "p95": 34,
       "kb": 15,
       "status": 200,
       "budget": {
@@ -224,8 +224,8 @@
     },
     "/api/ai/status": {
       "cold": 9,
-      "p50": 1,
-      "p95": 4,
+      "p50": 2,
+      "p95": 5,
       "kb": 1,
       "status": 200,
       "budget": {
@@ -234,9 +234,9 @@
       }
     },
     "/api/ai/preview": {
-      "cold": 38,
-      "p50": 34,
-      "p95": 39,
+      "cold": 57,
+      "p50": 49,
+      "p95": 88,
       "kb": 12,
       "status": 200,
       "budget": {
@@ -256,10 +256,32 @@
       }
     },
     "/api/market/week": {
-      "cold": 15,
-      "p50": 4,
-      "p95": 6,
+      "cold": 21,
+      "p50": 5,
+      "p95": 7,
       "kb": 1,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/funds": {
+      "cold": 6,
+      "p50": 2,
+      "p95": 4,
+      "kb": 0,
+      "status": 200,
+      "budget": {
+        "warm": 300,
+        "cold": 3000
+      }
+    },
+    "/api/favourites/view": {
+      "cold": 2,
+      "p50": 1,
+      "p95": 2,
+      "kb": 0,
       "status": 200,
       "budget": {
         "warm": 300,
@@ -280,18 +302,18 @@
   },
   "static": {
     "/": {
-      "p95": 3,
+      "p95": 7,
       "budget": 120
     },
     "/app.js": {
-      "p95": 3,
+      "p95": 25,
       "budget": 120
     },
     "/styles.css": {
-      "p95": 12,
+      "p95": 7,
       "budget": 120
     },
-    "totalCompressedKb": 684
+    "totalCompressedKb": 711
   },
-  "stream": 3
+  "stream": 4
 }
