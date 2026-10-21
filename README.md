@@ -1,5 +1,25 @@
 # Equity Watchlist MVP
 
+## v5.20.0: what changed — "My holdings" in the watchlist picker
+- **My holdings (N)** now appears in the Watchlist drop-down next to your own lists. It holds every stock you own across all broker accounts, so Valuation, Value · Growth · Dividend picks, Reports and every other screen can be switched to just your holdings.
+- **It follows your brokers**: a sync adds or drops stocks, and accounts removed on My holdings are left out. It can't be edited by hand ("Choose stocks" is greyed out).
+  - Adding a stock while it's selected goes to My watchlist.
+  - A list you create can't use the name "Holdings".
+- Held stocks that weren't tracked yet are added to the pool and valued in the background. This happens once, when your holdings change, and the page never waits for it.
+- Each login sees only its own holdings.
+- Performance: `npm run perf` is all within budget.
+
+## v5.19.0: what changed — booked-profit period picker (April to March)
+- **📅 Booked profit at the top of Swing trading**:
+  - Pick the **financial year** (April to March), then a **From – To** month range, e.g. Oct 2026 – Dec 2026 for a consolidated view.
+  - Quick picks: *This month*, *Last month*, *Q1 Apr–Jun*, *Q2 Jul–Sep*, *Q3 Oct–Dec*, *Q4 Jan–Mar*, *Full FY*.
+  - Twelve month bars show each month's booked profit. Click a month to see just that month; Shift+click extends the range.
+  - The panel shows the period's booked profit, number of trades, how many were in profit, and **tax ≈** for those months (short- and long-term split per month, plus cess).
+  - The choice is remembered, and the default is the current FY from April to this month.
+- **Closed trades** follow the same period (the drop-downs inside it are gone).
+- Fix: a sale late in the evening (after 6:30 pm, which is the next day in UTC) now counts in the right Indian month and FY for tax.
+- Performance: `npm run perf` is all within budget.
+
 ## v5.18.0: what changed — ₹ profit at each target, booked profit by month / FY, tax to pay
 - **Targets show ₹ profit**: each target row (T1 +5%, T2 +10%, T3 +20%…) shows what you'd make if the whole position sold at that price, e.g. 104 shares at ₹958.6 → T1 +₹4,985. Below the targets, **Plan books +₹X** sums the planned sales still to come. Hovering a target shows the profit on just that sale.
 - **Closed trades by Financial year and Month**: two drop-downs, each option showing that period's booked profit. Month bars let you jump to a month, and totals cover every closed trade (the table lists the latest 100).

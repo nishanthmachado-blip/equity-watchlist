@@ -33,12 +33,20 @@ test("holdings: remove a broker account / all, show again", async () => {
     await call("/api/auth/users", { cookie: owner, body: { username: "friend", password: "friend-pass-phrase" } });
     const friend = (await call("/api/auth/login", { body: { username: "friend", password: "friend-pass-phrase" } })).cookie;
     assert.equal((await call("/api/holdings/remove", { cookie: friend, body: { account: "AB1234" } })).status, 404);
+    // "My holdings" list: every held stock, read-only
+    let L = (await call("/api/lists", { cookie: owner })).json.lists.find(l => l.id === "holdings");
+    assert.deepEqual([L.name, L.auto, L.symbols], ["My holdings", "holdings", ["INFY", "ITC", "TCS"]]);
+    assert.equal((await call("/api/lists/members", { cookie: owner, body: { id: "holdings", add: ["SBIN"] } })).status, 400);
+    assert.equal((await call("/api/lists/create", { cookie: owner, body: { name: "Holdings" } })).status, 400);
+    assert.ok(!(await call("/api/lists", { cookie: friend })).json.lists.some(l => l.id === "holdings"), "another login has no holdings list");
     // synced account: hidden, funds stay
     let r = await call("/api/holdings/remove", { cookie: owner, body: { account: "AB1234" } });
     assert.equal(r.status, 200, r.text); assert.match(r.json.notice, /Removed 2 holdings · 1 synced account hidden/);
     assert.deepEqual(r.json.holdings.map(x => x.symbol), ["ITC"]);
     assert.deepEqual(r.json.hiddenAccounts.map(a => [a.userId, a.count]), [["AB1234", 2]]);
     assert.ok(!(await call("/api/networth", { cookie: owner })).text.includes('"TCS"'), "net worth leaves the hidden stocks out");
+    L = (await call("/api/lists", { cookie: owner })).json.lists.find(l => l.id === "holdings");
+    assert.deepEqual(L.symbols, ["ITC"], "a removed account leaves the holdings list too");
     // show again
     r = await call("/api/holdings/unhide", { cookie: owner, body: { account: "AB1234" } });
     assert.deepEqual(r.json.holdings.map(x => x.symbol).sort(), ["INFY", "ITC", "TCS"]); assert.equal(r.json.hiddenAccounts.length, 0);

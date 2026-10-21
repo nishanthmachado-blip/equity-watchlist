@@ -47,7 +47,7 @@
       `<span class="${t.takeProfit ? "on-tp" : ""}">🎯 <b>${t.takeProfit}</b> to book profit</span>`,
       t.stopHit ? `<span class="on-bad">🛑 <b>${t.stopHit}</b> at stop-loss</span>` : "",
       `<span class="${t.deploy ? "on-dp" : ""}">💰 <b>${t.deploy}</b> deploy signal${t.deploy === 1 ? "" : "s"}${t.deployNow ? ` · up to ${amt(t.deployNow)}` : ""}</span>`,
-      `<span>Booked <b class="${cls(v.realised.pnl)}">${sg(v.realised.pnl)}</b> · ${v.realised.count} trade${v.realised.count === 1 ? "" : "s"}</span>`,
+      `<span>Booked <b class="${cls(v.realised.pnl)}">${sg(v.realised.pnl)}</b> · ${v.realised.count} trade${v.realised.count === 1 ? "" : "s"} in all</span>`,
       fin(t.cash) ? `<span class="${t.cashShort ? "on-bad" : ""}">💵 Free cash <b>${amt(t.cash)}</b>${t.cashShort ? ` · short by ${amt(t.cashShort)}` : ""}</span>` : `<span><button type="button" class="linklike" data-go="cash">💵 Set your swing cash</button></span>`
     ].filter(Boolean).join("");
     $("#swMore").innerHTML = swMore ? `<button type="button" class="linklike sw-more-btn" data-more="0" aria-expanded="true">▴ Fewer cards</button>` : `<div class="sw-strip">${strip}<button type="button" class="linklike sw-more-btn" data-more="1" aria-expanded="false">▾ Details</button></div>`;
@@ -89,22 +89,47 @@
   // Closed trades by financial year and month: the totals come from every trade; the table lists the matching ones.
   const monthName = m => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-IN", { month: "short", year: "numeric", timeZone: "UTC" });
   const istMonth = iso => new Date(Date.parse(iso) + 5.5 * 3600e3).toISOString().slice(0, 7);
-  function bookedRows() { const B = sw.booked; return sw.closed.filter(c => (!bkMonth || istMonth(c.closedAt) === bkMonth) && (!bkFy || !B || B.months.find(m => m.month === istMonth(c.closedAt))?.fy === bkFy)); }
+  const fyStartYear = fy => Number(String(fy).slice(3, 7));
+  const fyMonths = fy => { const y = fyStartYear(fy); return Array.from({ length: 12 }, (_, i) => { const m = (3 + i) % 12, yy = y + (i >= 9 ? 1 : 0); return `${yy}-${String(m + 1).padStart(2, "0")}`; }); };
+  const nowMonth = () => istMonth(new Date().toISOString());
+  const rangeLabel = (f, t) => f === t ? monthName(f) : `${monthName(f).replace(/ \d{4}$/, f.slice(0, 4) === t.slice(0, 4) ? "" : ` ${f.slice(0, 4)}`)} – ${monthName(t)}`;
+  // the chosen period, clamped to the FY's months (defaults: the current FY, April to this month)
+  function period() {
+    const B = sw.booked, fys = B ? B.years.map(y => y.fy) : [];
+    let fy = fys.includes(per.fy) ? per.fy : B?.currentFy; const ms = fyMonths(fy);
+    let from = ms.includes(per.from) ? per.from : ms[0], to = ms.includes(per.to) ? per.to : (ms.includes(nowMonth()) ? nowMonth() : ms[11]);
+    if (from > to) [from, to] = [to, from];
+    return { fy, from, to, months: ms, inRange: m => m >= from && m <= to };
+  }
+  function periodStats() {
+    const B = sw.booked, P = period(), sel = B.months.filter(m => P.inRange(m.month)), y = B.years.find(x => x.fy === P.fy);
+    let st = sel.reduce((a, m) => a + (m.st || 0), 0), lt = sel.reduce((a, m) => a + (m.lt || 0), 0); if (st < 0) { lt += st; st = 0; } lt = Math.max(0, lt);
+    const exempt = Math.max(0, B.rules.ltExemption - (y?.current ? (sw.taxInfo?.ltUsedElsewhere || 0) : 0)), tax = Math.round((st * B.rules.stRate + Math.max(0, lt - exempt) * B.rules.ltRate) / 100 * (1 + B.rules.cessPct / 100));
+    return { P, sel, pnl: sel.reduce((a, m) => a + m.pnl, 0), trades: sel.reduce((a, m) => a + m.trades, 0), wins: sel.reduce((a, m) => a + m.wins, 0), tax, whole: P.from === P.months[0] && P.to === P.months[11] };
+  }
+  function bookedRows() { if (!sw.booked) return sw.closed; const P = period(); return sw.closed.filter(c => P.inRange(istMonth(c.closedAt))); }
   function renderBooked() {
-    const v = sw, B = v.booked;
-    if (!B) { $("#swClosedSum").textContent = v.closed.length ? `${v.closed.length} trades, ${sg(v.realised.pnl)}` : "none yet"; return; }
-    if (bkFy && !B.years.some(y => y.fy === bkFy)) bkFy = "";
-    const months = B.months.filter(m => !bkFy || m.fy === bkFy); if (bkMonth && !months.some(m => m.month === bkMonth)) bkMonth = "";
-    const sel = months.filter(m => !bkMonth || m.month === bkMonth), tot = sel.reduce((a, m) => a + m.pnl, 0), n = sel.reduce((a, m) => a + m.trades, 0), y = bkFy && B.years.find(x => x.fy === bkFy);
-    $("#swClosedSum").textContent = v.realised.count ? `${v.realised.count} trade${v.realised.count === 1 ? "" : "s"}, ${sg(v.realised.pnl)}${bkFy || bkMonth ? ` · ${bkMonth ? monthName(bkMonth) : bkFy}: ${sg(tot)}` : ""}` : "none yet";
-    $("#swBkBar").innerHTML = v.realised.count ? `<label class="hint">Financial year <select class="ui-input" id="swBkFy"><option value="">All years</option>${B.years.filter(x => x.trades).map(x => `<option value="${esc(x.fy)}"${x.fy === bkFy ? " selected" : ""}>${esc(x.fy)} · ${sg(x.pnl)}</option>`).join("")}</select></label>
-      <label class="hint">Month <select class="ui-input" id="swBkMonth"><option value="">All months</option>${months.map(m => `<option value="${m.month}"${m.month === bkMonth ? " selected" : ""}>${monthName(m.month)} · ${sg(m.pnl)}</option>`).join("")}</select></label>
-      <span class="sw-bk-tot">Booked <b class="${cls(tot)}">${sg(tot)}</b> · ${n} trade${n === 1 ? "" : "s"}${y ? ` · tax ${inr(y.tax)}${y.paid ? `, paid ${inr(y.paid)}` : ""}` : ""}</span>` : "";
-    // month by month bars for the chosen year (or the last 12 months)
-    const bars = (bkFy ? months : months.slice(0, 12)).slice().reverse(), max = Math.max(1, ...bars.map(m => Math.abs(m.pnl)));
-    $("#swBkMonths").innerHTML = bars.length > 1 ? bars.map(m => `<button type="button" class="sw-bk-m${m.month === bkMonth ? " on" : ""}" data-bkm="${m.month}" title="${monthName(m.month)}: ${sg(m.pnl)} from ${m.trades} trade${m.trades === 1 ? "" : "s"}"><i class="${m.pnl >= 0 ? "up" : "dn"}" style="height:${Math.max(3, Math.round(Math.abs(m.pnl) / max * 40))}px"></i><small>${monthName(m.month).replace(/ \d{4}$/, "")}</small><b class="${cls(m.pnl)}">${Math.abs(m.pnl) >= 1e5 ? `${(m.pnl / 1e5).toFixed(1)}L` : Math.abs(m.pnl) >= 1e3 ? `${Math.round(m.pnl / 1e3)}k` : Math.round(m.pnl)}</b></button>`).join("") : "";
-    $("#swBkFy")?.addEventListener("change", e => { bkFy = e.target.value; bkMonth = ""; render(); });
-    $("#swBkMonth")?.addEventListener("change", e => { bkMonth = e.target.value; render(); });
+    const v = sw, B = v.booked, box = $("#swPeriod");
+    if (!B || !v.realised.count) { box.innerHTML = ""; $("#swBkBar").innerHTML = ""; $("#swBkMonths").innerHTML = ""; $("#swClosedSum").textContent = v.closed.length ? `${v.closed.length} trades, ${sg(v.realised.pnl)}` : "none yet"; return; }
+    const S = periodStats(), P = S.P, byM = new Map(B.months.map(m => [m.month, m])), cur = nowMonth();
+    const q = i => [P.months[i * 3], P.months[i * 3 + 2]], last = (() => { const d = new Date(`${cur}-01T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 7); })();
+    const chips = [["This month", cur, cur], ["Last month", last, last], ["Q1 Apr–Jun", ...q(0)], ["Q2 Jul–Sep", ...q(1)], ["Q3 Oct–Dec", ...q(2)], ["Q4 Jan–Mar", ...q(3)], [`Full ${P.fy}`, P.months[0], P.months[11]]]
+      .filter(([, f]) => P.months.includes(f)).map(([l, f, t]) => `<button type="button" class="sw-per-chip${P.from === f && P.to === t ? " on" : ""}" data-per="${f}|${t}">${l}</button>`).join("");
+    const max = Math.max(1, ...P.months.map(m => Math.abs(byM.get(m)?.pnl || 0)));
+    const opt = sel => P.months.map(m => `<option value="${m}"${m === sel ? " selected" : ""}>${monthName(m)}</option>`).join("");
+    box.innerHTML = `<div class="sw-per-head"><b>📅 Booked profit</b>
+        <label>Year <select class="ui-input" id="swPerFy">${B.years.map(y => `<option${y.fy === P.fy ? " selected" : ""}>${esc(y.fy)}</option>`).join("")}</select></label>
+        <label>From <select class="ui-input" id="swPerFrom">${opt(P.from)}</select></label><label>To <select class="ui-input" id="swPerTo">${opt(P.to)}</select></label>
+        <div class="sw-per-total"><span>${esc(S.whole ? P.fy : rangeLabel(P.from, P.to))}</span><strong class="${cls(S.pnl)}">${sg(S.pnl)}</strong><small>${S.trades} trade${S.trades === 1 ? "" : "s"}${S.trades ? ` · ${S.wins} in profit` : ""}${S.trades ? ` · tax ≈ ${inr(S.tax)}` : ""}</small></div></div>
+      <div class="sw-per-chips">${chips}</div>
+      <div class="sw-per-bars">${P.months.map(m => { const g = byM.get(m), pnl = g?.pnl || 0; return `<button type="button" class="sw-bk-m${P.inRange(m) ? " on" : ""}${m > cur ? " future" : ""}" data-bkm="${m}" title="${monthName(m)}: ${g ? `${sg(pnl)} from ${g.trades} trade${g.trades === 1 ? "" : "s"}` : "nothing booked"}. Click for this month; Shift+click to extend the range"><i class="${pnl >= 0 ? "up" : "dn"}" style="height:${g ? Math.max(3, Math.round(Math.abs(pnl) / max * 40)) : 0}px"></i><small>${monthName(m).slice(0, 3)}</small><b class="${cls(pnl)}">${!g ? "—" : Math.abs(pnl) >= 1e5 ? `${(pnl / 1e5).toFixed(1)}L` : Math.abs(pnl) >= 1e3 ? `${Math.round(pnl / 1e3)}k` : Math.round(pnl)}</b></button>`; }).join("")}</div>
+      ${S.trades && !S.whole ? `<p class="hint sw-per-note">Tax ≈ is for these months alone (${B.rules.stRate}% short-term, ${B.rules.ltRate}% long-term above ₹1.25 L, + cess); the 🧾 tile shows the whole year and what you paid.</p>` : ""}`;
+    $("#swPerFy").onchange = e => { per = { fy: e.target.value }; perSave(); render(); };
+    $("#swPerFrom").onchange = e => { per = { fy: P.fy, from: e.target.value, to: e.target.value > P.to ? e.target.value : P.to }; perSave(); render(); };
+    $("#swPerTo").onchange = e => { per = { fy: P.fy, from: e.target.value < P.from ? e.target.value : P.from, to: e.target.value }; perSave(); render(); };
+    $("#swClosedSum").textContent = `${S.trades} of ${v.realised.count} trade${v.realised.count === 1 ? "" : "s"} · ${esc(S.whole ? P.fy : rangeLabel(P.from, P.to))}: ${sg(S.pnl)}`;
+    $("#swBkBar").innerHTML = `<span class="hint">Showing trades sold in <b>${esc(S.whole ? P.fy : rangeLabel(P.from, P.to))}</b> (change the period at the top of the page).</span>`;
+    $("#swBkMonths").innerHTML = "";
   }
   // Tax on booked swing profits for a financial year, and the payments you made against it
   async function taxPaidDialog(fy) {
@@ -469,7 +494,9 @@
     if (out) { sw = out; render(); window.toast?.(`${p.name}: buys saved.`, { kind: "ok" }); }
   }
   let ledgerSym = "";
-  let bkFy = "", bkMonth = ""; // closed-trades filter: financial year and month ("" = all)
+  // Booked-profit period (top of the page): a financial year (Apr–Mar) and a month range inside it; remembered
+  let per = (() => { try { return JSON.parse(localStorage.getItem("sw-period") || "null") || {}; } catch { return {}; } })();
+  const perSave = () => { try { localStorage.setItem("sw-period", JSON.stringify(per)); } catch { /* private mode */ } };
   function renderLedger() {
     const L = sw.ledger, box = $("#swLedgerBody"); if (!box || !L) return;
     $("#swLedgerSum").textContent = L.entries.length ? `${L.entries.filter(e => e.type === "BUY").length} buys · ${L.entries.filter(e => e.type === "SELL").length} sells` : "nothing yet";
@@ -556,7 +583,8 @@
       if (e.target.closest('[data-go="dip"]')) { dipAddDialog(); return; }
       if (e.target.closest('[data-go="pat"]')) { patDialog(); return; }
       if (e.target.closest('[data-go="taxpaid"]')) { taxPaidDialog(sw.booked?.currentFy); return; }
-      const bm = e.target.closest("[data-bkm]"); if (bm) { bkMonth = bkMonth === bm.dataset.bkm ? "" : bm.dataset.bkm; render(); return; }
+      const bm = e.target.closest("[data-bkm]"); if (bm) { const P = period(), m = bm.dataset.bkm; per = e.shiftKey ? { fy: P.fy, from: m < P.from ? m : P.from, to: m > P.to ? m : P.to } : { fy: P.fy, from: m, to: m }; perSave(); render(); return; }
+      const pc = e.target.closest("[data-per]"); if (pc) { const [f, t] = pc.dataset.per.split("|"); per = { fy: period().fy, from: f, to: t }; perSave(); render(); return; }
       const nt = e.target.closest("[data-tax]"); if (nt) { const p = sw.positions.find(x => x.id === nt.dataset.tax); if (p) window.ui.dialog({ title: `${p.name}: if you sold all ${p.qty} now`, icon: "🧮", okText: "Close", hideCancel: true, wide: true, bodyHtml: taxTable(p.ifSold), collect: () => true }); return; }
       if (e.target.closest('[data-go="cash"]')) { settingsDialog("cash"); return; }
       const tb = e.target.closest("[data-tact]");

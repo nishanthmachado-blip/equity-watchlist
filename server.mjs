@@ -255,7 +255,26 @@ async function readJson(file, fallback) { try { return JSON.parse(await fs.readF
 async function writeJson(file, value) { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, JSON.stringify(value, null, 2)); }
 const symOf = s => (s.marketSymbol || s.ticker || "").toUpperCase();
 async function readLists() { return ensureLists(await readJson(U.listsFile, {}), (await readWatchlist()).map(symOf)); }
-async function addToList(id, symbols) { if (id === "__none__") return; const st = await readLists(); await writeJson(U.listsFile, setMembers(st, st.lists.some(l => l.id === id) ? id : DEFAULT_ID, { add: symbols })); }
+// "My holdings": a list that follows your broker holdings (every account, removed accounts left out). Not stored with
+// your lists, so it cannot drift; stocks you hold that are not tracked yet are added to the pool and valued in the background.
+const HOLDINGS_LIST_ID = "holdings";
+const holdTrackAt = new Map();
+async function withHoldingsList(st) {
+  const store = await readHoldStore(), held = new Map();
+  for (const a of Object.values(store.accounts || {})) for (const h of a.holdings || []) if (h.symbol && !held.has(h.symbol)) held.set(h.symbol, { exchange: h.exchange === "BSE" ? "BSE" : "NSE", name: h.name || null });
+  if (!held.size) return st;
+  const uid = currentUser().id, key = [...held.keys()].sort().join(",");
+  if (holdTrackAt.get(uid) !== key) { // only when the holdings changed
+    holdTrackAt.set(uid, key);
+    (async () => {
+      const pool = new Set((await readWatchlist()).map(symOf)), add = [...held].filter(([sym]) => !pool.has(sym));
+      for (const [sym, h] of add) await ensureInPool(sym, h.exchange, h.name, "Added because you hold it (My holdings).");
+      if (add.length) queueFill(add.map(([sym]) => sym)).catch(() => {});
+    })().catch(e => { holdTrackAt.delete(uid); console.warn(`[lists] holdings: ${e.message}`); });
+  }
+  return { lists: [...st.lists, { id: HOLDINGS_LIST_ID, name: "My holdings", default: false, auto: "holdings", symbols: [...held.keys()].sort() }] };
+}
+async function addToList(id, symbols) { if (id === "__none__" || id === HOLDINGS_LIST_ID) return; const st = await readLists(); await writeJson(U.listsFile, setMembers(st, st.lists.some(l => l.id === id) ? id : DEFAULT_ID, { add: symbols })); }
 // Tracks a stock (no watchlist membership) so its price, fundamentals and dividend history can be fetched.
 async function ensureInPool(symbol, exchange = "NSE", name = null, note = "Added from the dividend planner.") {
   const list = await readWatchlist(); if (list.some(st => symOf(st) === symbol)) return false;
@@ -3321,16 +3340,18 @@ async function appHandler(req, res, url) {
       const op = url.pathname.slice("/api/lists".length).replace(/^\//, "");
       try {
         let st = await readLists();
-        if (req.method === "GET" && !op) { await writeJson(U.listsFile, st); return reply(res, 200, { lists: st.lists.map(l => ({ ...l, count: l.symbols.length })) }); }
+        if (req.method === "GET" && !op) { await writeJson(U.listsFile, st); return reply(res, 200, { lists: (await withHoldingsList(st)).lists.map(l => ({ ...l, count: l.symbols.length })) }); }
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown lists operation." });
         const b = await readBody(req); let created = null;
+        if (b.id === HOLDINGS_LIST_ID && op !== "create") throw new Error("My holdings follows your broker accounts: it changes when you sync or remove holdings on My holdings.");
+        if (op === "create" && /^(my )?holdings$/i.test(String(b.name || "").trim())) throw new Error('"My holdings" is already there: it follows your broker accounts. Pick another name.');
         if (op === "create") { const r = createList(st, { name: b.name, symbols: b.symbols }); st = r.store; created = r.list.id; }
         else if (op === "rename") st = renameList(st, b.id, b.name);
         else if (op === "delete") st = deleteList(st, b.id);
         else if (op === "members") { st = setMembers(st, b.id, { add: b.add, remove: b.remove }); if (Array.isArray(b.add) && b.add.length) setTimeout(() => queueFill(b.add).catch(() => {}), 500); }
         else return reply(res, 404, { message: "Unknown lists operation." });
         await writeJson(U.listsFile, st);
-        return reply(res, 200, { lists: st.lists.map(l => ({ ...l, count: l.symbols.length })), created });
+        return reply(res, 200, { lists: (await withHoldingsList(st)).lists.map(l => ({ ...l, count: l.symbols.length })), created });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname.startsWith("/api/notify")) { // Telegram phone alerts (per account)

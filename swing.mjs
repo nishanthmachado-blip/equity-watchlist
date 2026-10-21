@@ -251,7 +251,7 @@ export function swingTaxRows(closed = []) {
   const rows = [];
   for (const t of closed) {
     const lots = Array.isArray(t.lots) && t.lots.length ? t.lots : [{ qty: t.qty, price: t.buyAvg, at: t.openedAt || t.closedAt }];
-    const sellDay = String(t.closedAt).slice(0, 10);
+    const sellDay = Number.isFinite(Date.parse(t.closedAt)) ? istDay(t.closedAt) : String(t.closedAt).slice(0, 10); // the sale day in India
     for (const l of lots) {
       const buyDay = String(l.at || t.closedAt).slice(0, 10), long = sellDay >= ltDate(buyDay);
       rows.push({ fy: fyOf(sellDay).label, symbol: t.symbol, name: t.name, qty: l.qty, buyDay, buyPrice: l.price, sellDay, sellPrice: t.sellPrice, cost: r2(l.qty * l.price), proceeds: r2(l.qty * t.sellPrice), gain: r2(l.qty * (t.sellPrice - l.price)), days: Math.round((Date.parse(sellDay) - Date.parse(buyDay)) / 864e5), term: long ? "LTCG" : "STCG", atTarget: !!t.atTarget, tradeId: t.id });
@@ -427,6 +427,8 @@ export function bookedSummary(closed = [], { taxPaid = [], ltUsedElsewhere = 0, 
     g.trades++; g.pnl += Number(t.pnl); if (t.pnl > 0) g.wins++; months.set(m, g);
   }
   const cur = fyOf(today).label, tx = swingTaxRows(closed), paidBy = {};
+  // short- / long-term gain per month (FIFO lots), so a range of months gets its own tax estimate
+  for (const r of tx.rows) { const g = months.get(r.sellDay.slice(0, 7)); if (!g) continue; if (r.term === "STCG") g.st = (g.st || 0) + r.gain; else g.lt = (g.lt || 0) + r.gain; }
   for (const p of taxPaid) paidBy[p.fy] = (paidBy[p.fy] || 0) + (Number(p.amount) || 0);
   const fys = new Set([...tx.years.map(y => y.fy), ...Object.keys(paidBy), cur]);
   const years = [...fys].sort((a, b) => b.localeCompare(a)).map(fy => {
@@ -440,7 +442,7 @@ export function bookedSummary(closed = [], { taxPaid = [], ltUsedElsewhere = 0, 
   });
   return {
     currentFy: cur,
-    months: [...months.values()].sort((a, b) => b.month.localeCompare(a.month)).map(m => ({ ...m, pnl: Math.round(m.pnl) })),
+    months: [...months.values()].sort((a, b) => b.month.localeCompare(a.month)).map(m => ({ ...m, pnl: Math.round(m.pnl), st: Math.round(m.st || 0), lt: Math.round(m.lt || 0) })),
     years,
     payments: [...taxPaid].sort((a, b) => String(b.date).localeCompare(String(a.date))),
     rules: { stRate: TAX_RULES.stRate * 100, ltRate: TAX_RULES.ltRate * 100, ltExemption: TAX_RULES.ltExemption, cessPct }

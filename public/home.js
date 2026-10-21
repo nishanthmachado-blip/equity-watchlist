@@ -81,7 +81,7 @@
       const { symbol } = res; symbolUsed = symbol;
       const cached = rowFor(symbol);
       if (cached && cached.view !== "No fundamentals" && cached.ageDays !== null && cached.ageDays < 1 && !pick?.force && !/range only/i.test(cached.source || "")) { // a range-only ETF reading is a stopgap: always try for the full history
-        if (!listBy(activeListId)?.symbols.includes(symbol)) { lists = (await post("/api/lists/members", { id: activeListId, add: [symbol] })).lists; applyActiveList(); renderListBar(); }
+        if (!listBy(editListId())?.symbols.includes(symbol)) { lists = (await post("/api/lists/members", { id: editListId(), add: [symbol] })).lists; applyActiveList(); renderListBar(); }
         status(st, `${symbol}: fetching the live price…`);
         try { await post("/api/prices/live", { symbols: [symbol] }); await loadStocks(); await loadValuation(); } catch { /* the saved price stands */ }
         showResult(symbol); status(st, `${symbol}: data fetched today (${cached.source || "saved"}). Use Refresh data to fetch again.`); $("#vsSymbol").value = ""; return;
@@ -182,12 +182,12 @@
   // Moves a suggestion into the selected watchlist (or out of it). New stocks are tracked and their data fetched in the background.
   async function toggleInList(i) {
     const it = sg.items[i], st = $("#vsStatus"); if (!it) return;
-    const lname = listBy(activeListId)?.name || "watchlist";
+    const lname = listBy(editListId())?.name || "watchlist";
     try {
-      if (inActive(it)) { lists = (await post("/api/lists/members", { id: activeListId, remove: [it.symbol] })).lists; applyActiveList(); renderListBar(); renderDrop(); redrawAll(); status(st, `${it.symbol} removed from “${lname}”.`); return; }
+      if (listBy(editListId())?.symbols.includes(it.symbol)) { lists = (await post("/api/lists/members", { id: editListId(), remove: [it.symbol] })).lists; applyActiveList(); renderListBar(); renderDrop(); redrawAll(); status(st, `${it.symbol} removed from “${lname}”.`); return; }
       const tracked = stocks.some(x => symOfAny(x) === it.symbol);
-      if (tracked) await post("/api/lists/members", { id: activeListId, add: [it.symbol] });
-      else await post("/api/stocks/add", { symbol: it.symbol, company: it.name, exchange: it.exchange, list: activeListId, bucket: "Imported", action: "Watch", note: "Added from search." });
+      if (tracked) await post("/api/lists/members", { id: editListId(), add: [it.symbol] });
+      else await post("/api/stocks/add", { symbol: it.symbol, company: it.name, exchange: it.exchange, list: editListId(), bucket: "Imported", action: "Watch", note: "Added from search." });
       await Promise.all([loadStocks(), loadLists()]); it.lists = [...(it.lists || []), activeListId]; renderDrop(); redrawAll();
       const stock = stocks.find(x => symOfAny(x) === it.symbol), row = rowFor(it.symbol);
       if (stock && (!row || row.view === "No fundamentals")) {
@@ -252,9 +252,9 @@
     </article>`;
     loadExtras(r.symbol);
     renderGrowthLens(r);
-    const lb = $("#vsListBtn"), paintListBtn = () => { const l = lists.find(x => x.id === activeListId), inL = !!(l && l.symbols.includes(symKey(r.symbol))); lb.textContent = inL ? `✓ In “${l.name}” (remove)` : `+ Add to “${l?.name || "watchlist"}”`; lb.dataset.in = inL ? "1" : ""; };
+    const lb = $("#vsListBtn"), paintListBtn = () => { const l = lists.find(x => x.id === editListId()), inL = !!(l && l.symbols.includes(symKey(r.symbol))); lb.textContent = inL ? `✓ In “${l.name}” (remove)` : `+ Add to “${l?.name || "watchlist"}”`; lb.dataset.in = inL ? "1" : ""; };
     paintListBtn();
-    lb.onclick = async () => { lb.disabled = true; try { await post("/api/lists/members", { id: activeListId, [lb.dataset.in ? "remove" : "add"]: [symKey(r.symbol)] }); await loadLists(); redrawAll(); paintListBtn(); } catch (e) { lb.textContent = `Failed: ${e.message}`; } finally { lb.disabled = false; } };
+    lb.onclick = async () => { lb.disabled = true; try { await post("/api/lists/members", { id: editListId(), [lb.dataset.in ? "remove" : "add"]: [symKey(r.symbol)] }); await loadLists(); redrawAll(); paintListBtn(); } catch (e) { lb.textContent = `Failed: ${e.message}`; } finally { lb.disabled = false; } };
     $("#vsRefetch").onclick = () => valueStock(r.symbol, { symbol: r.symbol, name: r.company, exchange: r.exchange || "NSE", force: true });
     $("#vsOpenTable").onclick = () => { setView("valuation"); setTimeout(() => { const i = $("#valSearch"); if (i) { i.value = r.symbol; i.dispatchEvent(new Event("input")); } }, 50); };
     if (!sheet?.open) box.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
@@ -646,6 +646,8 @@
   let lists = [], activeListId = "default";
   try { activeListId = localStorage.getItem("equity-active-list") || "default"; } catch {}
   const listBy = id => lists.find(l => l.id === id);
+  // "My holdings" follows your broker accounts: adding / removing a stock while it is selected goes to My watchlist
+  const editListId = () => (listBy(activeListId)?.auto ? "default" : activeListId);
   function applyActiveList() {
     if (!listBy(activeListId)) activeListId = "default";
     const l = listBy(activeListId); activeListSymbols = l ? new Set(l.symbols) : null;
@@ -655,7 +657,8 @@
     const sel = $("#listSelect");
     sel.innerHTML = lists.map(l => `<option value="${esc(l.id)}">${esc(l.name)} (${l.count ?? l.symbols.length})</option>`).join("");
     sel.value = activeListId;
-    const l = listBy(activeListId); $("#listCount").textContent = l ? `${l.symbols.length} stock${l.symbols.length === 1 ? "" : "s"}${l.default ? " · default" : ""}` : "";
+    const l = listBy(activeListId); $("#listCount").textContent = l ? `${l.symbols.length} stock${l.symbols.length === 1 ? "" : "s"}${l.default ? " · default" : l.auto ? " · from your broker holdings, updates on every sync" : ""}` : "";
+    const mg = $("#listManage"); mg.disabled = !!l?.auto; mg.title = l?.auto ? "My holdings follows your broker accounts: sync or remove holdings on My holdings to change it" : "";
   }
   async function loadLists() { try { lists = (await get("/api/lists")).lists; applyActiveList(); renderListBar(); } catch {} }
   window.loadLists = loadLists;
@@ -831,7 +834,7 @@
   $("#lmSearch").oninput = lmRender; $("#lmOnly").onchange = lmRender;
   $("#lmList").addEventListener("change", async e => {
     const cb = e.target.closest("input[data-sym]"); if (!cb) return;
-    try { lists = (await post("/api/lists/members", { id: activeListId, [cb.checked ? "add" : "remove"]: [cb.dataset.sym] })).lists; applyActiveList(); $("#lmSub").textContent = `${listBy(activeListId).symbols.length} selected.`; renderListBar(); }
+    try { lists = (await post("/api/lists/members", { id: editListId(), [cb.checked ? "add" : "remove"]: [cb.dataset.sym] })).lists; applyActiveList(); $("#lmSub").textContent = `${listBy(activeListId).symbols.length} selected.`; renderListBar(); }
     catch (err) { $("#lmStatus").textContent = err.message; cb.checked = !cb.checked; }
   });
   $("#lmRename").onclick = async () => { try { lists = (await post("/api/lists/rename", { id: activeListId, name: $("#lmName").value })).lists; applyActiveList(); renderListBar(); lmRender(); $("#lmStatus").textContent = "Renamed."; } catch (e) { $("#lmStatus").textContent = e.message; } };

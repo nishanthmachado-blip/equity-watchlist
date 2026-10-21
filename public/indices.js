@@ -90,7 +90,7 @@
   }
   window.featureOpen = window.featureOpen || {};
   window.featureOpen.indices = async () => {
-    try { lists = (await api("/api/lists")).lists || []; } catch { lists = []; }
+    try { lists = ((await api("/api/lists")).lists || []).filter(l => !l.auto); } catch { lists = []; }
     $("#idxList").innerHTML = lists.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("") || '<option value="">Default watchlist</option>';
     load();
   };
