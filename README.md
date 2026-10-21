@@ -1,5 +1,15 @@
 # Equity Watchlist MVP
 
+## v5.18.0: what changed — ₹ profit at each target, booked profit by month / FY, tax to pay
+- **Targets show ₹ profit**: each target row (T1 +5%, T2 +10%, T3 +20%…) shows what you'd make if the whole position sold at that price, e.g. 104 shares at ₹958.6 → T1 +₹4,985. Below the targets, **Plan books +₹X** sums the planned sales still to come. Hovering a target shows the profit on just that sale.
+- **Closed trades by Financial year and Month**: two drop-downs, each option showing that period's booked profit. Month bars let you jump to a month, and totals cover every closed trade (the table lists the latest 100).
+- **🧾 Tax to pay tile** (top row): tax on this FY's booked swing profits, minus what you've paid:
+  - 20% short-term, 12.5% long-term above ₹1.25 L, + 4% cess.
+  - Losses are set off.
+  - The "LTCG used elsewhere" setting is respected.
+- **Record a payment**: amount, date, which FY it counts for, and a note (e.g. "Advance tax 15 Dec"). The tile drops to what's still due and shows ✓ ₹0 when cleared. Payments can be removed.
+- Performance: `npm run perf` is all within budget, with the same swing timing.
+
 ## v5.17.0: what changed — compact swing summary, text size
 - **Swing trading**: the second row of cards (To book profit, Deploy signals, Booked so far, Free cash) is now one slim line of coloured chips. A green chip means there's profit to book, blue means deploy signals, and red means a stop-loss hit or short of cash. **▾ Details** opens the full cards and **▴ Fewer cards** closes them; your choice is remembered.
 - **Text size for the whole app**: 🎨 theme menu → *Text size* → A−− (80%), A− (90%), A (100%), A+ (110%). Every screen scales together, the choice is remembered in this browser, and it applies before the page draws, so there's no flash.

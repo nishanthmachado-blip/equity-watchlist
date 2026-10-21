@@ -35,6 +35,7 @@
       <div><span>Value now</span><strong>${amt(t.value)}</strong>${priceNote}</div>
       <div class="${t.pnl > 0 ? "sw-up" : t.pnl < 0 ? "sw-down" : ""}"><span>Profit / loss</span><strong class="${cls(t.pnl)}">${sg(t.pnl)}</strong><small class="${cls(t.pnlPct)}">${pct(t.pnlPct)}</small>${priceNote}</div>
       ${t.pat ? `<div class="sw-pat${t.pat.net < 0 ? " neg" : ""}" title="If you sold every position now"><span>🧾 Profit after tax (PAT)</span><strong class="${cls(t.pat.net)}">${sg(t.pat.net)}</strong><small>if you book all now: P/L − STT ${inr(t.pat.stt)} − charges ${inr(t.pat.otherCharges)} − tax ${inr(t.pat.tax)}</small><button type="button" class="pat-btn" data-go="pat">How it is worked out</button></div>` : ""}
+      ${(() => { const B = v.booked, y = B?.years.find(x => x.current); if (!y || (!y.trades && !y.paid)) return ""; return `<div class="sw-tax${y.due ? " due" : " clear"}" title="Tax on this FY's booked swing profits (short-term ${B.rules.stRate}%, long-term ${B.rules.ltRate}% above ₹1.25 L, + ${B.rules.cessPct}% cess) minus what you recorded as paid"><span>🧾 Tax to pay · ${esc(y.fy)}</span><strong>${y.due ? inr(y.due) : "✓ ₹0"}</strong><small>${y.paid ? `${inr(y.tax)} on booked ${sg(y.pnl)} · paid ${inr(y.paid)}` : `on booked ${sg(y.pnl)} this year`}</small><button type="button" class="pat-btn" data-go="taxpaid">${y.due ? "Record a payment" : "Payments"}</button></div>`; })()}
       ${swMore ? `
       <div class="${t.takeProfit ? "sw-tp" : ""}"><span>🎯 To book profit</span><strong>${t.takeProfit}</strong>${t.stopHit ? `<small class="avoid">🛑 ${t.stopHit} at stop-loss</small>` : ""}</div>
       <div class="${t.deploy ? "sw-dp" : ""}"><span>💰 Deploy signals</span><strong>${t.deploy}</strong>${t.deployNow ? `<small>up to ${amt(t.deployNow)}</small>` : ""}</div>
@@ -64,7 +65,7 @@
         <td class="num"><b>${px(r.price)}</b>${r.health ? `<div><span class="sw-health ${r.health.state}" title="${esc(r.health.note)}. Trailing stop idea: ₹${r.health.trail} (2 ATR under the price or the 20-day low, whichever is higher).">${{ strong: "▲ Uptrend", pause: "◆ Pausing", caution: "▼ Below 50-DMA", weak: "▼ Below 200-DMA" }[r.health.state]}</span></div>` : ""}${fin(r.dayPct) ? `<div class="ticker ${cls(r.dayPct)}">${pct(r.dayPct)} today</div>` : ""}${srcLine(r)}</td>
         <td class="num">${inr(r.invested)}</td><td class="num">${inr(r.value)}</td>
         <td class="num ${cls(r.pnl)}"><b>${sg(r.pnl)}</b><div>${pct(r.pnlPct)}</div>${r.ifSold ? `<div class="sw-net" data-tax="${esc(r.id)}" title="If you sold all ${r.qty} now: ${taxTitle(r.ifSold)}">net ${sg(r.ifSold.net)}<small> after tax</small></div>` : ""}</td>
-        <td class="sw-tg">${r.targets.map(t => `<div class="tg-l ${t.hit ? "hit" : r.nextTarget?.n === t.n ? "next" : ""}${t.done ? " done" : ""}" title="${t.sellQty ? `Plan: sell ${t.sellQty} share${t.sellQty === 1 ? "" : "s"} at T${t.n} (${t.planPct}%), about ${sg(t.profit)} profit` : `No sale planned at T${t.n}`}${t.done ? " · booked" : ""}"><i>T${t.n}</i><span>+${t.pct}%</span><b>${px(t.price)}</b><em>${t.sellQty ? `sell ${t.sellQty}` : "hold"}</em>${t.done ? "✓✓" : t.hit ? "✓" : ""}</div>`).join("")}${r.ownTargets || r.ownPlan ? `<div class="ticker">own ${[r.ownTargets && "targets", r.ownPlan && "plan"].filter(Boolean).join(" + ")}</div>` : ""}${r.sellNow ? `<div class="sw-sellnow">Sell ${r.sellNow} now</div>` : ""}${r.stopLoss ? `<div class="sw-sl${r.status === "stop-hit" ? " hit" : ""}">SL ${px(r.stopLoss)}</div>` : ""}</td>
+        <td class="sw-tg">${r.targets.map(t => `<div class="tg-l ${t.hit ? "hit" : r.nextTarget?.n === t.n ? "next" : ""}${t.done ? " done" : ""}" title="${t.sellQty ? `Plan: sell ${t.sellQty} share${t.sellQty === 1 ? "" : "s"} at T${t.n} (${t.planPct}%), about ${sg(t.profit)} profit` : `No sale planned at T${t.n}`}${t.done ? " · booked" : ""}"><i>T${t.n}</i><span>+${t.pct}%</span><b>${px(t.price)}</b><u class="tg-inr ${cls(r.qty * (t.price - r.avgPrice))}" title="Profit if all ${r.qty} shares sold at T${t.n}">${sg(r.qty * (t.price - r.avgPrice))}</u><em>${t.sellQty ? `sell ${t.sellQty}` : "hold"}</em>${t.done ? "✓✓" : t.hit ? "✓" : ""}</div>`).join("")}${(() => { const left = r.targets.filter(t => t.sellQty && !t.done), tot = left.reduce((a, t) => a + (Number(t.profit) || 0), 0); return left.length ? `<div class="tg-plan" title="Profit from the planned sales still to come (${left.map(t => `T${t.n}: sell ${t.sellQty}`).join(", ")})">Plan books <b class="${cls(tot)}">${sg(tot)}</b></div>` : ""; })()}${r.ownTargets || r.ownPlan ? `<div class="ticker">own ${[r.ownTargets && "targets", r.ownPlan && "plan"].filter(Boolean).join(" + ")}</div>` : ""}${r.sellNow ? `<div class="sw-sellnow">Sell ${r.sellNow} now</div>` : ""}${r.stopLoss ? `<div class="sw-sl${r.status === "stop-hit" ? " hit" : ""}">SL ${px(r.stopLoss)}</div>` : ""}</td>
         <td>${r.limit ? `<div class="fd-w"><span><i style="width:${used}%"></i></span>${used}%</div><div class="ticker">${amt(r.invested)} of ${amt(r.limit)}</div>` : "—"}</td>
         <td>${r.addBelow ? `Add ${amt(r.addAmount)} below ${px(r.addBelow)}<div class="ticker">${fin(r.distanceToAdd) ? `${r.distanceToAdd > 0 ? `${r.distanceToAdd}% away` : "reached"}` : ""}</div>` : r.addAmount ? `Add ${amt(r.addAmount)}` : "—"}</td>
         <td>${sig(r)}</td>
@@ -81,9 +82,43 @@
         <td class="num">${amt(w.amount)}</td><td>${sig(w)}</td>
         <td class="sw-acts"><button type="button" class="ghost" data-act="bought" title="I bought it: move to positions">Bought</button><button type="button" class="ghost" data-act="wedit" title="Edit">✎</button><button type="button" class="ghost danger-text" data-act="del" title="Remove">✕</button></td></tr>`).join("")
       : `<tr><td colspan="7" class="nw-empty-row">Add stocks you want to buy on a dip, with the price to buy below and how much to deploy.</td></tr>`;
-    $("#swClosedSum").textContent = v.closed.length ? `${v.closed.length} trade${v.closed.length === 1 ? "" : "s"}, ${sg(v.realised.pnl)}` : "none yet";
-    $("#swClosedRows").innerHTML = v.closed.map(c => `<tr><td><div class="company">${esc(c.name)}</div><div class="ticker">${esc(c.symbol)}</div></td><td class="num">${c.qty}</td><td class="num">${px(c.buyAvg)}</td><td class="num">${px(c.sellPrice)}</td><td class="num ${cls(c.pnl)}">${sg(c.pnl)} <small>${pct(c.pnlPct)}</small></td><td>${new Date(c.closedAt).toLocaleDateString("en-IN")}</td>
+    renderBooked();
+    $("#swClosedRows").innerHTML = bookedRows().map(c => `<tr><td><div class="company">${esc(c.name)}</div><div class="ticker">${esc(c.symbol)}</div></td><td class="num">${c.qty}</td><td class="num">${px(c.buyAvg)}</td><td class="num">${px(c.sellPrice)}</td><td class="num ${cls(c.pnl)}">${sg(c.pnl)} <small>${pct(c.pnlPct)}</small></td><td>${new Date(c.closedAt).toLocaleDateString("en-IN")}</td>
       <td class="sw-acts"><button type="button" class="ghost${c.review ? " reviewed" : ""}" data-tact="review" data-tid="${esc(c.id)}" title="${c.review ? "Reviewed: " + esc((c.review.mistakes || []).map(m => sw.journal?.mistakes?.[m] || m).join(", ") || c.review.note || "") : "Journal: what went right or wrong"}">📝${c.review ? "✓" : ""}</button><button type="button" class="ghost" data-tact="reopen" data-tid="${esc(c.id)}" title="Closed by mistake: put the ${c.qty} shares back into positions">↩ Reopen</button><button type="button" class="ghost danger-text" data-tact="delete-trade" data-tid="${esc(c.id)}" title="Delete this record only">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="nw-empty-row">Sells you record appear here with their profit.</td></tr>`;
+  }
+  // Closed trades by financial year and month: the totals come from every trade; the table lists the matching ones.
+  const monthName = m => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-IN", { month: "short", year: "numeric", timeZone: "UTC" });
+  const istMonth = iso => new Date(Date.parse(iso) + 5.5 * 3600e3).toISOString().slice(0, 7);
+  function bookedRows() { const B = sw.booked; return sw.closed.filter(c => (!bkMonth || istMonth(c.closedAt) === bkMonth) && (!bkFy || !B || B.months.find(m => m.month === istMonth(c.closedAt))?.fy === bkFy)); }
+  function renderBooked() {
+    const v = sw, B = v.booked;
+    if (!B) { $("#swClosedSum").textContent = v.closed.length ? `${v.closed.length} trades, ${sg(v.realised.pnl)}` : "none yet"; return; }
+    if (bkFy && !B.years.some(y => y.fy === bkFy)) bkFy = "";
+    const months = B.months.filter(m => !bkFy || m.fy === bkFy); if (bkMonth && !months.some(m => m.month === bkMonth)) bkMonth = "";
+    const sel = months.filter(m => !bkMonth || m.month === bkMonth), tot = sel.reduce((a, m) => a + m.pnl, 0), n = sel.reduce((a, m) => a + m.trades, 0), y = bkFy && B.years.find(x => x.fy === bkFy);
+    $("#swClosedSum").textContent = v.realised.count ? `${v.realised.count} trade${v.realised.count === 1 ? "" : "s"}, ${sg(v.realised.pnl)}${bkFy || bkMonth ? ` · ${bkMonth ? monthName(bkMonth) : bkFy}: ${sg(tot)}` : ""}` : "none yet";
+    $("#swBkBar").innerHTML = v.realised.count ? `<label class="hint">Financial year <select class="ui-input" id="swBkFy"><option value="">All years</option>${B.years.filter(x => x.trades).map(x => `<option value="${esc(x.fy)}"${x.fy === bkFy ? " selected" : ""}>${esc(x.fy)} · ${sg(x.pnl)}</option>`).join("")}</select></label>
+      <label class="hint">Month <select class="ui-input" id="swBkMonth"><option value="">All months</option>${months.map(m => `<option value="${m.month}"${m.month === bkMonth ? " selected" : ""}>${monthName(m.month)} · ${sg(m.pnl)}</option>`).join("")}</select></label>
+      <span class="sw-bk-tot">Booked <b class="${cls(tot)}">${sg(tot)}</b> · ${n} trade${n === 1 ? "" : "s"}${y ? ` · tax ${inr(y.tax)}${y.paid ? `, paid ${inr(y.paid)}` : ""}` : ""}</span>` : "";
+    // month by month bars for the chosen year (or the last 12 months)
+    const bars = (bkFy ? months : months.slice(0, 12)).slice().reverse(), max = Math.max(1, ...bars.map(m => Math.abs(m.pnl)));
+    $("#swBkMonths").innerHTML = bars.length > 1 ? bars.map(m => `<button type="button" class="sw-bk-m${m.month === bkMonth ? " on" : ""}" data-bkm="${m.month}" title="${monthName(m.month)}: ${sg(m.pnl)} from ${m.trades} trade${m.trades === 1 ? "" : "s"}"><i class="${m.pnl >= 0 ? "up" : "dn"}" style="height:${Math.max(3, Math.round(Math.abs(m.pnl) / max * 40))}px"></i><small>${monthName(m.month).replace(/ \d{4}$/, "")}</small><b class="${cls(m.pnl)}">${Math.abs(m.pnl) >= 1e5 ? `${(m.pnl / 1e5).toFixed(1)}L` : Math.abs(m.pnl) >= 1e3 ? `${Math.round(m.pnl / 1e3)}k` : Math.round(m.pnl)}</b></button>`).join("") : "";
+    $("#swBkFy")?.addEventListener("change", e => { bkFy = e.target.value; bkMonth = ""; render(); });
+    $("#swBkMonth")?.addEventListener("change", e => { bkMonth = e.target.value; render(); });
+  }
+  // Tax on booked swing profits for a financial year, and the payments you made against it
+  async function taxPaidDialog(fy) {
+    const B = sw.booked, y = B.years.find(x => x.fy === fy) || B.years.find(x => x.current);
+    const pays = B.payments.filter(p => p.fy === y.fy);
+    const out = await window.ui.dialog({ title: `Tax on swing profits · ${y.fy}`, icon: "🧾", okText: "Record payment", wide: true,
+      message: `Short-term gains ${inr(y.netSt)} × ${B.rules.stRate}%${y.netLt ? ` + long-term ${inr(y.netLt)} (₹${(B.rules.ltExemption / 1e5).toFixed(2)} L exempt, taxable ${inr(y.taxableLt)}) × ${B.rules.ltRate}%` : ""} + ${B.rules.cessPct}% cess = <b>${inr(y.tax)}</b>. Paid ${inr(y.paid)} · <b>${y.due ? `due ${inr(y.due)}` : y.over ? `paid ${inr(y.over)} more than this estimate` : "nothing due"}</b>.`,
+      bodyHtml: `<div class="nw-form">${field("Amount paid (₹)", "amount", y.due || "", 'inputmode="decimal" autofocus')}${dateField("Paid on")}<label class="ui-field"><span>Counts for</span><select class="ui-input" name="fy">${B.years.map(x => `<option${x.fy === y.fy ? " selected" : ""}>${esc(x.fy)}</option>`).join("")}</select></label>${field("Note (optional)", "note", "", 'placeholder="Advance tax 15 Dec · challan no."')}</div>
+        ${pays.length ? `<table class="sw-prev sw-taxpays"><thead><tr><th>Paid on</th><th class="num">Amount</th><th>Note</th><th></th></tr></thead><tbody>${pays.map(p => `<tr><td>${dmy(p.date)}</td><td class="num">${inr(p.amount)}</td><td>${esc(p.note || "")}</td><td><button type="button" class="ghost danger-text" data-del-pay="${esc(p.id)}">✕</button></td></tr>`).join("")}</tbody></table>` : ""}
+        <p class="ui-hint">An estimate for these swing trades only, at ${B.rules.stRate}% short-term and ${B.rules.ltRate}% long-term plus cess. Your actual tax also depends on your other gains and losses. Advance tax dates: 15 Jun, 15 Sep, 15 Dec, 15 Mar.</p>`,
+      onOpen: (box, { setError }) => box.querySelectorAll("[data-del-pay]").forEach(b => b.onclick = async () => { try { sw = await api("/api/swing/tax-paid-delete", { id: b.dataset.delPay }); render(); b.closest("tr").remove(); window.toast?.("Payment removed.", { kind: "ok" }); } catch (e) { setError(e.message); } }),
+      collect: box => api("/api/swing/tax-paid", { amount: box.querySelector("[name=amount]").value, date: box.querySelector("[name=date]").value, fy: box.querySelector("[name=fy]").value, note: box.querySelector("[name=note]").value })
+    });
+    if (out) { sw = out; render(); if (out.notice) window.toast?.(out.notice, { kind: "ok" }); }
   }
   // Buy-the-dip list: one price per stock (or several rungs), how far it still has to fall, and a bulk buy for the ones that got there
   function renderDips(dips) {
@@ -434,6 +469,7 @@
     if (out) { sw = out; render(); window.toast?.(`${p.name}: buys saved.`, { kind: "ok" }); }
   }
   let ledgerSym = "";
+  let bkFy = "", bkMonth = ""; // closed-trades filter: financial year and month ("" = all)
   function renderLedger() {
     const L = sw.ledger, box = $("#swLedgerBody"); if (!box || !L) return;
     $("#swLedgerSum").textContent = L.entries.length ? `${L.entries.filter(e => e.type === "BUY").length} buys · ${L.entries.filter(e => e.type === "SELL").length} sells` : "nothing yet";
@@ -519,6 +555,8 @@
       if (e.target.closest('[data-go="paste"]')) { pasteDialog(); return; }
       if (e.target.closest('[data-go="dip"]')) { dipAddDialog(); return; }
       if (e.target.closest('[data-go="pat"]')) { patDialog(); return; }
+      if (e.target.closest('[data-go="taxpaid"]')) { taxPaidDialog(sw.booked?.currentFy); return; }
+      const bm = e.target.closest("[data-bkm]"); if (bm) { bkMonth = bkMonth === bm.dataset.bkm ? "" : bm.dataset.bkm; render(); return; }
       const nt = e.target.closest("[data-tax]"); if (nt) { const p = sw.positions.find(x => x.id === nt.dataset.tax); if (p) window.ui.dialog({ title: `${p.name}: if you sold all ${p.qty} now`, icon: "🧮", okText: "Close", hideCancel: true, wide: true, bodyHtml: taxTable(p.ifSold), collect: () => true }); return; }
       if (e.target.closest('[data-go="cash"]')) { settingsDialog("cash"); return; }
       const tb = e.target.closest("[data-tact]");

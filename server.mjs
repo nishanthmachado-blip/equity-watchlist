@@ -33,7 +33,7 @@ import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { PROFILES, STYLES, buildModel, assetMix } from "./model.mjs";
-import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, parseDipText, DIP_ALIASES, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, SETUPS, MISTAKES, sanitizeReview, journalStats, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
+import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, parseDipText, DIP_ALIASES, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, bookedSummary, sanitizeTaxPayment, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, SETUPS, MISTAKES, sanitizeReview, journalStats, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
 import { buildXlsx } from "./xlsx.mjs";
 import { isEtf, indexFor, parseAllIndices, etfLens, etfType } from "./etf.mjs";
 import { parseNseActions, parseYahooEvents, mergeActions, adjustPosition, adjustWatch } from "./corpactions.mjs";
@@ -1312,7 +1312,7 @@ async function swingView({ alerts = true, fresh = false } = {}) {
     if (r.sellNow > 0 && r.sellNow < r.qty) r.ifSellNow = sellTaxEstimate({ lots: lotsForSale(p, r.sellNow), sellPrice: r.price, exchange: r.exchange, ltExemptLeft: exemptLeft, charges });
   }
   view.totals.pat = portfolioPat(view.positions.map(r => r.ifSold).filter(Boolean), exemptLeft, charges);
-  return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), journal: { ...journalStats(all), setups: SETUPS, mistakes: MISTAKES }, ledger: buildLedger(positions, all), taxInfo: { exemptLeft, charges, ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0 }, realisedNet: realisedAfterTax(all, charges), pricePending, cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
+  return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), journal: { ...journalStats(all), setups: SETUPS, mistakes: MISTAKES }, ledger: buildLedger(positions, all), booked: bookedSummary(all, { taxPaid: st.taxPaid || [], ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0, cessPct: charges.cessPct ?? 4 }), taxInfo: { exemptLeft, charges, ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0 }, realisedNet: realisedAfterTax(all, charges), pricePending, cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
 }
 // Closed swing trades as an Excel file: one row per FIFO buy lot (short / long term), a yearly tax estimate and the scorecard.
 async function sendSwingExport(res) {
@@ -2943,6 +2943,11 @@ async function appHandler(req, res, url) {
           if (op === "reopen") { if (!st.positions.some(x => x.symbol === t.symbol) && st.positions.length >= 100) throw new Error("At most 100 swing positions."); st.positions = reopenTrade(st.positions, t); moveCash(st, -t.qty * t.sellPrice, `Undid sale of ${t.qty} ${t.symbol}`); }
           st.closed = st.closed.filter(x => x.id !== t.id);
         }
+        else if (op === "tax-paid") { // tax you paid on swing profits (advance tax / self-assessment): reduces "tax due"
+          st.taxPaid = [...(st.taxPaid || []), sanitizeTaxPayment(b)].slice(-200);
+          notice = `Recorded ₹${Math.round(st.taxPaid.at(-1).amount).toLocaleString("en-IN")} tax paid for ${st.taxPaid.at(-1).fy}.`;
+        }
+        else if (op === "tax-paid-delete") { const n = (st.taxPaid || []).length; st.taxPaid = (st.taxPaid || []).filter(x => x.id !== b.id); if (st.taxPaid.length === n) throw new Error("That payment no longer exists."); }
         else if (op === "lots") { const p = find("positions", b.id); st.positions = st.positions.map(x => (x.id === p.id ? setLots(x, b.lots) : x)); }
         else if (op === "promote") notice = promoteWatch(st, find("watch", b.id), b); // a swing-watchlist stock was bought: move it to positions
         else if (op === "dip-parse") { // buy-the-dip list typed in one go: preview with the symbols found

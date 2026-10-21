@@ -612,3 +612,21 @@ tr.fav-row>td{background-color:color-mix(in srgb,#e11d48 4%,var(--card-bg,#fff))
 .tm-size{display:flex;gap:4px;padding:2px 10px 8px}
 .theme-menu .tm-size button{display:flex;justify-content:center;align-items:center;text-align:center;width:auto;min-width:0;flex:1;padding:6px 0;border:1px solid var(--line,#dce4ee);border-radius:8px;background:transparent;font-weight:800;cursor:pointer;color:inherit;line-height:1.1}
 .theme-menu .tm-size button[aria-pressed="true"]{background:var(--navy,#183b62);color:#fff;border-color:transparent}
+/* v5.18: ₹ profit at each target, booked profit by month / FY, tax to pay */
+.sw-tg .tg-l{grid-template-columns:20px 38px 74px 62px 44px 16px!important}
+.sw-tg .tg-inr{text-decoration:none;font-weight:700;font-size:12px;text-align:right}
+.sw-tg .tg-plan{font-size:11.5px;color:var(--muted);margin-top:2px}
+.sw-bk-bar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin:10px 0 6px}
+.sw-bk-bar select{min-width:150px;margin-left:6px}
+.sw-bk-tot{font-size:13px}
+.sw-bk-months{display:flex;gap:4px;align-items:flex-end;overflow-x:auto;padding:4px 0 8px}
+.sw-bk-months:empty{display:none}
+.sw-bk-m{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px;min-width:44px;height:84px;padding:2px 4px;border:1px solid transparent;border-radius:8px;background:transparent;cursor:pointer;color:inherit}
+.sw-bk-m.on{border-color:var(--line,#dce4ee);background:color-mix(in srgb,var(--line,#dce4ee) 40%,transparent)}
+.sw-bk-m i{width:18px;border-radius:3px 3px 0 0}.sw-bk-m i.up{background:var(--good,#15803d)}.sw-bk-m i.dn{background:var(--bad,#dc2626)}
+.sw-bk-m small{font-size:10.5px;color:var(--muted)}.sw-bk-m b{font-size:11px}
+.sw-cards .sw-tax{border-left-color:#b45309!important}
+.sw-cards .sw-tax.due{background:color-mix(in srgb,#f59e0b 10%,var(--card-bg,#fff))!important}
+.sw-cards .sw-tax.clear{border-left-color:var(--good,#15803d)!important}
+.sw-taxpays{margin-top:10px;width:100%}
+@media (min-width:1200px){.sw-cards:has(.sw-tax){grid-template-columns:repeat(5,1fr)!important}}

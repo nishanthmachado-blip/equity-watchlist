@@ -413,3 +413,44 @@ export function journalStats(closed = []) {
   const early = t.filter(x => !x.atTarget && x.pnl > 0 && x.t1Price > x.sellPrice), missed = Math.round(early.reduce((s, x) => s + (x.t1Price - x.sellPrice) * x.qty, 0));
   return { bySetup, byMistake, reviewed: t.filter(x => x.review).length, total: t.length, earlyExits: { trades: t.filter(x => !x.atTarget && x.pnl > 0).length, missedToT1: early.length ? missed : null } };
 }
+
+// ---- Booked profit by month and financial year, and the tax still to pay on it ----
+// Month and FY follow the sale date in India (IST). Tax per FY: short-term 20%, long-term 12.5% above the ₹1.25 lakh
+// exemption (less any exemption you used outside swing trades, for the current FY), plus cess; losses set off as in
+// taxFor. Payments you record (advance tax, self-assessment) are subtracted to give what is still due.
+const istDay = iso => new Date(Date.parse(iso) + 5.5 * 3600e3).toISOString().slice(0, 10);
+export function bookedSummary(closed = [], { taxPaid = [], ltUsedElsewhere = 0, cessPct = 4, today = istDay(new Date().toISOString()) } = {}) {
+  const months = new Map();
+  for (const t of closed) {
+    if (!t.closedAt || !Number.isFinite(Number(t.pnl))) continue;
+    const day = istDay(t.closedAt), m = day.slice(0, 7), g = months.get(m) || { month: m, fy: fyOf(day).label, trades: 0, pnl: 0, wins: 0 };
+    g.trades++; g.pnl += Number(t.pnl); if (t.pnl > 0) g.wins++; months.set(m, g);
+  }
+  const cur = fyOf(today).label, tx = swingTaxRows(closed), paidBy = {};
+  for (const p of taxPaid) paidBy[p.fy] = (paidBy[p.fy] || 0) + (Number(p.amount) || 0);
+  const fys = new Set([...tx.years.map(y => y.fy), ...Object.keys(paidBy), cur]);
+  const years = [...fys].sort((a, b) => b.localeCompare(a)).map(fy => {
+    const y = tx.years.find(x => x.fy === fy) || { stGain: 0, stLoss: 0, ltGain: 0, ltLoss: 0 };
+    let st = y.stGain - y.stLoss, lt = y.ltGain - y.ltLoss;
+    if (st < 0) { lt += st; st = 0; } lt = Math.max(0, lt);
+    const exemption = Math.max(0, TAX_RULES.ltExemption - (fy === cur ? Math.max(0, Number(ltUsedElsewhere) || 0) : 0));
+    const taxableLt = Math.max(0, lt - exemption), base = st * TAX_RULES.stRate + taxableLt * TAX_RULES.ltRate, tax = Math.round(base * (1 + cessPct / 100));
+    const ms = [...months.values()].filter(m => m.fy === fy), paid = Math.round(paidBy[fy] || 0);
+    return { fy, current: fy === cur, trades: ms.reduce((a, m) => a + m.trades, 0), pnl: Math.round(ms.reduce((a, m) => a + m.pnl, 0)), netSt: Math.round(st), netLt: Math.round(lt), taxableLt: Math.round(taxableLt), tax, paid, due: Math.max(0, tax - paid), over: Math.max(0, paid - tax) };
+  });
+  return {
+    currentFy: cur,
+    months: [...months.values()].sort((a, b) => b.month.localeCompare(a.month)).map(m => ({ ...m, pnl: Math.round(m.pnl) })),
+    years,
+    payments: [...taxPaid].sort((a, b) => String(b.date).localeCompare(String(a.date))),
+    rules: { stRate: TAX_RULES.stRate * 100, ltRate: TAX_RULES.ltRate * 100, ltExemption: TAX_RULES.ltExemption, cessPct }
+  };
+}
+// A tax payment you record: amount, date paid, the FY it counts against, an optional note (e.g. "Advance tax 15 Dec").
+export function sanitizeTaxPayment(b = {}, today = istDay(new Date().toISOString())) {
+  const amount = parseAmount(b.amount); if (!(amount > 0) || amount > 1e9) throw new Error("Enter the amount you paid, e.g. 12500 or 1.2L.");
+  const date = String(b.date || today).slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) throw new Error("Enter the date you paid.");
+  if (date > today) throw new Error("The payment date cannot be in the future.");
+  const fy = /^FY \d{4}-\d{2}$/.test(String(b.fy || "")) ? b.fy : fyOf(date).label;
+  return { id: Math.random().toString(36).slice(2, 10), amount: Math.round(amount), date, fy, note: String(b.note || "").trim().slice(0, 80) || null, at: new Date().toISOString() };
+}
