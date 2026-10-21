@@ -101,10 +101,18 @@ export async function closeStorage() { await flushStorage(); await client?.close
 // Health check for /healthz: is the database reachable?
 export async function pingStorage() { if (mode !== "mongo" || !client) return true; try { await client.db("admin").command({ ping: 1 }); return true; } catch { return false; } }
 
+// Files on disk are written to a temporary file and renamed into place, so a reader never sees a half-written file
+// (an empty or cut-off JSON read in the middle of a write used to be taken as "no data" and written back, losing it).
+let tmpSeq = 0;
+async function atomicWrite(p, data, opts) {
+  const tmp = `${p}.${process.pid}.${++tmpSeq}.tmp`;
+  try { await realFs.writeFile(tmp, data, opts); await realFs.rename(tmp, p); }
+  catch (e) { await realFs.rm(tmp, { force: true }).catch(() => {}); throw e; }
+}
 // ---- fs-like API ----
 export const dfs = {
   async readFile(p, enc) { const k = keyOf(p); if (!k) return realFs.readFile(p, enc); if (!cache.has(k)) throw enoent(p); const t = cache.get(k); return enc ? t : Buffer.from(t); },
-  async writeFile(p, data, opts) { const k = keyOf(p); if (!k) return realFs.writeFile(p, data, opts); await put(k, Buffer.isBuffer(data) ? data.toString("utf8") : data); },
+  async writeFile(p, data, opts) { const k = keyOf(p); if (!k) return atomicWrite(p, data, opts); await put(k, Buffer.isBuffer(data) ? data.toString("utf8") : data); },
   async mkdir(p, opts) { if (!keyOf(p) && !(mode === "mongo" && path.resolve(p) === root)) return realFs.mkdir(p, opts); },
   async chmod(p, m) { if (!keyOf(p)) return realFs.chmod(p, m); },
   async access(p, m) { const k = keyOf(p); if (!k) return realFs.access(p, m); if (!cache.has(k) && !childrenOf(k).length) throw enoent(p); },

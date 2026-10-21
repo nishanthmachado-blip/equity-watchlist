@@ -12,6 +12,7 @@
       <button id="viewLists" class="viewTab" title="Watchlists"><span class="ico" aria-hidden="true">⭐</span><span class="lbl">Watchlists</span></button>
       <button id="viewMarket" class="viewTab" title="Market today"><span class="ico" aria-hidden="true">📈</span><span class="lbl">Market today</span></button>
       <button id="viewIndices" class="viewTab" data-goto="indices" title="Smart indices"><span class="ico" aria-hidden="true">🧠</span><span class="lbl">Smart indices</span></button>
+      <button id="viewOrders" class="viewTab" data-goto="orders" title="Order wins"><span class="ico" aria-hidden="true">📦</span><span class="lbl">Order wins</span></button>
       <button id="viewUs" class="viewTab" title="US stocks"><span class="ico" aria-hidden="true">🇺🇸</span><span class="lbl">US stocks</span></button>
       <button id="viewDividends" class="viewTab" title="Dividend income planner"><span class="ico" aria-hidden="true">💰</span><span class="lbl">Dividend income planner</span></button>
       <p class="side-label">Your portfolio</p>
@@ -189,7 +190,7 @@
       <section class="table-wrap"><table class="sw-table sw-watch"><thead><tr><th>Stock</th><th class="num">LTP</th><th class="num">Buy below</th><th class="num">Distance</th><th class="num">Amount</th><th>Signal</th><th></th></tr></thead><tbody id="swWatchRows"></tbody></table></section>
       <section class="report-card sw-ideas" id="swIdeasBox">
         <div class="nw-head"><h3>💡 Swing ideas <span class="hint">new setups from daily charts</span></h3><span class="hint" id="swIdeasStatus"></span></div>
-        <div class="toolbar sw-ideas-tools"><label class="hint">Setup <select class="ui-input" id="swIdeasSetup"><option value="">All setups</option><option value="pullback">↘↗ Pullback in an uptrend</option><option value="breakout">🚀 Breakout on volume</option><option value="bounce">🪃 Oversold bounce</option><option value="value">💎 Value stock turning up</option></select></label>
+        <div class="toolbar sw-ideas-tools"><label class="hint">Setup <select class="ui-input" id="swIdeasSetup"><option value="">All setups</option><option value="high52">🏔 52-week high breakout (above 200-DMA)</option><option value="pullback">↘↗ Pullback in an uptrend</option><option value="breakout">🚀 Breakout on volume</option><option value="bounce">🪃 Oversold bounce</option><option value="value">💎 Value stock turning up</option></select></label>
           <label class="hint">From <select class="ui-input" id="swIdeasSrc"><option value="">Market + my lists</option><option value="mine">Only my watchlists</option></select></label>
           <button type="button" class="ghost" id="swIdeasScan">⟳ Scan now</button></div>
         <div id="swIdeas" class="sw-ideas-grid"></div>
@@ -224,6 +225,13 @@
         <section class="table-wrap"><table class="md-table"><thead><tr><th class="num">#</th><th>Stock</th><th class="num">Weight</th><th class="num">Amount</th><th class="num">~Shares</th><th>Verdict</th><th>How to buy</th><th>Why it is in</th></tr></thead><tbody id="mdRows"></tbody></table></section>
         <p class="vs-fine" id="mdRules"></p>
       </div>
+    </section>
+    <section id="ordView" data-feature-view="orders" hidden>
+      <section class="toolbar ord-tools"><div class="md-seg ord-days" id="ordDays" role="group" aria-label="Period"><button type="button" data-days="30">30 days</button><button type="button" data-days="90" class="active">90 days</button><button type="button" data-days="180">6 months</button><button type="button" data-days="365">1 year</button></div>
+        <input id="ordQ" placeholder="Search company or industry" autocomplete="off" aria-label="Search order wins"><span class="hint" id="ordStatus"></span></section>
+      <section class="toolbar" id="ordFilters" aria-label="Filter"></section>
+      <div class="ord-wrap"><div id="ordBody"><p class="hint">Loading…</p></div>
+        <aside class="report-card ord-feed"><h3>🆕 Latest order announcements</h3><ul id="ordFeed"></ul></aside></div>
     </section>
     <section id="favView" data-feature-view="favs" hidden>
       <section class="toolbar fav-tools"><div class="fav-add"><input id="favQ" placeholder="Add a favourite: company or NSE symbol" autocomplete="off" aria-label="Add a favourite"><div class="mf-drop" id="favDrop"></div></div><span class="hint" id="favNote"></span></section>
@@ -609,6 +617,7 @@
   <script src="week.js"></script>
   <script src="ai.js"></script>
   <script src="favs.js"></script>
+  <script src="orders.js"></script>
   <script src="mobile.js"></script>
   <script src="prices.js" defer></script>
 <script src="freshness.js"></script>

@@ -33,7 +33,7 @@ import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { PROFILES, STYLES, buildModel, assetMix } from "./model.mjs";
-import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, parseDipText, DIP_ALIASES, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, bookedSummary, sanitizeTaxPayment, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, SETUPS, MISTAKES, sanitizeReview, journalStats, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
+import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, parseDipText, DIP_ALIASES, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, bookedSummary, sanitizeTaxPayment, editHeldBuy, editSale, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, SETUPS, MISTAKES, sanitizeReview, journalStats, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
 import { buildXlsx } from "./xlsx.mjs";
 import { isEtf, indexFor, parseAllIndices, etfLens, etfType } from "./etf.mjs";
 import { parseNseActions, parseYahooEvents, mergeActions, adjustPosition, adjustWatch } from "./corpactions.mjs";
@@ -52,6 +52,7 @@ import { validToken, maskToken, botInfo, findChat, sendTelegram, pushAlerts } fr
 import { SEED as SCRIP_SEED, parseKiteInstruments, parseNseEquityList, mergeMaster, searchMaster } from "./scripmaster.mjs";
 import { US_POPULAR, cleanUsSymbol, parseSecTickers, searchTickers, seriesFromFacts, usValuation, fetchUsPrices, fetchSecJson, companyFactsUrl, SEC_TICKERS_URL } from "./us.mjs";
 import { LISTS as MARKET_LISTS, parseNseList, rankFromQuotes } from "./market.mjs";
+import { parseOrderAnnouncements, mergeOrders, rankOrderWinners } from "./orders.mjs";
 import { ensureLists, createList, renameList, deleteList, setMembers, prune, DEFAULT_ID } from "./lists.mjs";
 import { METRICS, OPS, PRESETS, sanitizeThesis, evaluateThesis, trackBreaks } from "./thesis.mjs";
 import { AI_MODELS, AI_DEFAULTS, PRIVACY as AI_PRIVACY, sealKey, openKey, looksLikeKey, buildContext, SYSTEM as AI_SYSTEM, TOOLS as AI_TOOLS, sseParser, messageCollector, monthKey, friendlyApiError } from "./ai.mjs";
@@ -142,7 +143,7 @@ const referenceFile = path.join(DATA_DIR, "reference-check.json");
 // KITE_MCP_ENABLED=0). Override with e.g. PRICE_SOURCES=google,yahoo. Unknown names are ignored.
 // Kite is no longer a default price source: its quotes go stale when the MCP connection drops. Add it back with PRICE_SOURCES=nse,kite,… if wanted.
 const PRICE_SOURCES = (process.env.PRICE_SOURCES || "nse,yahoo,screener,google").split(",").map(s => s.trim().toLowerCase()).filter(s => ["kite", "nse", "yahoo", "screener", "google"].includes(s));
-const KITE_PRICES = PRICE_SOURCES.includes("kite");
+const KITE_PRICES = PRICE_SOURCES.includes("kite"); // off by default since v4.7.3: Kite quotes go stale when the MCP connection drops
 const RANGE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // re-read the 52-week range from Yahoo/Google at most daily when the price came from Kite
 const port = Number(process.env.PORT || 4173);
 // Angel One / Dhan through an MCP server (broker-mcp.mjs). The OAuth redirect comes back to this server.
@@ -247,11 +248,36 @@ function reply(res, status, body, type = "application/json; charset=utf-8") {
 }
 const MAX_BODY = 30 * 1024 * 1024;
 async function readBody(req) { let text = ""; for await (const chunk of req) { text += chunk; if (text.length > MAX_BODY) throw Object.assign(new Error("Request is too large."), { status: 413 }); } return text ? JSON.parse(text) : {}; }
-async function readWatchlist() { try { return JSON.parse(await fs.readFile(U.dataFile, "utf8")); } catch { return []; } }
-async function writeWatchlist(stocks) { await fs.mkdir(path.dirname(U.dataFile), { recursive: true }); await fs.writeFile(U.dataFile, JSON.stringify(stocks, null, 2)); }
+// The watchlist (every tracked stock) is read-modify-written from many places: a missing file is an empty list, but an
+// unreadable one is an error (never "empty", which a writer would then save over your stocks).
+async function readWatchlist() {
+  for (let i = 0; ; i++) {
+    let text; try { text = await fs.readFile(U.dataFile, "utf8"); } catch (e) { if (e.code === "ENOENT") return []; throw e; }
+    try { const v = JSON.parse(text); return Array.isArray(v) ? v : []; } catch (e) { if (i >= 3) throw new Error(`Your watchlist file could not be read (${e.message}).`); await new Promise(r => setTimeout(r, 40)); }
+  }
+}
+async function writeWatchlist(stocks) {
+  await fs.mkdir(path.dirname(U.dataFile), { recursive: true });
+  // safety net: a write that drops most of the stocks keeps a copy of the list it replaced
+  try { const cur = await readWatchlist(); if (cur.length >= 10 && stocks.length < cur.length * 0.7) { await fs.writeFile(userFile("watchlist.before-shrink.json"), JSON.stringify({ at: new Date().toISOString(), from: cur.length, to: stocks.length, stocks: cur })); console.warn(`[watchlist] ${cur.length} → ${stocks.length} stocks; the previous list is kept in watchlist.before-shrink.json`); } } catch { /* best effort */ }
+  await fs.writeFile(U.dataFile, JSON.stringify(stocks, null, 2));
+}
+// One change to a user's watchlist at a time (a page save, a background "track this stock", a rename from fundamentals)
+const wlChains = new Map();
+function withWatchlistLock(fn) {
+  const k = currentUser()?.id || "-", prev = wlChains.get(k) || Promise.resolve();
+  const run = prev.catch(() => {}).then(fn); const tail = run.catch(() => {}); wlChains.set(k, tail);
+  tail.then(() => { if (wlChains.get(k) === tail) wlChains.delete(k); });
+  return run;
+}
 async function readFundamentals() { try { return JSON.parse(await fs.readFile(fundamentalsFile, "utf8")).fundamentals || {}; } catch { return {}; } }
 async function writeFundamentals(map) { await fs.mkdir(path.dirname(fundamentalsFile), { recursive: true }); await fs.writeFile(fundamentalsFile, JSON.stringify({ fundamentals: map }, null, 2)); }
-async function readJson(file, fallback) { try { return JSON.parse(await fs.readFile(file, "utf8")); } catch { return fallback; } }
+async function readJson(file, fallback) {
+  for (let i = 0; ; i++) {
+    let text; try { text = await fs.readFile(file, "utf8"); } catch { return fallback; }
+    try { return JSON.parse(text); } catch { if (i >= 2) return fallback; await new Promise(r => setTimeout(r, 30)); } // a cut-off read: try again
+  }
+}
 async function writeJson(file, value) { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, JSON.stringify(value, null, 2)); }
 const symOf = s => (s.marketSymbol || s.ticker || "").toUpperCase();
 async function readLists() { return ensureLists(await readJson(U.listsFile, {}), (await readWatchlist()).map(symOf)); }
@@ -277,9 +303,11 @@ async function withHoldingsList(st) {
 async function addToList(id, symbols) { if (id === "__none__" || id === HOLDINGS_LIST_ID) return; const st = await readLists(); await writeJson(U.listsFile, setMembers(st, st.lists.some(l => l.id === id) ? id : DEFAULT_ID, { add: symbols })); }
 // Tracks a stock (no watchlist membership) so its price, fundamentals and dividend history can be fetched.
 async function ensureInPool(symbol, exchange = "NSE", name = null, note = "Added from the dividend planner.") {
+  return withWatchlistLock(async () => {
   const list = await readWatchlist(); if (list.some(st => symOf(st) === symbol)) return false;
   const stock = { id: Math.max(0, ...list.map(st => st.id)) + 1, company: name || symbol, ticker: symbol, marketSymbol: symbol, exchange: exchange === "BSE" ? "BSE" : "NSE", bucket: "Imported", action: "Watch", valuation: "Fair", price: null, low: null, high: null, kpi: "", note, updated: "Needs refresh", accounts: [] };
   await persistWatchlist([...list, stock], list); return true;
+  });
 }
 async function dividendPlanView() {
   const plan = sanitizePlan(await readJson(U.divPlanFile, {}));
@@ -581,9 +609,11 @@ async function runFundamentalsFetch(targets, force = false, source = process.env
   // A stock added by symbol only is named after its symbol; use the real company name once a source supplies it.
   const named = results.filter(r => r.entry?.companyName);
   if (named.length) {
-    const list = await readWatchlist(); let changed = false;
-    for (const r of named) { const st = list.find(x => x.id === r.id); if (st && st.company.toUpperCase() === symOf(st)) { st.company = r.entry.companyName; changed = true; } }
-    if (changed) await writeWatchlist(list);
+    await withWatchlistLock(async () => {
+      const list = await readWatchlist(); let changed = false;
+      for (const r of named) { const st = list.find(x => x.id === r.id); if (st && st.company.toUpperCase() === symOf(st)) { st.company = r.entry.companyName; changed = true; } }
+      if (changed) await writeWatchlist(list);
+    });
   }
   if (results.some(r => r.entry)) { await logVerdicts(computeAll(await readWatchlist(), latest)); fetchDividendsFor(results.filter(r => r.entry).map(r => r.symbol)).then(async () => runAlerts((await computeRows()).rows)).catch(() => {}); }
   return results;
@@ -1013,16 +1043,24 @@ async function fetchLiveQuote(i) {
   liveTried.set(key, Date.now());
   const run = (async () => {
     const tries = [];
-    if (PRICE_SOURCES.includes("nse") && ex === "NSE" && !nseCooldown()) tries.push(async () => { const q = await paced("nse", 350, () => fetchNseQuote(i.symbol)); return q.price > 0 ? { price: q.price, prevClose: q.prevClose ?? null, low: q.low52 || null, high: q.high52 || null, source: "NSE", asOf: q.asOf || null } : null; });
-    if (PRICE_SOURCES.includes("yahoo")) tries.push(async () => { const q = await yahooQuote(i.symbol, ex); return { price: q.price, prevClose: q.prevClose ?? null, low: q.low, high: q.high, source: "Yahoo", asOf: q.asOf }; });
-    if (PRICE_SOURCES.includes("google")) tries.push(async () => { if (googleCooldown()) return null; const q = await paced("google", 500, () => fetchGoogleQuote(i.symbol, { exchange: ex === "BSE" ? "BOM" : googleConfig.exchange })); return { price: q.price, prevClose: q.prevClose ?? null, low: q.low || null, high: q.high || null, source: "Google", asOf: q.asOf }; });
+    const tag = (src, f) => Object.assign(f, { src });
+    if (PRICE_SOURCES.includes("nse") && ex === "NSE" && !nseCooldown()) tries.push(tag("NSE", async () => { const q = await paced("nse", 350, () => fetchNseQuote(i.symbol)); return q.price > 0 ? { price: q.price, prevClose: q.prevClose ?? null, low: q.low52 || null, high: q.high52 || null, source: "NSE", asOf: q.asOf || null } : null; }));
+    if (PRICE_SOURCES.includes("yahoo")) tries.push(tag("Yahoo", async () => { const q = await yahooQuote(i.symbol, ex); return { price: q.price, prevClose: q.prevClose ?? null, low: q.low, high: q.high, source: "Yahoo", asOf: q.asOf }; }));
+    if (PRICE_SOURCES.includes("google")) tries.push(tag("Google", async () => { if (googleCooldown()) return null; const q = await paced("google", 500, () => fetchGoogleQuote(i.symbol, { exchange: ex === "BSE" ? "BOM" : googleConfig.exchange })); return { price: q.price, prevClose: q.prevClose ?? null, low: q.low || null, high: q.high || null, source: "Google", asOf: q.asOf }; }));
     // Yahoo's quote service is a separate endpoint from its chart service and often still answers when charts are rate-limited
-    if (PRICE_SOURCES.includes("yahoo")) tries.push(async () => { if (yahooCooldown() > Date.now()) return null; const q = (await yahooQuotes([{ symbol: i.symbol, exchange: ex }])).get(i.symbol); return q?.price > 0 ? { price: q.price, prevClose: Number.isFinite(q.pChange) ? Number((q.price / (1 + q.pChange / 100)).toFixed(2)) : null, low: q.low52 ?? null, high: q.high52 ?? null, source: "Yahoo", asOf: q.time || null } : null; });
-    if (PRICE_SOURCES.includes("screener") && ex === "NSE" && !isEtf(i.symbol, i.name || "")) tries.push(async () => { if (screenerCooldown()) return null; const q = await paced("screener", 1200, () => fetchScreenerPrice({ symbol: i.symbol })); return { price: q.price, prevClose: null, source: "Screener", asOf: null }; }); // Screener has no ETF pages
-    const errs = []; let best = null;
+    if (PRICE_SOURCES.includes("yahoo")) tries.push(tag("Yahoo quote", async () => { if (yahooCooldown() > Date.now()) return null; const q = (await yahooQuotes([{ symbol: i.symbol, exchange: ex }])).get(i.symbol); return q?.price > 0 ? { price: q.price, prevClose: Number.isFinite(q.pChange) ? Number((q.price / (1 + q.pChange / 100)).toFixed(2)) : null, low: q.low52 ?? null, high: q.high52 ?? null, source: "Yahoo", asOf: q.time || null } : null; }));
+    if (PRICE_SOURCES.includes("screener") && ex === "NSE" && !isEtf(i.symbol, i.name || "")) tries.push(tag("Screener", async () => { if (screenerCooldown()) return null; const q = await paced("screener", 1200, () => fetchScreenerPrice({ symbol: i.symbol })); return { price: q.price, prevClose: null, source: "Screener", asOf: null }; })); // Screener has no ETF pages
+    const errs = [], hm = t => new Date(t).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }); let best = null;
+    // sources left out this time, and why (a paused source is not tried until its pause ends)
+    const skipped = [];
+    if (PRICE_SOURCES.includes("nse") && ex === "NSE" && nseCooldown()) skipped.push(`NSE paused until ${hm(nseCooldown())}${lastNseStatus ? ` (${lastNseStatus})` : ""}`);
+    if (PRICE_SOURCES.includes("google") && googleCooldown()) skipped.push(`Google paused until ${hm(googleCooldown())}`);
+    if (PRICE_SOURCES.includes("screener") && screenerCooldown()) skipped.push(`Screener paused until ${hm(screenerCooldown())}`);
     for (const t of tries) {
-      try { const v = await t(); if (!v) continue; best = pickFresher(best, v); if (isFresh(best)) break; } catch (e) { errs.push(errText(e).slice(0, 80)); }
+      try { const v = await t(); if (!v) continue; best = pickFresher(best, v); if (isFresh(best)) break; } catch (e) { errs.push(`${t.src ? `${t.src}: ` : ""}${errText(e)}`.slice(0, 110)); }
     }
+    if (!best) errs.push(...skipped);
+    liveErrs.set(key, errs.slice(0, 8));
     if (best && i.last > 0 && /Google|Screener/.test(best.source) && Math.abs(best.price / i.last - 1) > 0.4) { errs.push(`${best.source} ₹${best.price} is >40% from ₹${i.last}; ignored`); best = null; }
     if (best) { best.at = Date.now(); setLive(key, best); }
     console.log(`[live] ${i.symbol}: ${best ? `${best.source} ₹${best.price}${best.asOf ? ` @ ${new Date(best.asOf).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}` : ""}` : "no price"}${errs.length ? ` (failed: ${errs.join(" | ")})` : ""}`);
@@ -1037,6 +1075,7 @@ async function fetchLiveQuote(i) {
 // Never makes a page wait for a price site: a stock already in the cache is answered from memory at once (and refreshed
 // in the background when older than maxAgeMs; the new price is pushed to the page over /api/events). Only a stock with
 // no price at all yet is waited for, at most budgetMs, before the newest saved price stands in.
+const liveErrs = new Map(); // "EX:SYM" -> what each source said on the last try that found no price
 const liveTried = new Map(); // "EX:SYM" -> when a fetch was last started (so a stock no source can price is not waited for every time)
 async function livePrices(items, maxAgeMs = 45e3, { budgetMs = 1500 } = {}) {
   const out = new Map(), need = [], lateNeed = [];
@@ -1091,9 +1130,11 @@ async function syncLivePrices() {
     bySource[q.source] = (bySource[q.source] || 0) + 1;
   }
   if (!patch.size) return { stocks, changed: 0, bySource };
-  const fresh = await readWatchlist(); // re-read right before writing so an edit made meanwhile is not lost
-  const next = fresh.map(x => (patch.has(x.id) ? { ...x, ...patch.get(x.id) } : x));
-  await persistWatchlist(next, fresh);
+  const next = await withWatchlistLock(async () => {
+    const fresh = await readWatchlist(); // re-read right before writing so an edit made meanwhile is not lost
+    const nx = fresh.map(x => (patch.has(x.id) ? { ...x, ...patch.get(x.id) } : x));
+    await persistWatchlist(nx, fresh); return nx;
+  });
   return { stocks: next, changed: patch.size, bySource };
 }
 // A quote is "fresh" when its market timestamp is within 3 minutes (or the market is closed); NSE counts as fresh.
@@ -1269,6 +1310,42 @@ async function refreshCorpEvents({ force = false } = {}) {
     console.log(`[events] ${actions.length} corporate actions (${nseActions ? "NSE" : "Yahoo"}), ${events.length} events${errs.length ? ` (${errs.join("; ")})` : ""}`);
   } catch (e) { ceState.lastError = e.message; console.error(`[events] ${e.message}`); }
   finally { ceState.running = false; }
+}
+// ---- Order wins (shared, public): NSE corporate announcements about new orders / contracts, last 400 days ----
+const ordersFile = path.join(DATA_DIR, "order-wins.json");
+const ordState = { running: false, lastError: null, triedAt: 0 };
+async function refreshOrders({ force = false } = {}) {
+  if (ordState.running) return; ordState.running = true; ordState.triedAt = Date.now();
+  try {
+    const cur = await readJson(ordersFile, { orders: [] }), today = istDay();
+    if (!force && cur.at && Date.now() - cur.at < 3 * 3600e3) return;
+    // first fill: the last 90 days in 15-day pieces; after that the days since the last fetch (plus one for late filings)
+    const from = cur.to ? shiftDay(cur.to, -1) : shiftDay(today, -90), pieces = [];
+    for (let a = from; a <= today; a = shiftDay(a, 15)) pieces.push([a, [shiftDay(a, 14), today].sort()[0]]);
+    const fx = (await usdInr().catch(() => null))?.rate || 88, got = [], errs = [];
+    for (const [a, b] of pieces) {
+      try { got.push(...parseOrderAnnouncements(await fetchNseJson(`/api/corporate-announcements?index=equities&from_date=${ddmmyyyy(a)}&to_date=${ddmmyyyy(b)}`, { referer: "https://www.nseindia.com/companies-listing/corporate-filings-announcements", soft: true }), { usdInr: fx })); }
+      catch (e) { errs.push(`${a}: ${e.message}`); if (e.refused) break; }
+      await new Promise(r => setTimeout(r, 800));
+    }
+    if (errs.length && !got.length) throw new Error(errs[0]);
+    const orders = mergeOrders(cur.orders, got, shiftDay(today, -400));
+    await writeJson(ordersFile, { at: Date.now(), to: errs.length ? cur.to || null : today, orders, errors: errs.slice(0, 3) });
+    ordState.lastError = errs.length ? errs[0] : null;
+    console.log(`[orders] ${got.length} order announcement(s) fetched, ${orders.length} kept${errs.length ? ` (${errs[0]})` : ""}`);
+  } catch (e) { ordState.lastError = e.message; console.warn(`[orders] ${e.message}`); }
+  finally { ordState.running = false; }
+}
+setInterval(() => { if (marketIsOpen() || Date.now() - ordState.triedAt > 6 * 3600e3) refreshOrders().catch(() => {}); }, 60 * 60e3).unref();
+async function ordersView({ days = 90 } = {}) {
+  const [cur, { rows }, fund, st, stocks, hold] = await Promise.all([readJson(ordersFile, { orders: [] }), computeRows(), readFundamentals(), readJson(swingFile(), {}), readWatchlist(), readHoldStore()]);
+  if ((!cur.at || Date.now() - cur.at > 3 * 3600e3) && Date.now() - ordState.triedAt > 15 * 60e3) refreshOrders().catch(() => {}); // background, never waited on
+  const bySym = new Map(rows.map(r => [String(r.symbol).toUpperCase(), r])), held = new Set(), mine = new Set(stocks.map(symOf));
+  for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) held.add(h.symbol);
+  const syms = new Set(cur.orders.map(o => o.symbol)), facts = new Map();
+  for (const sym of syms) { const r = bySym.get(sym), f = fund[sym] || {}; facts.set(sym, { sales: f.salesTtm ?? null, salesGrowth: f.salesGrowth ?? f.salesCagr3 ?? null, roce: r?.roce ?? f.roce ?? null, pe: r?.pe ?? f.pe ?? null, marketCapCr: r?.marketCap ?? f.marketCap ?? null, price: r?.price ?? null, verdict: r?.verdict?.key || null, verdictLabel: r?.verdict?.label || null, inZone: !!r?.verdict?.inZone, held: held.has(sym), tracked: mine.has(sym), swing: (st.positions || []).some(p => p.symbol === sym) }); }
+  const today = istDay(), list = rankOrderWinners(cur.orders, { today, days, facts });
+  return { at: cur.at || null, days, companies: list.slice(0, 150), recent: cur.orders.filter(o => o.day >= shiftDay(today, -14)).slice(0, 60), total: cur.orders.length, refreshing: ordState.running, error: cur.at ? null : ordState.lastError, untracked: list.filter(c => !c.tracked).length };
 }
 setInterval(() => refreshCorpEvents().catch(() => {}), 3 * 3600e3).unref();
 if (!process.env.NODE_TEST_CONTEXT) setTimeout(() => refreshCorpEvents().catch(() => {}), 12e3).unref();
@@ -2345,7 +2422,7 @@ async function recordChanges(previous, next) {
 // The page sends back its own copy of the watchlist (edits, refresh). If it was open for a while, its prices are older than
 // the ones the server fetched since: keep, per stock, whichever price is newer (priceAt), so a stale tab never undoes a refresh.
 // "fetch failed" hides the reason; Node keeps it in e.cause (ENOTFOUND = DNS, ECONNREFUSED, ETIMEDOUT, certificate errors…).
-const errText = e => { const c = e?.cause; const why = c ? (c.code || c.message || "").toString() : ""; return `${e?.message || e}${why && !String(e?.message).includes(why) ? ` (${why}${c?.hostname ? ` ${c.hostname}` : ""})` : ""}`; };
+const errText = e => { const c = e?.cause; const why = c ? (c.code || c.message || "").toString() : ""; const where = c?.hostname || (c?.address ? `${c.address}${c.port ? `:${c.port}` : ""}` : ""); return `${e?.message || e}${why && !String(e?.message).includes(why) ? ` (${why}${where ? ` ${where}` : ""})` : ""}`; };
 const PRICE_FIELDS = ["price", "low", "high", "rangeUpdated", "priceAt", "priceSource", "feedStatus", "updated"];
 const priceTime = s => { const t = Date.parse(s?.priceAt || ""); return Number.isFinite(t) ? t : 0; };
 function keepNewerPrices(incoming, stored) {
@@ -2612,6 +2689,26 @@ async function appHandler(req, res, url) {
       const got = await livePrices(items, 20e3, { budgetMs: 8000 });
       await syncLivePrices();
       return reply(res, 200, { prices: Object.fromEntries([...got].filter(([, v]) => !v.stale).map(([k, v]) => [k, { price: v.price, source: v.source, asOf: v.asOf || null }])), pending: got.pending });
+    }
+    if (url.pathname === "/api/prices/now" && req.method === "POST") {
+      // ⟳ on one stock: fetch it right now, first in line. Sources paused after a refusal get one more try, and a
+      // logged-in Kite answers last if nothing else does (an explicit request, so a possibly late Kite price is better
+      // than a two-day-old close). Answers with the price, or with what every source said.
+      const b = await readBody(req), sym = String(b.symbol || "").trim().toUpperCase(), ex = b.exchange === "BSE" ? "BSE" : "NSE";
+      if (!/^[A-Z0-9&-]{1,20}$/.test(sym)) return reply(res, 400, { message: "Which stock?" });
+      const key = `${ex}:${sym}`, before = livePriceCache.get(key);
+      await livePending.get(key)?.catch(() => null); // a fetch already running for it: let it finish, then go again
+      if (nseCooldown()) resetNse(); if (screenerCooldown()) resetScreener(); if (googleCooldown()) resetGoogle();
+      const stocks = await readWatchlist(), x = stocks.find(y => symOf(y) === sym);
+      let q = await fetchLiveQuote({ symbol: sym, exchange: ex, last: x?.price, name: x?.company }).catch(() => null);
+      const errs = q ? [] : [...(liveErrs.get(key) || [])];
+      if (!q && !KITE_PRICES) {
+        try { const kc = await anyKiteWithSession(); if (kc) { const p = (await kc.ltp([sym], ex)).get(sym); if (p > 0) { q = { price: p, prevClose: before?.prevClose ?? null, source: "Kite", asOf: new Date().toISOString(), at: Date.now() }; setLive(key, q); } else errs.push("Kite: no price returned"); } else errs.push("Kite: not logged in"); }
+        catch (e) { errs.push(`Kite: ${errText(e).slice(0, 80)}`); }
+      }
+      if (q) await syncLivePrices().catch(() => {});
+      console.log(`[live] ⟳ ${sym}: ${q ? `${q.source} ₹${q.price}` : `no price (${errs.join(" | ")})`}`);
+      return reply(res, q ? 200 : 502, q ? { symbol: sym, price: q.price, source: q.source, asOf: q.asOf || null, prev: before?.price ?? null } : { symbol: sym, message: `No source gave ${sym} a price right now.`, errors: errs });
     }
     if (url.pathname === "/api/price-compare" && req.method === "GET") {
       // Every source for one symbol, one at a time, ignoring cool-downs: shows exactly what each site answers from this machine.
@@ -2967,6 +3064,20 @@ async function appHandler(req, res, url) {
           notice = `Recorded ₹${Math.round(st.taxPaid.at(-1).amount).toLocaleString("en-IN")} tax paid for ${st.taxPaid.at(-1).fy}.`;
         }
         else if (op === "tax-paid-delete") { const n = (st.taxPaid || []).length; st.taxPaid = (st.taxPaid || []).filter(x => x.id !== b.id); if (st.taxPaid.length === n) throw new Error("That payment no longer exists."); }
+        else if (op === "ledger-buy") { // edit / delete a held buy from the ledger: the position's quantity and average follow
+          const p = st.positions.find(x => x.id === b.posId) || st.positions.find(x => x.symbol === b.symbol); if (!p) throw new Error("That position no longer exists.");
+          const r = editHeldBuy(p, { date: b.date, price: b.price, newQty: b.qty, newPrice: b.newPrice, newDate: b.newDate, remove: !!b.remove });
+          st.positions = r.position ? st.positions.map(x => (x.id === p.id ? r.position : x)) : st.positions.filter(x => x.id !== p.id);
+          if (r.costChange) moveCash(st, -r.costChange, `Edited a ${p.symbol} buy (${r.costChange > 0 ? "+" : "−"}₹${Math.abs(Math.round(r.costChange)).toLocaleString("en-IN")} cost)`);
+          notice = r.position ? `${p.name}: now ${r.position.qty} shares at an average of ₹${r.position.avgPrice.toLocaleString("en-IN")}.` : `${p.name}: no shares left, the position was removed.`;
+        }
+        else if (op === "ledger-sell") { // fix a sale's price / date
+          const t = st.closed.find(x => x.id === b.id); if (!t) throw new Error("That sale no longer exists.");
+          const r = editSale(t, { newPrice: b.newPrice, newDate: b.newDate });
+          st.closed = st.closed.map(x => (x.id === t.id ? r.trade : x)).sort((a, z) => String(z.closedAt).localeCompare(String(a.closedAt)));
+          if (r.cashChange) moveCash(st, r.cashChange, `Edited the ${t.symbol} sale price`);
+          notice = `${t.name} sale: now ₹${r.trade.sellPrice.toLocaleString("en-IN")}, P/L ${r.trade.pnl >= 0 ? "+" : "−"}₹${Math.abs(Math.round(r.trade.pnl)).toLocaleString("en-IN")}.`;
+        }
         else if (op === "lots") { const p = find("positions", b.id); st.positions = st.positions.map(x => (x.id === p.id ? setLots(x, b.lots) : x)); }
         else if (op === "promote") notice = promoteWatch(st, find("watch", b.id), b); // a swing-watchlist stock was bought: move it to positions
         else if (op === "dip-parse") { // buy-the-dip list typed in one go: preview with the symbols found
@@ -3225,7 +3336,7 @@ async function appHandler(req, res, url) {
       if (id) return reply(res, 200, { changes: history.changes.filter(c => String(c.id) === id), priceSeries: history.priceSeries[id] || [] });
       return reply(res, 200, history);
     }
-    if (url.pathname === "/api/watchlist" && req.method === "POST") { let { stocks } = await readBody(req); if (!Array.isArray(stocks)) return reply(res, 400, { message: "stocks must be an array" }); stocks = keepNewerPrices(stocks, await readWatchlist()); await persistWatchlist(stocks); try { const st = await readLists(); await writeJson(U.listsFile, prune(st, stocks.map(symOf))); } catch {} return reply(res, 200, { ok: true, count: stocks.length }); }
+    if (url.pathname === "/api/watchlist" && req.method === "POST") { let { stocks } = await readBody(req); if (!Array.isArray(stocks)) return reply(res, 400, { message: "stocks must be an array" }); await withWatchlistLock(async () => { const cur = await readWatchlist(); stocks = keepNewerPrices(stocks, cur); await persistWatchlist(stocks, cur); }); try { const st = await readLists(); await writeJson(U.listsFile, prune(st, stocks.map(symOf))); } catch {} return reply(res, 200, { ok: true, count: stocks.length }); }
     if (url.pathname === "/api/refresh" && req.method === "POST") { const { stocks } = await readBody(req); const saved = await readWatchlist(); const target = Array.isArray(stocks) && stocks.length ? keepNewerPrices(stocks, saved) : saved; if (!target.length) return reply(res, 400, { message: "Watchlist is empty. Open the app once to publish it." }); const refreshed = await refreshWatchlist(target, true); return reply(res, 200, { ok: true, stocks: refreshed, refreshed: refreshed.filter(s => s.feedStatus === "Price refreshed").length }); }
     if (url.pathname === "/api/valuation" && req.method === "GET") {
       const { fundamentals, rows } = await computeRows();
@@ -3335,6 +3446,13 @@ async function appHandler(req, res, url) {
         if (op === "refresh") { fetchDividendsFor(cur.rows.map(r => r.symbol), true).catch(() => {}); return reply(res, 200, { started: true, count: cur.rows.length }); }
         return reply(res, 404, { message: "Unknown planner operation." });
       } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/orders" && req.method === "GET") { const d = Number(url.searchParams.get("days")); return reply(res, 200, await ordersView({ days: [30, 90, 180, 365].includes(d) ? d : 90 })); }
+    if (url.pathname === "/api/orders/track" && req.method === "POST") { // value the order winners you are not tracking yet
+      const { symbols } = await readBody(req), list = (Array.isArray(symbols) ? symbols : []).map(x => String(x).toUpperCase()).filter(x => /^[A-Z0-9&-]{1,20}$/.test(x)).slice(0, 60);
+      let n = 0; for (const sym of list) if (await ensureInPool(sym, "NSE", null, "Added from Order wins.")) n++;
+      if (n) queueFill(list).catch(() => {});
+      return reply(res, 200, { added: n });
     }
     if (url.pathname.startsWith("/api/lists")) {
       const op = url.pathname.slice("/api/lists".length).replace(/^\//, "");

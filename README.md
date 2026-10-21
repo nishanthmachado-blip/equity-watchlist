@@ -1,5 +1,49 @@
 # Equity Watchlist MVP
 
+## v5.24.0: what changed — ⟳ live price for one stock, old closes flagged
+- **⟳ next to every swing position's price** fetches that stock's live price right away, ahead of everything else:
+  - Sources resting after a refusal (NSE, Screener, Google) get one more try.
+  - A logged-in Kite answers last if nothing else does (only on this button; Kite stays out of the automatic sources).
+  - On success the row updates and a note shows the new price and its source. If nothing answers, the note lists what each source said.
+- **Old closes are flagged**: a price from an earlier trading day now shows its date ("NSE close · 19 Oct · not today", in amber while the market is open) instead of just "03:30 pm", which looked current.
+- Performance: one request per click; `npm run perf` is all within budget.
+
+## v5.23.0: what changed — clearer "no price" messages
+- **Every live-price failure now names its source** and, for a refused connection, the address: `NSE: … | Yahoo: … | Google: … | Yahoo quote: … | Screener: fetch failed (ECONNREFUSED 1.2.3.4:443)`.
+- **Paused sources are listed** when no price was found, e.g. `NSE paused until 11:52 (quote HTTP 403)`. Before, a source resting after being blocked was silently left out of the line.
+- **Google Finance**: its "unusual traffic" check page is now reported as a block and pauses Google for 10 minutes, instead of "layout not recognised" being retried on every stock.
+- Kite stays out of the price sources (as decided in v4.7.3); add `kite` to `PRICE_SOURCES` to use it.
+- Performance: `npm run perf` is all within budget.
+
+## v5.22.0: what changed — edit the swing ledger
+- **✎ on every ledger row** (Swing trading → Ledger):
+  - **A buy you still hold**: change the quantity, buy price or date, or delete it (two clicks). The position above follows straight away: quantity, average price, P/L and targets. Deleting the last buy removes the position.
+  - **A sale**: fix the sale price or date. Its P/L, booked profit (by month / FY) and the tax tile follow. To undo a sale entirely, use Reopen in Closed trades.
+  - Swing cash is adjusted by the difference, with a line in its log.
+  - A buy that was already sold shows "—"; change it through its sale.
+- Performance: browser + one small server operation; `npm run perf` is all within budget.
+
+## v5.21.0: what changed — 52-week-high breakouts, Order wins, and a data-safety fix
+- **Swing ideas → 🏔 52-week high breakout (above 200-DMA)**: a new setup and filter. A stock qualifies when it's:
+  - at or up to 6% through last year's high;
+  - at least 5% above a rising 200-day average, with the 50-DMA above the 200-DMA;
+  - trading on 1.2×+ normal volume, with RSI 55–85 and no more than 10% above its 20-day average.
+
+  The plan puts the stop under the breakout level (a close back below last year's high means it failed), targets at 2R and 3.5R, and sizes the position to your risk settings. A stock that fits several setups shows this plan when you filter for it. It scans the usual scanner universe: your lists plus about 170 large and mid caps.
+- **📦 Order wins** (menu → Research):
+  - Companies announcing new orders or contracts on NSE (a listed company must disclose material orders), for 30 days / 90 days / 6 months / 1 year.
+  - The order value is read from each filing (₹ crore / lakh, US$ / € million) and compared with the company's yearly sales: 20%+ in 90 days is a strong pipeline.
+  - Alongside: sales growth, return on capital (ROCE), P/E, the app's valuation, and whether you hold it. The order book is shown when a filing mentions it.
+  - Filters: big vs sales, in buy zone, return on capital 20%+, in my lists. There's a latest-announcements feed and one-click valuation of untracked winners.
+  - Court / tax / tribunal "orders" are left out. Data is fetched in the background, a shared public cache, refreshed hourly in market hours; the page never waits.
+- **Data-safety fix (important)**:
+  - Data files on disk are now written to a temporary file and swapped into place. Before, a page load could read the watchlist while it was being saved, see it empty, and save that back, wiping the list (found in testing: 75 stocks became 1).
+  - An unreadable watchlist is now an error, never "empty".
+  - Changes to the watchlist are made one at a time.
+  - If a save would drop more than 30% of the stocks, the previous list is kept in `watchlist.before-shrink.json`.
+  - A regression test reproduces the old failure (622 bad reads in under a second) and now passes with 0.
+- Performance: `npm run perf` is all within budget. The baseline was refreshed to add the new Order wins page (8 ms cold).
+
 ## v5.20.0: what changed — "My holdings" in the watchlist picker
 - **My holdings (N)** now appears in the Watchlist drop-down next to your own lists. It holds every stock you own across all broker accounts, so Valuation, Value · Growth · Dividend picks, Reports and every other screen can be switched to just your holdings.
 - **It follows your brokers**: a sync adds or drops stocks, and accounts removed on My holdings are left out. It can't be edited by hand ("Choose stocks" is greyed out).

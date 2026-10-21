@@ -17,6 +17,7 @@ const num = v => { const x = Number(String(v ?? "").replace(/[₹,\s]/g, "")); r
 export function parseGoogleQuote(html, symbol = null) {
   if (typeof html !== "string" || html.length < 200) throw new Error("Google Finance: empty page");
   if (/consent\.google\.com|Before you continue to Google/i.test(html)) throw new Error("Google Finance: consent page returned instead of the quote");
+  if (/unusual traffic|\/sorry\/index|recaptcha|detected unusual/i.test(html)) throw Object.assign(new Error("Google Finance: blocked this connection (\"unusual traffic\" check page)"), { blocked: true });
   // The page also lists related stocks and indices, each with its own data-last-price. Prefer, in order: the big price
   // element of the quote itself, a data-last-price tag that names this symbol, then the first data-last-price.
   let price = num(html.match(/class="[^"]*\bYMlKec\b[^"]*\bfxKbKc\b[^"]*"[^>]*>\s*(?:₹|Rs\.?\s*)?([\d,]+(?:\.\d+)?)\s*</)?.[1]);
@@ -45,5 +46,7 @@ export async function fetchGoogleQuote(symbol, { exchange = googleConfig.exchang
   if (response.status === 429 || response.status === 403) { cooldownUntil = Date.now() + googleConfig.cooldownMs; throw new GoogleBlocked(cooldownUntil, `HTTP ${response.status}`); }
   if (response.status === 404) throw new Error(`Google Finance: ${sym}:${exchange} not found`);
   if (!response.ok) throw new Error(`Google Finance: HTTP ${response.status}`);
-  return { ...parseGoogleQuote(await response.text(), sym), symbol: sym, source: "Google Finance" };
+  if (/\/sorry\//.test(response.url || "")) { cooldownUntil = Date.now() + googleConfig.cooldownMs; throw new GoogleBlocked(cooldownUntil, "\"unusual traffic\" check"); }
+  try { return { ...parseGoogleQuote(await response.text(), sym), symbol: sym, source: "Google Finance" }; }
+  catch (e) { if (e.blocked) { cooldownUntil = Date.now() + googleConfig.cooldownMs; throw new GoogleBlocked(cooldownUntil, "\"unusual traffic\" check page"); } throw e; }
 }

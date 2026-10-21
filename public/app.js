@@ -522,6 +522,7 @@ function setReportSub(tab){
 }
 // Page heading for each screen: eyebrow (section), title, one-line description; also the browser tab title
 const VIEW_HEADERS={
+  orders:["Research","Order wins","Companies winning new orders and contracts (NSE filings), sized against their sales, with valuation alongside."],
   favs:["Research","Favourites","The stocks you have hearted, with price, valuation, what you hold and what is coming up."],
   home:["Indian equity research","Is this stock worth buying?","Enter any NSE stock and get a fair-value estimate, buy zone and a Value / Growth verdict."],
   lists:["Research","Watchlists","Group stocks into lists and see each list's valuations at a glance."],
@@ -558,7 +559,7 @@ function applyHeader(v){
   document.title=v==="home"?"Equity Watchlist":`${h[1]} · Equity Watchlist`;
 }
 function setView(view){
-  const v=["watchlist","reports","valuation","plan","picks","growth","integrations","thesis","portfolio","alerts","invest","dividends","focus","market","funds","networth","tax","model","us","lists","swing","returns","events","accumulate","mf","indices","favs"].includes(view)?view:"home";
+  const v=["watchlist","reports","valuation","plan","picks","growth","integrations","thesis","portfolio","alerts","invest","dividends","focus","market","funds","networth","tax","model","us","lists","swing","returns","events","accumulate","mf","indices","favs","orders"].includes(view)?view:"home";
   // screens added in v5 (features.js): one section each, marked data-feature-view
   applyHeader(v);
   document.querySelectorAll("[data-feature-view]").forEach(sec=>{sec.hidden=sec.dataset.featureView!==v});

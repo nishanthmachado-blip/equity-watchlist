@@ -653,3 +653,24 @@ tr.fav-row>td{background-color:color-mix(in srgb,#e11d48 4%,var(--card-bg,#fff))
 .sw-per-bars .sw-bk-m{border:1px solid transparent!important;box-shadow:none!important;background:transparent!important}
 .sw-per-bars .sw-bk-m.on{background:color-mix(in srgb,var(--navy,#183b62) 9%,transparent)!important;border-bottom:2px solid var(--navy,#183b62)!important}
 @media (max-width:700px){.sw-per-chips{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px}.sw-per-chip{white-space:nowrap}}
+/* v5.21: Order wins */
+.ord-tools{align-items:center;gap:10px}
+.ord-days{flex:0 0 auto!important;display:inline-flex!important;flex-direction:row!important;flex-wrap:nowrap;gap:0;border:1px solid var(--line,#dce4ee);border-radius:999px;overflow:hidden;padding:0}
+.ord-days button{display:inline-flex;border:0!important;border-radius:0!important;padding:6px 12px!important;font-size:13px!important;background:transparent!important;box-shadow:none!important;white-space:nowrap}
+.ord-days button.active{background:var(--navy,#183b62)!important;color:#fff}
+#ordQ{min-width:220px}
+.ord-wrap{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
+.ord-table{min-width:0!important}.ord-table tbody tr[data-sym]{cursor:pointer}.ord-table tr.open{background:color-mix(in srgb,var(--line,#dce4ee) 35%,transparent)}
+.ord-list{margin:0;padding-left:18px;font-size:12.5px;line-height:1.5}.ord-list li{margin:4px 0}
+.ord-val{display:inline-block;padding:0 6px;border-radius:6px;background:color-mix(in srgb,var(--good,#15803d) 14%,transparent);font-weight:700;font-size:12px}
+.ord-score{display:inline-block;min-width:30px;padding:2px 6px;border-radius:8px;font-weight:800;text-align:center;background:color-mix(in srgb,var(--good,#15803d) calc(var(--s) * 0.35%),transparent)}
+.ord-feed{position:sticky;top:12px;max-height:80vh;overflow:auto;padding:12px 14px}.ord-feed h3{margin:0 0 8px;font-size:14px}
+.ord-feed ul{list-style:none;margin:0;padding:0}.ord-feed li{padding:7px 0;border-bottom:1px solid var(--line,#e5e7eb);font-size:12.5px;cursor:pointer}.ord-feed li div{color:var(--muted);margin-top:2px}
+@media (max-width:1100px){.ord-wrap{grid-template-columns:1fr}.ord-feed{position:static;max-height:none}}
+.ui-dlg [data-del].armed{background:color-mix(in srgb,var(--bad,#dc2626) 12%,transparent);font-weight:700}
+/* v5.24: ⟳ live price for one stock */
+.sw-px-now{border:0;background:transparent;color:var(--muted);font-size:13px;padding:0 4px;margin-right:2px;cursor:pointer;border-radius:6px;vertical-align:1px}
+.sw-px-now:hover{color:var(--navy,#183b62);background:color-mix(in srgb,var(--line,#dce4ee) 60%,transparent)}
+.sw-px-now.spin{animation:pxspin .8s linear infinite;color:var(--navy,#183b62)}
+@keyframes pxspin{to{transform:rotate(360deg)}}
+.sw-stale{color:#b45309!important;font-weight:600}

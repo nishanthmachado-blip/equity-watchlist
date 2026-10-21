@@ -297,7 +297,7 @@ export function buildLedger(positions = [], closed = []) {
     const b = buys.get(k) || { type: "BUY", date: day, at: l.at, symbol: sym, name, qty: 0, price: l.price, held: 0, sold: 0, soldOn: [] };
     b.qty += l.qty; b.held += held; b.sold += sold; if (soldOn) b.soldOn.push(soldOn); buys.set(k, b);
   };
-  for (const p of positions) for (const l of lotsOf(p)) add(p.symbol, p.name, l, l.qty, 0, null);
+  for (const p of positions) for (const l of lotsOf(p)) { add(p.symbol, p.name, l, l.qty, 0, null); buys.get(`${p.symbol}|${String(l.at || "").slice(0, 10)}|${l.price}`).posId = p.id; }
   for (const t of closed) {
     const lots = Array.isArray(t.lots) && t.lots.length ? t.lots : [{ qty: t.qty, price: t.buyAvg, at: t.openedAt || t.closedAt }];
     for (const l of lots) add(t.symbol, t.name, l, 0, l.qty, String(t.closedAt).slice(0, 10));
@@ -455,4 +455,31 @@ export function sanitizeTaxPayment(b = {}, today = istDay(new Date().toISOString
   if (date > today) throw new Error("The payment date cannot be in the future.");
   const fy = /^FY \d{4}-\d{2}$/.test(String(b.fy || "")) ? b.fy : fyOf(date).label;
   return { id: Math.random().toString(36).slice(2, 10), amount: Math.round(amount), date, fy, note: String(b.note || "").trim().slice(0, 80) || null, at: new Date().toISOString() };
+}
+
+// Edit (or delete) a buy you still hold, from the ledger: the lots of a position bought on `date` at `price` become one
+// lot of the new quantity / price / date. Returns the new position (null when no shares are left) and the change in cost.
+export function editHeldBuy(p, { date, price, newQty, newPrice, newDate, remove = false }, now = new Date()) {
+  const lots = lotsOf(p), day = String(date || "").slice(0, 10), pr = Number(price);
+  const match = l => String(l.at || "").slice(0, 10) === day && Math.abs(l.price - pr) < 0.005;
+  const group = lots.filter(match); if (!group.length) throw new Error("That buy is no longer in the position (it may have been sold).");
+  const rest = lots.filter(l => !match(l)), oldCost = group.reduce((a, l) => a + l.qty * l.price, 0);
+  let add = [];
+  if (!remove) {
+    const q = Number(newQty), np = parsePrice(newPrice);
+    if (!(q > 0) || !Number.isInteger(q)) throw new Error("Quantity must be a whole number above 0 (or delete the buy).");
+    if (!(np > 0)) throw new Error("Enter the buy price.");
+    const at = newDate && String(newDate).slice(0, 10) !== day ? tradeDate(newDate, now) : group[0].at;
+    add = [{ qty: q, price: r2(np), at }];
+  }
+  const newCost = add.reduce((a, l) => a + l.qty * l.price, 0), all = [...rest, ...add];
+  if (!all.length) return { position: null, costChange: r2(newCost - oldCost) };
+  return { position: setLots(p, all.map(l => ({ qty: l.qty, price: l.price, date: String(l.at).slice(0, 10) })), now), costChange: r2(newCost - oldCost), keepAt: all };
+}
+// Edit a sale's price / date (a typo when recording it): P/L follows; returns the change in money received.
+export function editSale(t, { newPrice, newDate }, now = new Date()) {
+  const np = parsePrice(newPrice); if (!(np > 0)) throw new Error("Enter the sale price.");
+  const closedAt = newDate && String(newDate).slice(0, 10) !== String(t.closedAt).slice(0, 10) ? tradeDate(newDate, now) : t.closedAt;
+  const next = { ...t, sellPrice: r2(np), closedAt, pnl: r2((np - t.buyAvg) * t.qty), pnlPct: r2((np / t.buyAvg - 1) * 100), atTarget: t.t1Price ? np >= t.t1Price * 0.995 : t.atTarget, editedAt: now.toISOString() };
+  return { trade: next, cashChange: r2((np - t.sellPrice) * t.qty) };
 }

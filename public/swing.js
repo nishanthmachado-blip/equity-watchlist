@@ -62,7 +62,7 @@
       return `<tr class="sw-row ${(SIG[r.status] || [])[1] || ""}" data-id="${esc(r.id)}" data-sym="${esc(r.symbol)}">
         <td><div class="company">${esc(r.name)}</div><div class="ticker">${esc(r.symbol)}${r.exchange === "BSE" ? " · BSE" : ""}</div></td>
         <td class="num">${r.qty}</td><td class="num">${px(r.avgPrice)}</td>
-        <td class="num"><b>${px(r.price)}</b>${r.health ? `<div><span class="sw-health ${r.health.state}" title="${esc(r.health.note)}. Trailing stop idea: ₹${r.health.trail} (2 ATR under the price or the 20-day low, whichever is higher).">${{ strong: "▲ Uptrend", pause: "◆ Pausing", caution: "▼ Below 50-DMA", weak: "▼ Below 200-DMA" }[r.health.state]}</span></div>` : ""}${fin(r.dayPct) ? `<div class="ticker ${cls(r.dayPct)}">${pct(r.dayPct)} today</div>` : ""}${srcLine(r)}</td>
+        <td class="num"><button type="button" class="sw-px-now" data-px-now="${esc(r.symbol)}" data-ex="${esc(r.exchange || "NSE")}" title="Get the live price for ${esc(r.symbol)} now">⟳</button><b>${px(r.price)}</b>${r.health ? `<div><span class="sw-health ${r.health.state}" title="${esc(r.health.note)}. Trailing stop idea: ₹${r.health.trail} (2 ATR under the price or the 20-day low, whichever is higher).">${{ strong: "▲ Uptrend", pause: "◆ Pausing", caution: "▼ Below 50-DMA", weak: "▼ Below 200-DMA" }[r.health.state]}</span></div>` : ""}${fin(r.dayPct) ? `<div class="ticker ${cls(r.dayPct)}">${pct(r.dayPct)} today</div>` : ""}${srcLine(r)}</td>
         <td class="num">${inr(r.invested)}</td><td class="num">${inr(r.value)}</td>
         <td class="num ${cls(r.pnl)}"><b>${sg(r.pnl)}</b><div>${pct(r.pnlPct)}</div>${r.ifSold ? `<div class="sw-net" data-tax="${esc(r.id)}" title="If you sold all ${r.qty} now: ${taxTitle(r.ifSold)}">net ${sg(r.ifSold.net)}<small> after tax</small></div>` : ""}</td>
         <td class="sw-tg">${r.targets.map(t => `<div class="tg-l ${t.hit ? "hit" : r.nextTarget?.n === t.n ? "next" : ""}${t.done ? " done" : ""}" title="${t.sellQty ? `Plan: sell ${t.sellQty} share${t.sellQty === 1 ? "" : "s"} at T${t.n} (${t.planPct}%), about ${sg(t.profit)} profit` : `No sale planned at T${t.n}`}${t.done ? " · booked" : ""}"><i>T${t.n}</i><span>+${t.pct}%</span><b>${px(t.price)}</b><u class="tg-inr ${cls(r.qty * (t.price - r.avgPrice))}" title="Profit if all ${r.qty} shares sold at T${t.n}">${sg(r.qty * (t.price - r.avgPrice))}</u><em>${t.sellQty ? `sell ${t.sellQty}` : "hold"}</em>${t.done ? "✓✓" : t.hit ? "✓" : ""}</div>`).join("")}${(() => { const left = r.targets.filter(t => t.sellQty && !t.done), tot = left.reduce((a, t) => a + (Number(t.profit) || 0), 0); return left.length ? `<div class="tg-plan" title="Profit from the planned sales still to come (${left.map(t => `T${t.n}: sell ${t.sellQty}`).join(", ")})">Plan books <b class="${cls(tot)}">${sg(tot)}</b></div>` : ""; })()}${r.ownTargets || r.ownPlan ? `<div class="ticker">own ${[r.ownTargets && "targets", r.ownPlan && "plan"].filter(Boolean).join(" + ")}</div>` : ""}${r.sellNow ? `<div class="sw-sellnow">Sell ${r.sellNow} now</div>` : ""}${r.stopLoss ? `<div class="sw-sl${r.status === "stop-hit" ? " hit" : ""}">SL ${px(r.stopLoss)}</div>` : ""}</td>
@@ -246,7 +246,16 @@
     ${sw.cash?.log?.length ? `<details class="sw-cashlog"><summary>Cash movements</summary><table class="sw-prev"><tbody>${sw.cash.log.map(l => `<tr><td>${new Date(l.at).toLocaleDateString("en-IN")}</td><td>${esc(l.why)}</td><td class="num ${cls(l.amount)}">${l.amount === null ? "" : sg(l.amount)}</td><td class="num">${amt(l.balance)}</td></tr>`).join("")}</tbody></table></details>` : ""}`;
   }
   const hm = t => new Date(t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  const srcLine = r => { if (!r.priceSource) return ""; const stale = r.priceStale || /saved|sync/.test(r.priceSource); const age = r.priceAsOf ? Math.round((Date.now() - Date.parse(r.priceAsOf)) / 60e3) : null; return `<div class="ticker${stale ? " sw-stale" : ""}" title="${stale ? "Live price not available right now: showing the last saved price." : r.priceAsOf ? `Market time ${new Date(r.priceAsOf).toLocaleString("en-IN")}` : ""}">${esc(r.priceSource)}${r.priceAsOf && age !== null ? ` · ${age <= 1 ? "live" : age < 60 * 18 && sw?.marketOpen ? `${age} min old` : new Date(r.priceAsOf).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}` : ""}</div>`; };
+  const istDay = t => new Date(Date.parse(t) + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const srcLine = r => {
+    if (!r.priceSource) return "";
+    const age = r.priceAsOf ? Math.round((Date.now() - Date.parse(r.priceAsOf)) / 60e3) : null;
+    const oldDay = r.priceAsOf && istDay(r.priceAsOf) < istDay(new Date().toISOString()); // a close from an earlier trading day
+    const stale = r.priceStale || /saved|sync/.test(r.priceSource) || (oldDay && sw?.marketOpen);
+    const when = !r.priceAsOf || age === null ? "" : oldDay ? new Date(r.priceAsOf).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : age <= 1 ? "live" : age < 60 * 18 && sw?.marketOpen ? `${age} min old` : new Date(r.priceAsOf).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    const tip = stale ? `${oldDay && sw?.marketOpen ? `Today's live price did not come through: this is the ${new Date(r.priceAsOf).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} close.` : "Live price not available right now: showing the last saved price."} Press ⟳ next to the price to try again now.` : r.priceAsOf ? `Market time ${new Date(r.priceAsOf).toLocaleString("en-IN")}` : "";
+    return `<div class="ticker${stale ? " sw-stale" : ""}" title="${esc(tip)}">${esc(r.priceSource)}${when ? ` · ${when}` : ""}${stale && oldDay && sw?.marketOpen ? " · not today" : ""}</div>`;
+  };
   const taxTitle = e => `sale value ${inr(e.sellValue)}, gross ${sg(e.gross)}, charges ${inr(e.charges.total)} (STT ${inr(e.charges.stt)}), tax ${inr(e.tax)}${e.shortTerm.qty ? ` (short-term ${e.rules.stRate}%)` : ""}${e.longTerm.qty ? ` (long-term ${e.rules.ltRate}% above the exemption)` : ""} incl. ${e.rules.cessPct}% cess → you keep ${sg(e.net)}`;
   // One request at a time is shown: a slower, older answer never replaces a newer one.
   let loadSeq = 0, lastLoaded = 0, pendingTimer = null;
@@ -287,7 +296,8 @@
           ${tr.recent.length ? `<p class="hint" style="margin:8px 0 4px">Latest results</p><ul class="sw-track-list">${tr.recent.slice(0, 8).map(i => `<li><b>${esc(i.symbol)}</b> ${esc(i.label)} from ${i.day}: ${i.outcome === "t1" ? `<span class="buy">reached T1 in ${i.days} days (${pct(i.ret)})</span>` : i.outcome === "stop" ? `<span class="avoid">stopped out in ${i.days} days (${pct(i.ret)})</span>` : `no target or stop in 20 days (${pct(i.ret)})`}</li>`).join("")}</ul>` : ""}
           <p class="vs-fine">Every idea scoring 50+ is recorded the day it appears, with the entry, stop and target 1 shown on its card, and judged on the daily highs and lows that followed. A day that touched both the stop and T1 counts as stopped. Past results do not promise future ones.</p>`;
       } }
-    const list = x.ideas.filter(i => (!setup || i.setup === setup) && (!src || i.source !== "market"));
+    // a stock that fits several setups shows the chosen setup's plan when filtering
+    const list = x.ideas.map(i => (!setup || i.setup === setup ? i : (() => { const a = (i.alts || []).find(z => z.setup === setup); return a ? { ...i, ...a, alts: i.alts } : null; })())).filter(i => i && (!src || i.source !== "market"));
     const sz = x.sizing;
     const more = list.length - ideasShown;
     $("#swIdeas").innerHTML = list.length ? list.slice(0, ideasShown).map(i => `<article class="sw-idea s-${i.setup}" data-sym="${esc(i.symbol)}">
@@ -504,9 +514,48 @@
     const list = L.entries.filter(e => !ledgerSym || e.symbol === ledgerSym), st = ledgerSym && L.stocks.find(s => s.symbol === ledgerSym);
     box.innerHTML = `<div class="toolbar sw-ledger-tools"><label class="hint">Stock <select class="ui-input" id="swLedgerSym"><option value="">All stocks</option>${L.stocks.map(s => `<option value="${esc(s.symbol)}"${s.symbol === ledgerSym ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
       ${st ? `<span class="hint">Bought ${st.bought} for ${amt(st.boughtValue)} · sold ${st.sold} for ${amt(st.soldValue)} · booked <b class="${cls(st.realised)}">${sg(st.realised)}</b> · holding ${st.held} · ${dmy(st.first)} to ${dmy(st.last)}</span>` : ""}</div>
-      <div class="table-wrap"><table class="sw-table sw-ledger"><thead><tr><th>Date</th><th>Stock</th><th>Type</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th><th>Details</th></tr></thead><tbody>${list.length ? list.map(e => `<tr class="lg-${e.type.toLowerCase()}"><td>${dmy(e.date)}</td><td><div class="company">${esc(e.name)}</div><div class="ticker">${esc(e.symbol)}</div></td><td><span class="sw-sig ${e.type === "BUY" ? "dp" : "tp"}">${e.type === "BUY" ? "Buy" : "Sell"}</span></td><td class="num">${e.qty}</td><td class="num">${px(e.price)}</td><td class="num">${inr(e.value)}</td>
-        <td>${e.type === "BUY" ? (e.sold ? `${e.held ? `${e.held} held · ` : ""}${e.sold} sold${e.soldOn.length ? ` (${e.soldOn.map(dmy).join(", ")})` : ""}` : "held") : `<b class="${cls(e.pnl)}">${sg(e.pnl)}</b> <small>${pct(e.pnlPct)}</small> · bought at ${px(e.buyAvg)} avg${e.atTarget ? " · at target" : ""}`}</td></tr>`).join("") : `<tr><td colspan="7" class="nw-empty-row">Buys and sells appear here with their dates.</td></tr>`}</tbody></table></div>`;
+      <div class="table-wrap"><table class="sw-table sw-ledger"><thead><tr><th>Date</th><th>Stock</th><th>Type</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th><th>Details</th><th></th></tr></thead><tbody>${list.length ? list.map((e, i) => `<tr class="lg-${e.type.toLowerCase()}"><td>${dmy(e.date)}</td><td><div class="company">${esc(e.name)}</div><div class="ticker">${esc(e.symbol)}</div></td><td><span class="sw-sig ${e.type === "BUY" ? "dp" : "tp"}">${e.type === "BUY" ? "Buy" : "Sell"}</span></td><td class="num">${e.qty}</td><td class="num">${px(e.price)}</td><td class="num">${inr(e.value)}</td>
+        <td>${e.type === "BUY" ? (e.sold ? `${e.held ? `${e.held} held · ` : ""}${e.sold} sold${e.soldOn.length ? ` (${e.soldOn.map(dmy).join(", ")})` : ""}` : "held") : `<b class="${cls(e.pnl)}">${sg(e.pnl)}</b> <small>${pct(e.pnlPct)}</small> · bought at ${px(e.buyAvg)} avg${e.atTarget ? " · at target" : ""}`}</td>
+        <td class="sw-acts">${(e.type === "BUY" && e.held > 0) || (e.type === "SELL" && e.tradeId) ? `<button type="button" class="ghost" data-lg-edit="${i}" title="${e.type === "BUY" ? "Edit or delete this buy" : "Fix the sale price or date"}">✎</button>` : `<span class="hint" title="Fully sold: edit the sale instead">—</span>`}</td></tr>`).join("") : `<tr><td colspan="8" class="nw-empty-row">Buys and sells appear here with their dates.</td></tr>`}</tbody></table></div>`;
     $("#swLedgerSym").onchange = e => { ledgerSym = e.target.value; renderLedger(); };
+    box.querySelectorAll("[data-lg-edit]").forEach(b => b.onclick = () => ledgerEdit(list[Number(b.dataset.lgEdit)]));
+  }
+  // ⟳ next to a price: fetch that stock's live price right now (first in line), then redraw with it
+  async function pxNow(btn) {
+    if (btn.classList.contains("spin")) return;
+    const sym = btn.dataset.pxNow; btn.classList.add("spin"); btn.disabled = true;
+    try {
+      const r = await fetch("/api/prices/now", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: sym, exchange: btn.dataset.ex }) });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) { window.toast?.(`${esc(sym)}: ${px(j.price)} from ${esc(j.source)}${fin(j.prev) && j.prev !== j.price ? ` (was ${px(j.prev)})` : ""}`, { kind: "ok", ms: 4000 }); await load(true); }
+      else window.toast?.(`<b>${esc(sym)}</b>: ${esc(j.message || "no price")}${j.errors?.length ? `<br><small>${j.errors.map(esc).join("<br>")}</small>` : ""}`, { kind: "error", ms: 12000 });
+    } catch (err) { window.toast?.(esc(err.message), { kind: "error" }); }
+    finally { btn.classList.remove("spin"); btn.disabled = false; }
+  }
+  // Edit a row of the ledger: a buy you still hold (date, quantity, price, or delete it) or a sale (price, date).
+  // The position's quantity and average price, your swing cash and the booked P/L all follow.
+  async function ledgerEdit(e) {
+    if (!e) return;
+    if (e.type === "BUY") {
+      let remove = false;
+      const out = await window.ui.dialog({ title: `Edit buy: ${e.name}`, icon: "✎", okText: "Save",
+        message: `${dmy(e.date)} · ${e.held} share${e.held === 1 ? "" : "s"} at ${px(e.price)}${e.sold ? `. ${e.sold} more from this buy were already sold: change those through the sale.` : "."} Your position's quantity and average price, and your swing cash, are updated.`,
+        bodyHtml: `<div class="nw-form">${field("Quantity", "qty", e.held, 'inputmode="numeric" autofocus')}${field("Buy price (₹)", "price", e.price, 'inputmode="decimal"')}${dateField("Bought on", "date", e.date)}</div>
+          <div class="toolbar" style="margin:10px 0 0"><button type="button" class="ghost danger-text" data-del>🗑 Delete this buy</button></div>`,
+        onOpen: (box) => { const d = box.querySelector("[data-del]"), left = (sw.positions.find(p => p.id === e.posId)?.qty || 0) - e.held;
+          d.onclick = () => { if (!d.dataset.armed) { d.dataset.armed = "1"; d.classList.add("armed"); d.textContent = left > 0 ? `Click again: remove ${e.held} shares (${left} stay)` : "Click again: this removes the whole position"; return; } remove = true; d.closest(".ui-dlg").querySelector("button.primary").click(); }; },
+        collect: async box => {
+          const v = n => box.querySelector(`[name=${n}]`).value;
+          return api("/api/swing/ledger-buy", { posId: e.posId, symbol: e.symbol, date: e.date, price: e.price, qty: v("qty"), newPrice: v("price"), newDate: v("date"), remove });
+        } });
+      if (out) { sw = out; render(); if (out.notice) window.toast?.(out.notice, { kind: "ok" }); }
+      return;
+    }
+    const out = await window.ui.dialog({ title: `Edit sale: ${e.name}`, icon: "✎", okText: "Save",
+      message: `${dmy(e.date)} · sold ${e.qty} at ${px(e.price)} (bought at ${px(e.buyAvg)} avg). P/L, booked profit, tax and swing cash follow. To undo the sale, use Reopen in Closed trades.`,
+      bodyHtml: `<div class="nw-form">${field("Sale price (₹)", "price", e.price, 'inputmode="decimal" autofocus')}${dateField("Sold on", "date", e.date)}</div>`,
+      collect: box => api("/api/swing/ledger-sell", { id: e.tradeId, newPrice: box.querySelector("[name=price]").value, newDate: box.querySelector("[name=date]").value }) });
+    if (out) { sw = out; render(); if (out.notice) window.toast?.(out.notice, { kind: "ok" }); }
   }
   async function boughtDialog(w) {
     const out = await window.ui.dialog({
@@ -578,6 +627,7 @@
     $("#swExport").onclick = () => { if (!sw?.realised?.count && !sw?.positions?.length) { window.toast?.("Nothing to export yet.", { kind: "info" }); return; } const a = document.createElement("a"); a.href = "/api/swing/export.xlsx"; a.download = ""; document.body.append(a); a.click(); a.remove(); };
     $("#swRefresh").onclick = () => load(false, true);
     $("#swingView").addEventListener("click", async e => {
+      const pn = e.target.closest("[data-px-now]"); if (pn) { e.stopPropagation(); pxNow(pn); return; }
       const mb = e.target.closest("[data-more]"); if (mb) { swMore = mb.dataset.more === "1"; try { localStorage.setItem("sw-more", swMore ? "1" : "0"); } catch { /* private mode */ } render(); return; }
       if (e.target.closest('[data-go="paste"]')) { pasteDialog(); return; }
       if (e.target.closest('[data-go="dip"]')) { dipAddDialog(); return; }

@@ -42,6 +42,7 @@ export function snapshot(bars, niftyBars = null) {
     price: r2(price), prevClose: r2(prev), changePct: r2((price / prev - 1) * 100), bars: n,
     sma20: r2(sma(c, 20)), ema20: r2(e20s[n - 1]), sma50: r2(sma(c, 50)), sma200: r2(sma(c, 200)),
     rsi: r1(rsi(c)), rsiPrev: r1(rsi(c.slice(0, -1))), atr: r2(atr(b)),
+    v: 2, high52Prev: r2(hi(252, 1)), sma200Ago: r2(sma(c, 200, n - 20)), // 200-DMA 20 days ago: is it rising?
     high20: r2(hi(20, 1)), low10: r2(lo(10)), low20: r2(lo(20)), high55: r2(hi(55, 1)), high52: r2(hi(252)), low52: r2(lo(252)),
     vol20: vol20 && Math.round(vol20), volRatio: vol20 && fin(volToday) ? r2(volToday / vol20) : null,
     turnoverCr: vol20 ? r2(vol20 * price / 1e7) : null,
@@ -57,7 +58,8 @@ const SETUP_INFO = {
   pullback: { label: "Pullback in an uptrend", icon: "↘↗", base: 60 },
   breakout: { label: "Breakout on volume", icon: "🚀", base: 60 },
   bounce: { label: "Oversold bounce", icon: "🪃", base: 48 },
-  value: { label: "Value stock turning up", icon: "💎", base: 64 }
+  value: { label: "Value stock turning up", icon: "💎", base: 64 },
+  high52: { label: "52-week high breakout", icon: "🏔", base: 62 }
 };
 export { SETUP_INFO };
 
@@ -90,6 +92,15 @@ export function detectSetups(s, verdict = null) {
     const stop = Math.max(Math.min(s.low10 * 0.99, p - 1.5 * A), p - 2.5 * A);
     plan("bounce", stop, s.sma20, s.high20,
       [`Still above its 200-day average (₹${s.sma200}) but oversold: RSI ${s.rsi}`, `${r1((1 - p / s.high20) * 100)}% below its 20-day high`, `First target: back to the 20-day average ₹${s.sma20}`]);
+  }
+  // 52-week high breakout, strong above a rising 200-DMA: at or just through the high of the past year, with volume
+  const h52 = fin(s.high52Prev) ? s.high52Prev : s.high52; // older scans: the 52-week high including today
+  if (up && fin(h52) && fin(s.sma200) && p >= h52 * 0.99 && p <= h52 * 1.06 && p >= s.sma200 * 1.05 && (!fin(s.sma200Ago) || s.sma200 > s.sma200Ago) && s.volRatio >= 1.2 && fin(s.rsi) && s.rsi >= 55 && s.rsi <= 85 && (!fin(s.ema20) || p <= s.ema20 * 1.10)) {
+    const lvl = Math.min(p, h52), stop = Math.max(lvl * 0.95, p - 2.2 * A), r = p - Math.min(stop, p - 0.5 * A);
+    plan("high52", stop, p + 2 * r, p + 3.5 * r,
+      [p > h52 ? `New 52-week high: above last year's high ₹${h52}` : `At its 52-week high ₹${h52}${p < h52 ? ` (${r1((p / h52 - 1) * 100)}%)` : ""}`,
+        `${r1((p / s.sma200 - 1) * 100)}% above a rising 200-day average (₹${s.sma200})`, `Volume ${s.volRatio}× the 20-day average · RSI ${s.rsi}`,
+        "Stop under the breakout level: a close back below last year's high means it failed"]);
   }
   // Value stock turning up
   if (verdict?.inZone && verdict.key === "buy" && fin(verdict.fairBase) && verdict.fairBase > p && fin(s.ema20) && (s.crossedAboveEma20 || (s.rsiPrev < 40 && s.rsi > s.rsiPrev && p > s.ema20 * 0.99))) {
@@ -133,6 +144,7 @@ export function rankIdeas(items, { held = new Set(), watching = new Set(), sizin
   }
   // one idea per stock (the best-scoring setup), best first
   const best = new Map(); for (const i of ideas) if (!best.has(i.symbol) || best.get(i.symbol).score < i.score) best.set(i.symbol, i);
+  for (const i of ideas) { const b = best.get(i.symbol); if (b !== i) (b.alts ||= []).push(i); } // other setups the stock also fits (filters use them)
   return [...best.values()].sort((a, b) => b.score - a.score || b.rr - a.rr).slice(0, limit);
 }
 
