@@ -1,5 +1,15 @@
 # Equity Watchlist MVP
 
+## v5.32.0: price charts (TradingView Lightweight Charts, data from Angel One)
+- **📈 Chart** on any stock: the Value a stock card, your holdings, swing positions, the swing watchlist and ideas, Favourites and Order wins. Opens a full-screen candlestick chart with volume.
+- **Periods:** 1D (5-minute candles), 1W (15-minute), 1M (1-hour), 6M / 1Y / 5Y (daily). Intraday candles refresh every minute while the chart is open.
+- **20 / 50 / 200-day averages** on daily charts. Each daily chart carries about 300 extra days, so the 200-day line starts on the first visible day, and you can scroll back.
+- **Your levels as lines:** swing average price, open targets (T1–T3), stop-loss, holding average, buy zone and fair value. Each can be switched off.
+- **Data:** candles come from your Angel One account (read-only historical-data endpoint, same login as prices). Daily charts fall back to the app's saved NSE closing prices, then Yahoo; intraday needs Angel One. The page never waits more than ~2.5 s on Yahoo, and a failed try is remembered for 2 minutes.
+- The chart library (TradingView Lightweight Charts 4.2.3, Apache-2.0, `public/vendor/`) loads only when you open a chart, so the app's normal page weight is unchanged.
+- Saved NSE closes now keep the day's open, so charts drawn from them get real candles over time.
+- Perf: new "Price chart (6M)" page in `npm run perf` (first call ~2.5 s when Angel One isn't connected and Yahoo hangs; repeats ~40 ms). Baseline refreshed.
+
 ## v5.31.1: Get valuation doesn't re-fetch current company numbers
 - Company numbers (P/E, ROCE, sales, profit) change with quarterly results. **Get valuation** no longer re-fetches them when they are under 7 days old: it updates only the live price (Angel One / Kite) and says how old the numbers are. That means no request to Screener / Yahoo, and no warning.
 - When a re-fetch of older numbers fails and they are under 30 days old, a calm blue note replaces the amber warning. The warning remains for numbers older than 30 days.

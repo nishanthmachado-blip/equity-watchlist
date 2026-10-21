@@ -49,7 +49,7 @@ const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Geck
 export function parseYahooBars(json) {
   const r = json?.chart?.result?.[0], q = r?.indicators?.quote?.[0];
   if (!r || !q) return [];
-  return (r.timestamp || []).map((t, i) => ({ t, c: q.close?.[i], h: q.high?.[i], l: q.low?.[i], v: q.volume?.[i] })).filter(x => fin(x.c));
+  return (r.timestamp || []).map((t, i) => ({ t, o: q.open?.[i], c: q.close?.[i], h: q.high?.[i], l: q.low?.[i], v: q.volume?.[i] })).filter(x => fin(x.c));
 }
 import { createBackoff } from "./backoff.mjs";
 // Yahoo chart service: once it says "too many requests", stop asking until the pause ends (asking extends the ban)

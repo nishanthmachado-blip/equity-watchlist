@@ -254,8 +254,8 @@ export function createBrokerClients({ env = process.env, fetchImpl = fetch, sess
       return out;
     },
     // Daily candles for one instrument, from / to as "YYYY-MM-DD"
-    async candles(exchange, token, from, to) {
-      return normalizeAngelCandles(await angelPost("/rest/secure/angelbroking/historical/v1/getCandleData", { exchange, symboltoken: String(token), interval: "ONE_DAY", fromdate: `${from} 09:15`, todate: `${to} 15:30` }));
+    async candles(exchange, token, from, to, interval = "ONE_DAY") { // interval: ONE_MINUTE … ONE_HOUR, ONE_DAY
+      return normalizeAngelCandles(await angelPost("/rest/secure/angelbroking/historical/v1/getCandleData", { exchange, symboltoken: String(token), interval, fromdate: `${from} 09:15`, todate: `${to} 15:30` }));
     },
     connectedForData: async () => !!(await getSession("angel"))?.jwt || !!autoMode("angel"),
     forget: () => setSession("angel", null)

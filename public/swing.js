@@ -60,7 +60,7 @@
     $("#swRows").innerHTML = v.positions.length ? [...v.positions].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || (b.pnlPct ?? -999) - (a.pnlPct ?? -999)).map(r => {
       const used = r.limit ? Math.min(100, Math.round(r.invested / r.limit * 100)) : null;
       return `<tr class="sw-row ${(SIG[r.status] || [])[1] || ""}" data-id="${esc(r.id)}" data-sym="${esc(r.symbol)}">
-        <td><div class="company">${esc(r.name)}</div><div class="ticker">${esc(r.symbol)}${r.exchange === "BSE" ? " · BSE" : ""}</div></td>
+        <td><div class="company">${esc(r.name)} <button type="button" class="ch-mini" data-chart="${esc(r.symbol)}" data-chart-name="${esc(r.name)}" data-chart-ex="${r.exchange === "BSE" ? "BSE" : "NSE"}" title="Price chart" aria-label="Chart">📈</button></div><div class="ticker">${esc(r.symbol)}${r.exchange === "BSE" ? " · BSE" : ""}</div></td>
         <td class="num">${r.qty}</td><td class="num">${px(r.avgPrice)}</td>
         <td class="num"><button type="button" class="sw-px-now" data-px-now="${esc(r.symbol)}" data-ex="${esc(r.exchange || "NSE")}" title="Get the live price for ${esc(r.symbol)} now">⟳</button><b>${px(r.price)}</b>${r.health ? `<div><span class="sw-health ${r.health.state}" title="${esc(r.health.note)}. Trailing stop idea: ₹${r.health.trail} (2 ATR under the price or the 20-day low, whichever is higher).">${{ strong: "▲ Uptrend", pause: "◆ Pausing", caution: "▼ Below 50-DMA", weak: "▼ Below 200-DMA" }[r.health.state]}</span></div>` : ""}${fin(r.dayPct) ? `<div class="ticker ${cls(r.dayPct)}">${pct(r.dayPct)} today</div>` : ""}${srcLine(r)}</td>
         <td class="num">${inr(r.invested)}</td><td class="num">${inr(r.value)}</td>
@@ -75,7 +75,7 @@
     const watchList = v.watch.filter(w => w.list !== "dip");
     $("#swWatchNote").textContent = watchList.length ? `${watchList.filter(w => w.status === "deploy").length} at your buy level now` : "";
     $("#swWatchRows").innerHTML = watchList.length ? [...watchList].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || (a.distance ?? 999) - (b.distance ?? 999)).map(w => `<tr class="sw-row ${(SIG[w.status] || [])[1] || ""}" data-id="${esc(w.id)}" data-sym="${esc(w.symbol)}">
-        <td><div class="company">${esc(w.name)}</div><div class="ticker">${esc(w.symbol)}${w.notes ? ` · ${esc(w.notes)}` : ""}</div>${w.upcoming?.length ? `<div class="sw-up">${upChips(w)}</div>` : ""}${w.idea ? `<div class="ticker">💡 ${esc(w.idea.label)}${w.stopLoss ? ` · SL ${px(w.stopLoss)}` : ""}${w.idea.t1 ? ` · T1 ${px(w.idea.t1)}` : ""}</div>` : w.stopLoss ? `<div class="ticker">SL ${px(w.stopLoss)}</div>` : ""}</td>
+        <td><div class="company">${esc(w.name)} <button type="button" class="ch-mini" data-chart="${esc(w.symbol)}" data-chart-name="${esc(w.name)}" data-chart-ex="${w.exchange === "BSE" ? "BSE" : "NSE"}" title="Price chart" aria-label="Chart">📈</button></div><div class="ticker">${esc(w.symbol)}${w.notes ? ` · ${esc(w.notes)}` : ""}</div>${w.upcoming?.length ? `<div class="sw-up">${upChips(w)}</div>` : ""}${w.idea ? `<div class="ticker">💡 ${esc(w.idea.label)}${w.stopLoss ? ` · SL ${px(w.stopLoss)}` : ""}${w.idea.t1 ? ` · T1 ${px(w.idea.t1)}` : ""}</div>` : w.stopLoss ? `<div class="ticker">SL ${px(w.stopLoss)}</div>` : ""}</td>
         <td class="num"><b>${px(w.price)}</b>${fin(w.dayPct) ? `<div class="ticker ${cls(w.dayPct)}">${pct(w.dayPct)} today</div>` : ""}</td>
         <td class="num">${w.buyBelow ? px(w.buyBelow) : '<span class="hint">not set</span>'}</td>
         <td class="num">${fin(w.distance) ? (w.distance <= 0 ? '<b class="buy">reached</b>' : `${w.distance}% above`) : "—"}</td>
@@ -158,7 +158,7 @@
       const qty = w.amount && w.buyBelow ? Math.floor(w.amount / Math.min(w.buyBelow, w.price || w.buyBelow)) : null;
       const st = w.status === "deploy" ? '<b class="buy">✓ Reached: buy</b>' : w.status === "near-deploy" ? '<span class="sw-dip-near">Close</span>' : w.price == null ? '<span class="hint">no price yet</span>' : '<span class="hint">Waiting</span>';
       return `<tr class="sw-row ${w.status === "deploy" ? "dp" : w.status === "near-deploy" ? "near" : ""}" data-id="${esc(w.id)}" data-sym="${esc(w.symbol)}">
-        <td><div class="company">${esc(w.name)}</div><div class="ticker">${esc(w.symbol)}${w.notes ? ` · ${esc(w.notes)}` : ""}${w.stopLoss ? ` · SL ${px(w.stopLoss)}` : ""}</div>${w.upcoming?.length ? `<div class="sw-up">${upChips(w)}</div>` : ""}</td>
+        <td><div class="company">${esc(w.name)} <button type="button" class="ch-mini" data-chart="${esc(w.symbol)}" data-chart-name="${esc(w.name)}" data-chart-ex="${w.exchange === "BSE" ? "BSE" : "NSE"}" title="Price chart" aria-label="Chart">📈</button></div><div class="ticker">${esc(w.symbol)}${w.notes ? ` · ${esc(w.notes)}` : ""}${w.stopLoss ? ` · SL ${px(w.stopLoss)}` : ""}</div>${w.upcoming?.length ? `<div class="sw-up">${upChips(w)}</div>` : ""}</td>
         <td class="num"><b>${px(w.price)}</b>${fin(w.dayPct) ? `<div class="ticker ${cls(w.dayPct)}">${pct(w.dayPct)} today</div>` : ""}</td>
         <td class="num"><b>${px(w.buyBelow)}</b></td>
         <td>${fin(d) ? (d <= 0 ? `<div class="sw-dip-bar done"><i style="width:100%"></i></div><span class="ticker buy">${Math.abs(d).toFixed(1)}% below your level</span>` : `<div class="sw-dip-bar"><i style="width:${bar}%"></i></div><span class="ticker">needs −${fall.toFixed(1)}% (${px(w.price - w.buyBelow)})</span>`) : "—"}</td>
@@ -302,7 +302,7 @@
     const sz = x.sizing;
     const more = list.length - ideasShown;
     $("#swIdeas").innerHTML = list.length ? list.slice(0, ideasShown).map(i => `<article class="sw-idea s-${i.setup}" data-sym="${esc(i.symbol)}">
-      <div class="sw-idea-top"><div><div class="company">${esc(i.name)}</div><div class="ticker">${esc(i.symbol)} · ${esc(i.source)}${i.watching ? " · in your swing watchlist" : ""}${fin(i.snap.changePct) ? ` · <span class="${cls(i.snap.changePct)}">${pct(i.snap.changePct)} today</span>` : ""}</div></div>
+      <div class="sw-idea-top"><div><div class="company">${esc(i.name)} <button type="button" class="ch-mini" data-chart="${esc(i.symbol)}" data-chart-name="${esc(i.name)}" title="Price chart" aria-label="Chart">📈</button></div><div class="ticker">${esc(i.symbol)} · ${esc(i.source)}${i.watching ? " · in your swing watchlist" : ""}${fin(i.snap.changePct) ? ` · <span class="${cls(i.snap.changePct)}">${pct(i.snap.changePct)} today</span>` : ""}</div></div>
         <div class="sw-score-pill" title="Setup score out of 100"><b>${i.score}</b><span>score</span></div></div>
       <div class="sw-setup">${i.icon} ${esc(i.label)}</div>
       <div class="sw-plan">

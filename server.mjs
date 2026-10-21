@@ -1143,6 +1143,68 @@ async function angelBars(x) {
   const to = istDay(), from = shiftDay(to, -380);
   try { return await asUser(user, () => brokers.angel.candles(ex, t, from, to)); } catch (e) { await angelFail(e); return null; }
 }
+// ---- Charts (TradingView Lightweight Charts in the page): candles from your Angel One account; daily charts fall back
+// to the app's own NSE closing prices, then Yahoo. Shared cache: intraday 1 minute, daily 30 minutes.
+const CHART_TF = { "1D": { interval: "FIVE_MINUTE", days: 6, lastDay: true }, "1W": { interval: "FIFTEEN_MINUTE", days: 8 }, "1M": { interval: "ONE_HOUR", days: 32 },
+  "6M": { interval: "ONE_DAY", days: 185 }, "1Y": { interval: "ONE_DAY", days: 370 }, "5Y": { interval: "ONE_DAY", days: 1830 } };
+const chartCache = new Map();
+// bars → { t, o, h, l, c, v }; a missing open (older saved closes, some Yahoo rows) is the previous close
+const ohlc = bars => bars.map((x, i) => { const o = x.o ?? x.p ?? bars[i - 1]?.c ?? x.c; return { t: x.t, o, h: Math.max(x.h ?? x.c, o, x.c), l: Math.min(x.l ?? x.c, o, x.c), c: x.c, v: x.v ?? null }; });
+const inTime = (p, ms, what) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`${what} took too long`)), ms).unref?.())]);
+async function chartBars(symbol, exchange, tf) {
+  const spec = CHART_TF[tf] || CHART_TF["6M"], daily = spec.interval === "ONE_DAY", key = `${exchange}:${symbol}:${tf}`, hit = chartCache.get(key);
+  if (hit && Date.now() - hit.at < (!hit.data.bars.length ? 2 * 60e3 : daily ? 30 * 60e3 : 60e3)) return hit.data; // a failed try is remembered for 2 minutes
+  // daily charts carry ~300 extra days so the 200-day average starts on the first visible day (and you can scroll back)
+  const to = istDay(), from = shiftDay(to, -spec.days), fetchFrom = daily ? shiftDay(to, -Math.min(1990, spec.days + 300)) : from, notes = [];
+  let bars = null, source = null;
+  const user = await angelAccount();
+  if (user) {
+    const t = (await angelTokens())[`${exchange}:${symbol}`];
+    if (!t) notes.push("Angel One: no instrument token for this stock");
+    else {
+      try { bars = await inTime(asUser(user, () => brokers.angel.candles(exchange, t, fetchFrom, to, spec.interval)), 9000, "Angel One"); source = "Angel One"; }
+      catch (e) { notes.push(`Angel One: ${String(e.message).slice(0, 100)}`); if (e.loginRequired || e.rateLimited) await angelFail(e); }
+    }
+  } else notes.push(ANGEL_PRICES ? "Angel One not connected (Integrations → Angel One)" : "Angel One charts are off (ANGEL_PRICES=0)");
+  if ((!bars || !bars.length) && daily) {
+    const own = exchange === "NSE" ? await eodBars(symbol).catch(() => []) : [];
+    const cut = Date.parse(`${fetchFrom}T00:00:00Z`) / 1000;
+    if (own.length >= 20) { const b = own.filter(x => x.t >= cut); if (b.length >= 20 && (b.length > (spec.days * 0.6) || chartCooldown())) { bars = ohlc(b); source = "NSE closing prices (saved)"; } }
+    if ((!bars || !bars.length) && !chartCooldown()) {
+      try { const r = await inTime(fetchChart(symbol, { exchange, range: tf === "5Y" ? "10y" : "2y" }), 2500, "Yahoo"); bars = ohlc(r.bars); source = "Yahoo"; }
+      catch (e) { notes.push(`Yahoo: ${String(e.message).slice(0, 80)}`); }
+    }
+  }
+  if (bars?.length && spec.lastDay) { const d = t => new Date((t + 19800) * 1000).toISOString().slice(0, 10), last = d(bars.at(-1).t); bars = bars.filter(b => d(b.t) === last); }
+  if (bars?.length && daily) { // one bar per trading day (saved closes can carry two stamps for a day), oldest first
+    const cut = Date.parse(`${fetchFrom}T00:00:00Z`) / 1000, byDay = new Map();
+    for (const b of bars) if (b.t >= cut) byDay.set(new Date((b.t + 19800) * 1000).toISOString().slice(0, 10), b);
+    bars = [...byDay.values()].sort((a, b) => a.t - b.t);
+  }
+  const data = { bars: bars || [], source, interval: spec.interval, viewFrom: daily ? Date.parse(`${from}T00:00:00Z`) / 1000 : null, notes };
+  chartCache.set(key, { at: Date.now(), data });
+  if (chartCache.size > 400) chartCache.delete(chartCache.keys().next().value);
+  return data;
+}
+// Your own levels for the chart: swing position (average, targets, stop), holdings average, valuation zone and fair value
+async function chartLevels(symbol) {
+  const out = [];
+  try {
+    const [sw, view, { rows }] = await Promise.all([swingView().catch(() => null), kiteHoldingsView().catch(() => null), computeRows()]);
+    const p = sw?.positions?.find(x => x.symbol === symbol);
+    if (p) {
+      out.push({ price: p.avgPrice, label: `Swing avg ₹${p.avgPrice}`, kind: "avg" });
+      for (const t of p.targets || []) if (!t.done) out.push({ price: t.price, label: `T${t.n} +${t.pct}%`, kind: "target" });
+      if (p.stopLoss) out.push({ price: p.stopLoss, label: "Stop-loss", kind: "stop" });
+    }
+    const h = view?.holdings?.find(x => x.symbol === symbol);
+    if (h && Number.isFinite(h.avgPrice) && (!p || Math.abs(h.avgPrice - p.avgPrice) > 0.01)) out.push({ price: Math.round(h.avgPrice * 100) / 100, label: `Holding avg ₹${Math.round(h.avgPrice * 100) / 100}`, kind: "hold" });
+    const r = rows.find(x => String(x.symbol).toUpperCase() === symbol);
+    if (r?.zoneLow && r?.zoneHigh) { out.push({ price: r.zoneLow, label: "Buy zone low", kind: "zone" }, { price: r.zoneHigh, label: "Buy zone high", kind: "zone" }); }
+    if (r?.fairValue?.base) out.push({ price: r.fairValue.base, label: "Fair value (base)", kind: "fair" });
+  } catch { /* levels are optional */ }
+  return out.filter(l => Number.isFinite(l.price) && l.price > 0);
+}
 // Kite (Zerodha) LTP for many stocks in one request, when "kite" is in PRICE_SOURCES: exactly what the watchlist
 // Refresh does. Used first by every live path (Swing page, ⟳, the 3-minute refresh, Favourites, Market today).
 let kiteDownUntil = 0, kiteDownWhy = null;
@@ -1659,7 +1721,7 @@ async function eodFetchDay(day, universe) {
   const [bhav, idx] = await Promise.all([fetchBhavcopy(day), fetchIndexCloses(day).catch(() => null)]);
   if (!bhav) return null; // holiday or not published yet
   const t = dayToT(bhav.day || day), bars = new Map();
-  for (const r of bhav.rows) if (universe.has(r.symbol)) bars.set(r.symbol, { t, c: r.close, h: r.high ?? r.close, l: r.low ?? r.close, v: r.volume ?? null, p: r.prev ?? null });
+  for (const r of bhav.rows) if (universe.has(r.symbol)) bars.set(r.symbol, { t, o: r.open ?? null, c: r.close, h: r.high ?? r.close, l: r.low ?? r.close, v: r.volume ?? null, p: r.prev ?? null });
   const idxBars = new Map();
   for (const r of idx?.rows || []) { const k = INDEX_KEYS[String(r.name).toUpperCase()]; if (k) idxBars.set(k, { t, c: r.close, pe: r.pe, pb: r.pb, dy: r.dy }); }
   return { day: bhav.day || day, bars, idxBars, all: bhav.rows };
@@ -2827,6 +2889,13 @@ async function appHandler(req, res, url) {
       const got = await livePrices(items, 20e3, { budgetMs: 8000 });
       await syncLivePrices();
       return reply(res, 200, { prices: Object.fromEntries([...got].filter(([, v]) => !v.stale).map(([k, v]) => [k, { price: v.price, source: v.source, asOf: v.asOf || null }])), pending: got.pending });
+    }
+    if (url.pathname === "/api/chart" && req.method === "GET") {
+      const symbol = String(url.searchParams.get("symbol") || "").trim().toUpperCase(), exchange = url.searchParams.get("exchange") === "BSE" ? "BSE" : "NSE", tf = CHART_TF[url.searchParams.get("tf")] ? url.searchParams.get("tf") : "6M";
+      if (!/^[A-Z0-9&-]{1,20}$/.test(symbol)) return reply(res, 400, { message: "Which stock?" });
+      const [d, levels] = await Promise.all([chartBars(symbol, exchange, tf), chartLevels(symbol)]);
+      const live = livePriceCache.get(`${exchange}:${symbol}`);
+      return reply(res, 200, { symbol, exchange, tf, ...d, levels, live: live ? { price: live.price, prevClose: live.prevClose ?? null, source: live.source, asOf: live.asOf || null } : null });
     }
     if (url.pathname === "/api/prices/now" && req.method === "POST") { // manualRetryAt: per source, when ⟳ last lifted its pause
       // ⟳ on one stock: fetch it right now, first in line. Sources paused after a refusal get one more try, and a

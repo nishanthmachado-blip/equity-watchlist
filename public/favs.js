@@ -49,7 +49,7 @@
       const v = await api("/api/favourites/view");
       $("#favNote").textContent = v.rows.length ? `${v.rows.length} favourite${v.rows.length === 1 ? "" : "s"}` : "";
       $("#favGrid").innerHTML = v.rows.length ? v.rows.map(r => `<article class="fav-card-item" data-sym="${esc(r.symbol)}">
-        <div class="fav-top"><div><div class="company">${esc(r.name)}</div><div class="ticker">${esc(r.symbol)}</div></div><div class="fav-price"><b>${px(r.price)}</b><small>${pc(r.dayPct)} today</small></div></div>
+        <div class="fav-top"><div><div class="company">${esc(r.name)} <button type="button" class="ch-mini" data-chart="${esc(r.symbol)}" data-chart-name="${esc(r.name)}" title="Price chart" aria-label="Chart">📈</button></div><div class="ticker">${esc(r.symbol)}</div></div><div class="fav-price"><b>${px(r.price)}</b><small>${pc(r.dayPct)} today</small></div></div>
         <div class="fav-facts">
           <div><span>Valuation</span>${r.view ? `<b class="chip ${r.view === "Undervalued" ? "buy" : r.view === "Fair" ? "v-none" : "avoid"}">${esc(r.view)}</b>` : '<b class="hint">not valued</b>'}</div>
           <div><span>Fair value</span><b>${px(r.fair)}${fin(r.upside) ? ` <small>${pc(r.upside)}</small>` : ""}</b></div>
