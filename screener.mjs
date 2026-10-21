@@ -5,13 +5,19 @@
 // "layout not recognised" message instead of saving wrong numbers.
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 export const screenerConfig = { cooldownMs: 10 * 60 * 1000, maxCooldownMs: 30 * 60 * 1000, timeoutMs: 20000, spacingMs: 2500 };
-let cooldownUntil = 0;
+import { createBackoff, isNetRefusal } from "./backoff.mjs";
+const sb = createBackoff({ baseMs: screenerConfig.cooldownMs, maxMs: 60 * 60e3 }); // 10 → 20 → 40 → 60 min while Screener keeps refusing
+// every Screener request: a refused / reset connection (how Screener bans an address) counts as a block too
+async function sFetch(fetchImpl, url, opts) {
+  let r; try { r = await fetchImpl(url, opts); } catch (e) { if (isNetRefusal(e)) { const until = sb.block("connection refused"); throw new ScreenerBlocked(until, `connection refused${e?.cause?.code ? ` ${e.cause.code}` : ""}`); } throw e; }
+  if (r.ok) sb.ok(); return r;
+}
 const SCREENER_BASE = () => (process.env.SCREENER_BASE || "https://www.screener.in").replace(/\/+$/, ""); // only changed for a proxy or tests
 export class ScreenerBlocked extends Error {
   constructor(until, detail) { super(`Screener.in is rate-limiting this connection${detail ? ` (${detail})` : ""}; pausing Screener requests until ${new Date(until).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })} IST.`); this.rateLimited = true; this.until = until; }
 }
-export function screenerCooldown(now = Date.now()) { return cooldownUntil > now ? cooldownUntil : 0; }
-export function resetScreener() { cooldownUntil = 0; }
+export function screenerCooldown(now = Date.now()) { return sb.until(now); }
+export function resetScreener() { sb.reset(); }
 
 const decode = s => s.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#x20B9;|&#8377;/g, "₹");
 const text = html => decode(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
@@ -243,11 +249,11 @@ export async function fetchScreener(stock, fetchImpl = fetch) {
   if (!/^[A-Z0-9&-]+$/.test(sym)) throw new Error("bad symbol");
   const cd = screenerCooldown(); if (cd) throw new ScreenerBlocked(cd);
   const get = async url => {
-    const r = await fetchImpl(url, { headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9" }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(screenerConfig.timeoutMs) : undefined });
+    const r = await sFetch(fetchImpl, url, { headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9" }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(screenerConfig.timeoutMs) : undefined });
     if (r.status === 429 || r.status === 403) {
       const ra = Number(r.headers?.get?.("retry-after")) * 1000;
-      cooldownUntil = Date.now() + Math.min(screenerConfig.maxCooldownMs, Number.isFinite(ra) && ra > 0 ? ra : screenerConfig.cooldownMs);
-      throw new ScreenerBlocked(cooldownUntil, `HTTP ${r.status}`);
+      const until = sb.block(`HTTP ${r.status}`, Date.now(), Number.isFinite(ra) && ra > 0 ? Math.min(screenerConfig.maxCooldownMs, ra) : null);
+      throw new ScreenerBlocked(until, `HTTP ${r.status}`);
     }
     return r;
   };
@@ -283,8 +289,8 @@ export async function fetchScreenerExtras(stock, { ids = null, want = ["peers", 
   const sym = (stock.marketSymbol || stock.ticker || "").toUpperCase();
   const cd = screenerCooldown(); if (cd) throw new ScreenerBlocked(cd);
   const get = async url => {
-    const r = await fetchImpl(url, { headers: { "User-Agent": UA, Accept: url.includes("/api/") ? "application/json, text/html" : "text/html", "Accept-Language": "en-US,en;q=0.9", Referer: `${SCREENER_BASE()}/company/${encodeURIComponent(sym)}/` }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(screenerConfig.timeoutMs) : undefined });
-    if (r.status === 429 || r.status === 403) { cooldownUntil = Date.now() + screenerConfig.cooldownMs; throw new ScreenerBlocked(cooldownUntil, `HTTP ${r.status}`); }
+    const r = await sFetch(fetchImpl, url, { headers: { "User-Agent": UA, Accept: url.includes("/api/") ? "application/json, text/html" : "text/html", "Accept-Language": "en-US,en;q=0.9", Referer: `${SCREENER_BASE()}/company/${encodeURIComponent(sym)}/` }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(screenerConfig.timeoutMs) : undefined });
+    if (r.status === 429 || r.status === 403) { const until = sb.block(`HTTP ${r.status}`); throw new ScreenerBlocked(until, `HTTP ${r.status}`); }
     return r;
   };
   const out = { ids: ids || null, extra: null, peersTable: null, bars: null };
@@ -315,8 +321,8 @@ export function parseScreenerSearch(json) {
 }
 export async function searchScreener(q, { fetchImpl = fetch } = {}) {
   const cd = screenerCooldown(); if (cd) throw new ScreenerBlocked(cd);
-  const r = await fetchImpl(`${SCREENER_BASE()}/api/company/search/?q=${encodeURIComponent(q)}&v=3&fts=1`, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined });
-  if (r.status === 429 || r.status === 403) { cooldownUntil = Date.now() + screenerConfig.cooldownMs; throw new ScreenerBlocked(cooldownUntil, `HTTP ${r.status}`); }
+  const r = await sFetch(fetchImpl, `${SCREENER_BASE()}/api/company/search/?q=${encodeURIComponent(q)}&v=3&fts=1`, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined });
+  if (r.status === 429 || r.status === 403) { const until = sb.block(`HTTP ${r.status}`); throw new ScreenerBlocked(until, `HTTP ${r.status}`); }
   if (!r.ok) throw new Error(`Screener search HTTP ${r.status}`);
   return parseScreenerSearch(await r.json());
 }
@@ -326,8 +332,8 @@ export async function fetchScreenerPrice(stock, fetchImpl = fetch) {
   const sym = (stock.marketSymbol || stock.ticker || stock.symbol || "").toUpperCase();
   if (!/^[A-Z0-9&-]+$/.test(sym)) throw new Error("bad symbol");
   const cd = screenerCooldown(); if (cd) throw new ScreenerBlocked(cd);
-  const r = await fetchImpl(`${SCREENER_BASE()}/company/${encodeURIComponent(sym)}/`, { headers: { "User-Agent": UA, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(screenerConfig.timeoutMs) : undefined });
-  if (r.status === 429 || r.status === 403) { cooldownUntil = Date.now() + screenerConfig.cooldownMs; throw new ScreenerBlocked(cooldownUntil, `HTTP ${r.status}`); }
+  const r = await sFetch(fetchImpl, `${SCREENER_BASE()}/company/${encodeURIComponent(sym)}/`, { headers: { "User-Agent": UA, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" }, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(screenerConfig.timeoutMs) : undefined });
+  if (r.status === 429 || r.status === 403) { const until = sb.block(`HTTP ${r.status}`); throw new ScreenerBlocked(until, `HTTP ${r.status}`); }
   if (r.status === 404) throw new Error(`Screener has no page for ${sym}`);
   if (!r.ok) throw new Error(`Screener HTTP ${r.status}`);
   const top = parseTopRatios(await r.text()), price = top["Current Price"]?.[0], hl = top["High / Low"] || [];

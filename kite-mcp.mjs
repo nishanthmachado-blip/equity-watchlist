@@ -140,6 +140,8 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
     const response = await post({ jsonrpc: "2.0", id, method, params }, { withSession });
     if (response.status === 404 || response.status === 410) throw new KiteError("session-gone", { network: false });
     const text = await response.text();
+    // the hosted server answers an expired / unknown session with HTTP 400 "Invalid session ID": start a new one
+    if (response.status === 400 && withSession && /invalid session|session (id )?(not found|expired|unknown)|unknown session/i.test(text)) throw new KiteError("session-gone", { network: false });
     if (!response.ok) throw new KiteError(`Kite MCP HTTP ${response.status}${text ? `: ${text.slice(0, 160)}` : ""}`, { loginRequired: response.status === 401 || response.status === 403 });
     let msg; try { msg = parseRpcBody(text, response.headers.get("content-type"), id); } catch { throw new KiteError(`Kite MCP returned unreadable data: ${text.slice(0, 120)}`); }
     if (!msg) throw new KiteError("Kite MCP sent no response for the request.");
@@ -165,7 +167,12 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
       await ensure();
       let out;
       try { out = await rpc("tools/call", { name, arguments: args }); }
-      catch (e) { if (e.message !== "session-gone") throw e; await initialize(); out = await rpc("tools/call", { name, arguments: args }); }
+      catch (e) {
+        if (e.message !== "session-gone") throw e;
+        await initialize(); // Zerodha ties the login to the session: a new session usually needs a new login
+        try { out = await rpc("tools/call", { name, arguments: args }); }
+        catch (e2) { if (e2.message === "session-gone") throw new KiteError("Kite session expired: log in to Kite again (Integrations → Zerodha → Log in).", { loginRequired: true }); throw e2; }
+      }
       const text = toolText(out.result);
       if (checkLogin && (out.result?.isError || LOGIN_HINT.test(text.slice(0, 300))) && LOGIN_HINT.test(text)) throw new KiteError(text.slice(0, 300) || "Kite login required", { loginRequired: true });
       if (out.result?.isError) throw new KiteError(text.slice(0, 300) || `Kite tool ${name} failed`);

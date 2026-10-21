@@ -269,7 +269,7 @@
       clearTimeout(pendingTimer);
       if (v.pricePending && !window.liveStream?.()) pendingTimer = setTimeout(() => load(true), 5000); // no live stream: look again for prices still on their way
     } catch (e) { if (seq === loadSeq) $("#swStatus").textContent = `Could not update: ${e.message}`; }
-    finally { if (seq === loadSeq) { setBusy(false); clearTimeout(timer); if (!$("#swingView").hidden) timer = setTimeout(() => load(true), sw?.marketOpen ? 60e3 : 5 * 60e3); } }
+    finally { if (seq === loadSeq) { setBusy(false); clearTimeout(timer); if (!$("#swingView").hidden) timer = setTimeout(() => load(true), sw?.marketOpen ? 120e3 : 5 * 60e3); } }
   }
   window.addEventListener("prices:updated", () => { if (!$("#swingView").hidden) load(true); }); // the header refresh / live update
   document.addEventListener("visibilitychange", () => { if (!document.hidden && !$("#swingView").hidden && Date.now() - lastLoaded > 30e3) load(true); });
@@ -284,6 +284,7 @@
   }
   function renderIdeas() {
     const x = ideas, sc = x.scan, setup = $("#swIdeasSetup").value, src = $("#swIdeasSrc").value;
+    $("#swIdeasSrc").closest("label").hidden = !sc.market; // the market list is scanned only with SWING_SCAN_MARKET=1
     const via = Object.entries(sc.sources || {}).map(([k, n]) => `${k} ${n}`).join(", ");
     $("#swIdeasStatus").textContent = sc.running ? `Scanning charts… ${sc.done} of ${sc.total}${via ? ` (via ${via})` : ""}` : sc.pausedUntil ? `${sc.scanned} of ${sc.universe} scanned so far. ${sc.error}` : `${sc.scanned} of ${sc.universe} stocks scanned${sc.lastRun ? ` · ${new Date(sc.lastRun).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}` : ""}${via ? ` · via ${via}` : ""}${sc.failed ? ` · ${sc.failed} without data` : ""}${sc.error ? ` · ${sc.error}` : ""}`;
     $("#swIdeasScan").disabled = sc.running;

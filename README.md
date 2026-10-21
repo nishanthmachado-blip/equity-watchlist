@@ -1,5 +1,74 @@
 # Equity Watchlist MVP
 
+## v5.31.1: Get valuation doesn't re-fetch current company numbers
+- Company numbers (P/E, ROCE, sales, profit) change with quarterly results. **Get valuation** no longer re-fetches them when they are under 7 days old: it updates only the live price (Angel One / Kite) and says how old the numbers are. That means no request to Screener / Yahoo, and no warning.
+- When a re-fetch of older numbers fails and they are under 30 days old, a calm blue note replaces the amber warning. The warning remains for numbers older than 30 days.
+
+## v5.31.0: Angel One as the main price and chart source
+- **Prices and charts now come from your own Angel One account first** (SmartAPI market data: free, official, made for programs). It isn't subject to the public sites' bans, and it logs in by itself every day with the saved PIN + TOTP.
+  - **Live prices:** up to 50 stocks per request, with previous close and the 52-week range, the exchange's own price.
+  - **Daily charts:** about a year, for the swing-ideas scan.
+- **Order everywhere** (Swing page, ⟳, the 3-minute refresh, the Refresh button, Favourites, Market today, Value a stock's price): Angel One → Kite (if in `PRICE_SOURCES`) → Yahoo quote (one request) → stock by stock (NSE, Yahoo, Google, Screener) only for what's still missing.
+- **Read-only**: only two new Angel endpoints are allowed, quote and daily candles. The app still refuses every order, modify or cancel endpoint.
+- Symbols are matched to Angel's instrument tokens from its public instrument list, downloaded once a week and shared by all accounts.
+- If Angel needs a login, it is left alone for 15 minutes and ⟳ says "Angel One: login required (Integrations → Angel One)". `ANGEL_PRICES=0` turns it off.
+- **Not covered:** company numbers (P/E, ROCE, results) still come from Screener / Yahoo / NSE. Brokers don't provide fundamentals.
+- Performance: `npm run perf` is all within budget.
+
+## v5.30.0: Value a stock shows the last fetched data when a new fetch fails
+- When Screener / Yahoo / NSE refuse, **Get valuation** now shows everything already saved for the stock: fair value, buy zone, growth lens, key numbers, peers. An amber banner says how old the numbers are and where they came from ("These are CARTRADE's numbers from 15 days ago (Screener.in): they need to be fetched again"), why the fetch failed, and has a **↻ Try again** button.
+- A stock never fetched before shows its price and range with "no company numbers yet".
+- Performance: browser-only change; `npm run perf` is all within budget.
+
+## v5.29.0: background work only for the stocks you follow
+- **Why the sites started blocking**: saving X-ray funds adds every holding to the tracked stocks so they can be valued (Bandhan Small Cap alone has 258). The tracked list grew from roughly 100–150 to 536. Every background job ran over all of them: the 3-minute price refresh, the Refresh button (price, 52-week range and news per stock), the after-close refresh and the daily chart scan. That was 4–5× yesterday's traffic.
+- **Now these jobs cover only the stocks you follow**: every watchlist, holdings, swing positions and swing watchlist, favourites. Fund-only stocks keep their saved numbers, are valued when the fund is opened, and are never dropped from the watchlist. The log says how many were left out ("24 fund-only stocks left as they are").
+- Performance: `npm run perf` is all within budget.
+
+## v5.28.1: Get valuation tries again for real
+- **Get valuation** on a stock is an explicit request: a paused fundamentals source (Screener, Yahoo fundamentals, NSE) now gets one real try, at most once per 15 minutes per source, shared with ⟳. Before, while a source was paused (up to an hour since v5.26), the button only reported "busy" even if the site had already let the server back in.
+- The "saved, retrying" card shows what the sources said (e.g. "Screener: connection refused, paused until 5:56 pm").
+
+## v5.28.0: Kite first in every live path (when "kite" is in PRICE_SOURCES)
+- The watchlist **Refresh** asked Kite for every stock's LTP in **one request** and used it first. The live paths only asked Kite for stocks never priced before, so once a stock had any price, they skipped Kite and went to the blocked sites. Those paths are the Swing page and its Refresh, the automatic 3-minute refresh (`[prices] 0/536`), ⟳, Favourites and Market today.
+- **Now every live path does what Refresh does**, in this order:
+  1. Kite LTP for all stocks in one request (when `kite` is in `PRICE_SOURCES` and an account is logged in);
+  2. one combined Yahoo quote request for the rest;
+  3. stock by stock only for what is still missing.
+
+  ⟳ asks Kite first too.
+- If Kite needs a login it is left alone for 15 minutes, and the ⟳ note says "Kite: login required (Integrations → Zerodha)". Other Kite errors are retried after 3 minutes.
+- Performance: `npm run perf` is all within budget.
+
+## v5.27.0: every price path works like "Refresh prices"
+- **Why the header's Refresh prices worked while the Swing page didn't**: the header button first asks Yahoo's *quote* service for all stocks in **one request**, then fetches stock by stock only for what's missing. The Swing page (its Refresh, the automatic checks, ⟳) and the other screens went straight to stock-by-stock requests. Those try NSE, Yahoo's *chart* service and Google first (the sites blocking the server) and reached Yahoo's quote service only near the end.
+- **Now every path starts with that one combined Yahoo quote request**: Swing page, live checks, Favourites, Market today, Value a stock. Per-stock requests are only for stocks it didn't price, which also means far fewer requests overall.
+- **Per stock**, Yahoo's quote service now comes right after NSE (before Yahoo charts, Google, Screener). When it has no price it says so instead of being silently skipped.
+- Performance: `npm run perf` is all within budget.
+
+## v5.26.1: what changed — ⟳ no longer extends bans
+- ⟳ lifts a paused source's pause **at most once every 15 minutes** (per source), not on every click. Pressing ⟳ on several stocks in a row used to ask NSE again each time, and each refusal lengthened NSE's pause.
+- Pause times in messages are in India time (Google's showed UTC).
+
+## v5.26.0: what changed — much lighter on NSE, Yahoo, Screener and Google
+The free price sites had started refusing the server (NSE 403, Screener refusing connections, Yahoo rate limits). This release cuts how often the app asks, and stops it retrying a site that is refusing:
+- **Escalating pauses**: a site that blocks is left alone for 10 → 20 → 40 → 60 minutes on repeated blocks (NSE starts at 5), and the first success clears it. A site's own Retry-After is honoured. New cases now count as a block:
+  - **Yahoo charts** "too many requests" (before, every stock asked again, which kept the ban going);
+  - **Screener** refused or reset connections (how it bans an address);
+  - **Google** "unusual traffic" pages, or three pages in a row without a price.
+
+  Paused sources are named in the `[live]` log.
+- **Prices refresh every 3 minutes** in market hours (was 1); `PRICE_REFRESH_SECONDS` changes it. The Swing page checks every 2 minutes (was 1). A price younger than about 2.4 minutes isn't fetched again. ⟳ and Refresh still fetch at once.
+- **The daily swing-ideas chart scan covers your own stocks**: watchlists, swing positions and watchlist, holdings. The ~170-stock market list is added only with `SWING_SCAN_MARKET=1`, which roughly halves chart requests for most setups.
+- ⟳ still retries a paused source once, but a repeat refusal pauses it for longer.
+- Performance: `npm run perf` is all within budget.
+
+## v5.25.0: what changed — Kite reconnects by itself; ⟳ always asks NSE
+- **Kite "HTTP 400: Invalid session ID"**: Zerodha's server answers an expired connection session this way (not 404). The app now starts a new session and retries. If Zerodha then wants a fresh login, it says "Kite session expired: log in to Kite again". This applies to holdings sync too, and to other MCP brokers.
+- **⟳ always asks NSE** (the exchange's own quote), even when `PRICE_SOURCES` leaves NSE out. The note then says so: "NSE is not in your PRICE_SOURCES=…".
+- **Refused connections show the address** even when several addresses were tried (IPv4 + IPv6), e.g. `ECONNREFUSED 13.235.1.2:443`.
+- Performance: `npm run perf` is all within budget.
+
 ## v5.24.0: what changed — ⟳ live price for one stock, old closes flagged
 - **⟳ next to every swing position's price** fetches that stock's live price right away, ahead of everything else:
   - Sources resting after a refusal (NSE, Screener, Google) get one more try.

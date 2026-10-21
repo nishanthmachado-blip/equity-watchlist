@@ -80,11 +80,12 @@
       if (!res.symbol) throw new Error("Could not match that to an NSE-listed stock. Try the NSE symbol (the part in screener.in/company/SYMBOL).");
       const { symbol } = res; symbolUsed = symbol;
       const cached = rowFor(symbol);
-      if (cached && cached.view !== "No fundamentals" && cached.ageDays !== null && cached.ageDays < 1 && !pick?.force && !/range only/i.test(cached.source || "")) { // a range-only ETF reading is a stopgap: always try for the full history
+      // Company numbers change once a quarter: younger than 7 days they are current, so only the price is fetched
+      if (cached && cached.view !== "No fundamentals" && cached.ageDays !== null && cached.ageDays < 7 && !pick?.force && !/range only/i.test(cached.source || "")) { // a range-only ETF reading is a stopgap: always try for the full history
         if (!listBy(editListId())?.symbols.includes(symbol)) { lists = (await post("/api/lists/members", { id: editListId(), add: [symbol] })).lists; applyActiveList(); renderListBar(); }
         status(st, `${symbol}: fetching the live price…`);
         try { await post("/api/prices/live", { symbols: [symbol] }); await loadStocks(); await loadValuation(); } catch { /* the saved price stands */ }
-        showResult(symbol); status(st, `${symbol}: data fetched today (${cached.source || "saved"}). Use Refresh data to fetch again.`); $("#vsSymbol").value = ""; return;
+        showResult(symbol); status(st, `${symbol}: live price updated; company numbers from ${ago(cached.ageDays)} (${cached.source || "saved"}), still current. Use Refresh data to fetch them again.`); $("#vsSymbol").value = ""; return;
       }
       status(st, `${symbol}${res.exchange === "BSE" ? " (BSE)" : ""}${res.name ? ` · ${res.name}` : ""}: adding to your watchlist…`);
       let id;
@@ -98,8 +99,8 @@
       const r0 = out.results?.[0];
       if (r0?.error && r0.rateLimited) {
         await loadValuation();
-        $("#vsResult").innerHTML = `<div class="vs-card vs-empty"><b>${esc(symbol)} is saved to your watchlist.</b><br>The data sources (Screener / Yahoo) are rate-limiting this server right now, so its numbers could not be fetched. The app retries by itself in about 20 minutes, or press <b>Get valuation</b> again later.</div>`;
-        status(st, `${symbol}: data sources busy (rate limit). Saved; retrying automatically.`); $("#vsSymbol").value = ""; return;
+        showStale(symbol, r0.error);
+        status(st, `${symbol}: data sources busy. ${rowFor(symbol)?.view !== "No fundamentals" ? "Showing the last fetched data; " : ""}retrying automatically.`); $("#vsSymbol").value = ""; return;
       }
       if (r0?.error) {
         const err = new Error(r0.error); err.rateLimited = !!r0.rateLimited; throw err;
@@ -113,7 +114,7 @@
       status(st, `Could not value this stock: ${e.message}`);
       await loadValuation();
       const saved = symbolUsed && rowFor(symbolUsed);
-      if (saved && saved.view !== "No fundamentals") { showResult(symbolUsed); status(st, `${symbolUsed}: refresh failed (${e.message.slice(0, 120)}), so this shows the saved data from ${saved.ageDays ?? "?"} day(s) ago.`); addedId = null; }
+      if (saved) { showStale(symbolUsed, e.message); if (saved.view !== "No fundamentals") { status(st, `${symbolUsed}: refresh failed, so this shows the data last fetched ${ago(saved.ageDays)}.`); addedId = null; } }
       // A typo'd symbol would otherwise leave an empty row behind: take it back out (never for rate limits).
       if (addedId !== null && !e.rateLimited && /not found|no page|no price|too little|could not match/i.test(e.message) && !/session|fetch failed|cooling|rate-limit|timeout/i.test(e.message)) {
         try { const all = (await get("/api/stocks")).stocks; await post("/api/watchlist", { stocks: all.filter(s => s.id !== addedId) }); await loadStocks(); } catch {}
@@ -213,6 +214,23 @@
     const card = $("#vsResult .vs-card[data-symbol]"); if (!card) return;
     const r = rowFor(card.dataset.symbol); if (r && String(r.price) !== card.dataset.price) showResult(card.dataset.symbol);
   });
+  // The fetch failed: show everything already saved for the stock (valuation, price, range…) under a banner that
+  // says how old it is, why it could not be fetched again, and a button to try again.
+  const ago = d => (!Number.isFinite(d) ? "earlier" : d < 1 ? "today" : d < 2 ? "yesterday" : `${Math.round(d)} days ago`);
+  function showStale(symbol, why = "") {
+    showResult(symbol);
+    const r = rowFor(symbol), has = r && r.view !== "No fundamentals";
+    const reason = String(why || "").replace(/;\s*/g, " · ").slice(0, 260);
+    if (has && Number.isFinite(r.ageDays) && r.ageDays < 30) { // recent enough: a quiet note, not a warning
+      $("#vsResult").insertAdjacentHTML("afterbegin", `<div class="vs-stale calm" role="status"><div><b>Company numbers from ${esc(ago(r.ageDays))}${r.source ? ` (${esc(r.source)})` : ""}: still current (they change with quarterly results).</b><small>A fresh copy could not be fetched just now${reason ? ` (${esc(reason)})` : ""}. The price above is live; the app fetches the numbers again by itself.</small></div><button type="button" class="ghost" data-vs-retry="${esc(symbol)}">↻ Try again</button></div>`);
+      $("#vsResult [data-vs-retry]").onclick = () => valueStock(symbol, { symbol, name: r?.company, exchange: r?.exchange || "NSE", force: true });
+      return;
+    }
+    $("#vsResult").insertAdjacentHTML("afterbegin", `<div class="vs-stale" role="status"><div><b>⚠ ${has ? `These are ${esc(symbol)}'s numbers from ${esc(ago(r.ageDays))}${r.source ? ` (${esc(r.source)})` : ""}: they need to be fetched again.` : `${esc(symbol)} has no company numbers yet: only the price and range below.`}</b>
+      <small>Could not fetch now: the data sites are refusing or rate-limiting this server${reason ? ` (${esc(reason)})` : ""}. The app retries by itself in about 20 minutes.</small></div>
+      <button type="button" class="ghost" data-vs-retry="${esc(symbol)}">↻ Try again</button></div>`);
+    $("#vsResult [data-vs-retry]").onclick = e => valueStock(symbol, { symbol, name: r?.company, exchange: r?.exchange || "NSE", force: true });
+  }
   function showResult(symbol) {
     const box = $("#vsResult"), r = rowFor(symbol);
     if (!r) { box.innerHTML = `<div class="vs-card vs-empty">${esc(symbol)} is not on your watchlist yet.</div>`; return; }

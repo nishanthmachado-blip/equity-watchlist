@@ -7,7 +7,7 @@ import { createAuth, publicUser } from "./auth.mjs";
 import { dfs as fs, initStorage, flushStorage, closeStorage, pingStorage, info as storageInfo } from "./storage.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fetchFundamentalsForStock, yahooCooldown, yahooQuotes, yahooSummary } from "./fundamentals-yahoo.mjs";
+import { fetchFundamentalsForStock, yahooCooldown, yahooQuotes, yahooSummary, resetSession as resetYahooSession } from "./fundamentals-yahoo.mjs";
 import { MODEL, computeAll, computeValuation, sanitizeEntry, parseCsv, FIELDS } from "./valuation.mjs";
 import { fetchScreener, screenerCooldown, screenerConfig, fetchScreenerExtras, searchScreener, resetScreener, fetchScreenerPrice } from "./screener.mjs";
 import { readSheetFile, sheetInfo, parseDelimited, extractHoldings, fundSummary } from "./funds.mjs";
@@ -16,13 +16,13 @@ import { LADDERS, DEFAULT_SETTINGS, sanitizeBuy, positionRow, stress, exposure }
 import { addSnapshots, performance, compare } from "./tracker.mjs";
 import { fetchGoogleQuote, googleCooldown, googleConfig, resetGoogle } from "./googlefinance.mjs";
 import { kite as kiteDefaults, READ_ONLY_TOOLS, createKiteClient } from "./kite-mcp.mjs";
-import { createBrokerClients, BROKER_NAMES, READ_ONLY_ROUTES, cleanSymbol, makeHolding } from "./brokers.mjs";
+import { createBrokerClients, BROKER_NAMES, READ_ONLY_ROUTES, cleanSymbol, makeHolding, parseAngelScripMaster } from "./brokers.mjs";
 import { createBrokerMcp, MCP_BROKERS } from "./broker-mcp.mjs";
 import { holdingStance } from "./stance.mjs";
 import { classify } from "./classify.mjs";
 import { growthLens } from "./growthlens.mjs";
 import { computeDividends, fetchDividendEvents, dividendsFromAnnual } from "./dividends.mjs";
-import { computeTechnicals, fetchBars, fetchChart } from "./technicals.mjs";
+import { computeTechnicals, fetchBars, fetchChart, chartCooldown, chartBackoff } from "./technicals.mjs";
 import { peerCompare } from "./peers.mjs";
 import { diffAlerts, mergeEvents } from "./alerts.mjs";
 import { allocate } from "./allocate.mjs";
@@ -947,7 +947,7 @@ async function returnsPage(account = "all") {
   const benchmarks = Object.fromEntries(Object.keys(BENCH).map((k, i) => [k, benchBars[i]]).filter(([, b]) => b.length));
   const today = istDay(), view = returnsView({ trades, holdings, dividends, benchmarks, today, label: account === "all" ? "All accounts" : accounts.find(a => a.id === account)?.label || account });
   // Swing book: its own XIRR and index twin
-  const swPrices = await livePrices([...(sw.positions || [])], 60e3, { budgetMs: 0 });
+  const swPrices = await livePrices([...(sw.positions || [])], LIVE_MAX_AGE(), { budgetMs: 0 });
   const swf = swingFlows(sw, swPrices, today);
   const swing = (sw.closed || []).length || (sw.positions || []).length ? { xirr: swf.xirr, value: swf.value, bench: Object.fromEntries(Object.entries(benchmarks).map(([k, b]) => [k, indexTwin(swf.flows, b, today)])) } : null;
   return { ...view, swing, accounts, account, benchmarks: Object.fromEntries(Object.entries(BENCH).map(([k, v]) => [k, { label: v.label, available: !!benchmarks[k], from: benchmarks[k]?.[0] ? new Date(benchmarks[k][0].t * 1000).toISOString().slice(0, 10) : null }])), tradeCount: trades.length, untaggedTrades: (tb.trades || []).filter(x => !x.account).length, today };
@@ -972,7 +972,7 @@ async function accumulatePage() {
   for (const b of st.baskets || []) {
     const symbols = b.listId ? (lists.lists.find(l => l.id === b.listId)?.symbols || b.symbols) : b.symbols;
     const hold = await holdingsOf(b.account || "all"), held = new Map(hold.map(h => [h.symbol, { qty: h.qty, avgPrice: h.avgPrice }]));
-    const prices = await livePrices(symbols.map(s => ({ symbol: s, exchange: "NSE" })), 60e3, { budgetMs: 1500 });
+    const prices = await livePrices(symbols.map(s => ({ symbol: s, exchange: "NSE" })), LIVE_MAX_AGE(), { budgetMs: 1500 });
     const quotes = new Map(symbols.map(s => { const r = bySym.get(s), p = prices.get(s); return [s, { price: p?.price ?? r?.price ?? null, name: r?.company || hold.find(h => h.symbol === s)?.name || s, inZone: !!r?.verdict?.inZone, verdict: r?.verdict?.label || null }]; }));
     out.push(basketView({ ...b, symbols }, held, quotes));
   }
@@ -1045,15 +1045,16 @@ async function fetchLiveQuote(i) {
     const tries = [];
     const tag = (src, f) => Object.assign(f, { src });
     if (PRICE_SOURCES.includes("nse") && ex === "NSE" && !nseCooldown()) tries.push(tag("NSE", async () => { const q = await paced("nse", 350, () => fetchNseQuote(i.symbol)); return q.price > 0 ? { price: q.price, prevClose: q.prevClose ?? null, low: q.low52 || null, high: q.high52 || null, source: "NSE", asOf: q.asOf || null } : null; }));
-    if (PRICE_SOURCES.includes("yahoo")) tries.push(tag("Yahoo", async () => { const q = await yahooQuote(i.symbol, ex); return { price: q.price, prevClose: q.prevClose ?? null, low: q.low, high: q.high, source: "Yahoo", asOf: q.asOf }; }));
-    if (PRICE_SOURCES.includes("google")) tries.push(tag("Google", async () => { if (googleCooldown()) return null; const q = await paced("google", 500, () => fetchGoogleQuote(i.symbol, { exchange: ex === "BSE" ? "BOM" : googleConfig.exchange })); return { price: q.price, prevClose: q.prevClose ?? null, low: q.low || null, high: q.high || null, source: "Google", asOf: q.asOf }; }));
     // Yahoo's quote service is a separate endpoint from its chart service and often still answers when charts are rate-limited
-    if (PRICE_SOURCES.includes("yahoo")) tries.push(tag("Yahoo quote", async () => { if (yahooCooldown() > Date.now()) return null; const q = (await yahooQuotes([{ symbol: i.symbol, exchange: ex }])).get(i.symbol); return q?.price > 0 ? { price: q.price, prevClose: Number.isFinite(q.pChange) ? Number((q.price / (1 + q.pChange / 100)).toFixed(2)) : null, low: q.low52 ?? null, high: q.high52 ?? null, source: "Yahoo", asOf: q.time || null } : null; }));
+    if (PRICE_SOURCES.includes("yahoo")) tries.push(tag("Yahoo quote", async () => { if (yahooCooldown() > Date.now()) throw new Error(`paused until ${new Date(yahooCooldown()).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}`); const q = (await yahooQuotes([{ symbol: i.symbol, exchange: ex }])).get(i.symbol); if (!(q?.price > 0)) throw new Error("no price in Yahoo's answer"); return { price: q.price, prevClose: Number.isFinite(q.pChange) ? Number((q.price / (1 + q.pChange / 100)).toFixed(2)) : null, low: q.low52 ?? null, high: q.high52 ?? null, source: "Yahoo", asOf: q.time || null }; }));
+    if (PRICE_SOURCES.includes("yahoo")) tries.push(tag("Yahoo", async () => { if (chartCooldown()) return null; const q = await yahooQuote(i.symbol, ex); return { price: q.price, prevClose: q.prevClose ?? null, low: q.low, high: q.high, source: "Yahoo", asOf: q.asOf }; }));
+    if (PRICE_SOURCES.includes("google")) tries.push(tag("Google", async () => { if (googleCooldown()) return null; const q = await paced("google", 500, () => fetchGoogleQuote(i.symbol, { exchange: ex === "BSE" ? "BOM" : googleConfig.exchange })); return { price: q.price, prevClose: q.prevClose ?? null, low: q.low || null, high: q.high || null, source: "Google", asOf: q.asOf }; }));
     if (PRICE_SOURCES.includes("screener") && ex === "NSE" && !isEtf(i.symbol, i.name || "")) tries.push(tag("Screener", async () => { if (screenerCooldown()) return null; const q = await paced("screener", 1200, () => fetchScreenerPrice({ symbol: i.symbol })); return { price: q.price, prevClose: null, source: "Screener", asOf: null }; })); // Screener has no ETF pages
     const errs = [], hm = t => new Date(t).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }); let best = null;
     // sources left out this time, and why (a paused source is not tried until its pause ends)
     const skipped = [];
     if (PRICE_SOURCES.includes("nse") && ex === "NSE" && nseCooldown()) skipped.push(`NSE paused until ${hm(nseCooldown())}${lastNseStatus ? ` (${lastNseStatus})` : ""}`);
+    if (PRICE_SOURCES.includes("yahoo") && chartCooldown()) skipped.push(`Yahoo paused until ${hm(chartCooldown())}`);
     if (PRICE_SOURCES.includes("google") && googleCooldown()) skipped.push(`Google paused until ${hm(googleCooldown())}`);
     if (PRICE_SOURCES.includes("screener") && screenerCooldown()) skipped.push(`Screener paused until ${hm(screenerCooldown())}`);
     for (const t of tries) {
@@ -1075,21 +1076,134 @@ async function fetchLiveQuote(i) {
 // Never makes a page wait for a price site: a stock already in the cache is answered from memory at once (and refreshed
 // in the background when older than maxAgeMs; the new price is pushed to the page over /api/events). Only a stock with
 // no price at all yet is waited for, at most budgetMs, before the newest saved price stands in.
+const manualRetryAt = new Map();
 const liveErrs = new Map(); // "EX:SYM" -> what each source said on the last try that found no price
 const liveTried = new Map(); // "EX:SYM" -> when a fetch was last started (so a stock no source can price is not waited for every time)
-async function livePrices(items, maxAgeMs = 45e3, { budgetMs = 1500 } = {}) {
-  const out = new Map(), need = [], lateNeed = [];
+// One request for many stocks at Yahoo's quote service (a different service from its price charts, and the one that
+// keeps answering when the per-stock sources are refusing us). Every price path starts with it, as the header's
+// Refresh prices button always did; per-stock requests are only for what it did not price. Fills the live cache.
+// ---- Angel One (SmartAPI) market data: live quotes (50 stocks a request) and daily candles, from your own Angel
+// account (official API, logs in by itself with the saved PIN + TOTP). On whenever an Angel account is connected;
+// ANGEL_PRICES=0 turns it off. Instrument tokens come from Angel's public instrument list, refreshed weekly (shared).
+const ANGEL_PRICES = process.env.ANGEL_PRICES !== "0";
+const angelTokFile = path.join(DATA_DIR, "angel-tokens.json");
+let angelTok = null, angelTokLoading = null, angelTokTriedAt = 0, angelDownUntil = 0, angelDownWhy = null;
+async function angelTokens() {
+  if (!angelTok) { const saved = await readJson(angelTokFile, null); if (saved?.map) angelTok = saved; }
+  if ((!angelTok || Date.now() - angelTok.at > 7 * 864e5) && !angelTokLoading && Date.now() - angelTokTriedAt > 3600e3) {
+    angelTokTriedAt = Date.now();
+    angelTokLoading = (async () => {
+      try {
+        const r = await fetch(process.env.ANGEL_SCRIP_URL || "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json", { signal: AbortSignal.timeout(60000) });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const map = parseAngelScripMaster(await r.json()); if (Object.keys(map).length < 500) throw new Error("list too short");
+        angelTok = { at: Date.now(), map }; await writeJson(angelTokFile, angelTok); console.log(`[angel] instrument list: ${Object.keys(map).length} stocks`);
+      } catch (e) { console.warn(`[angel] could not download the instrument list: ${errText(e)}`); }
+    })().finally(() => { angelTokLoading = null; });
+  }
+  if (!angelTok && angelTokLoading) await Promise.race([angelTokLoading, new Promise(r => setTimeout(r, 20000))]); // first time only
+  return angelTok?.map || {};
+}
+// The Angel account to ask with: this account's own when it has one, else (background runs) any connected account.
+async function angelAccount() {
+  if (!ANGEL_PRICES || angelDownUntil > Date.now()) return null;
+  const mine = currentUser() ? await brokers.angel.connectedForData().catch(() => false) : false;
+  if (mine) return currentUser();
+  let found = null; await forEachUser(async () => { if (!found && await brokers.angel.connectedForData().catch(() => false)) found = currentUser(); });
+  return found;
+}
+async function angelFail(e) {
+  angelDownWhy = e.loginRequired ? "login required (Integrations → Angel One)" : e.rateLimited ? "too many requests" : String(e.message).slice(0, 100);
+  angelDownUntil = Date.now() + (e.loginRequired ? 15 : e.rateLimited ? 1 : 3) * 60e3;
+  console.warn(`[angel] market data unavailable: ${angelDownWhy}`);
+}
+// Live quotes for many stocks: fills the live cache, returns Map(symbol → quote)
+async function batchAngel(items) {
+  const out = new Map(); const user = await angelAccount(); if (!user) return out;
+  const tok = await angelTokens(), want = new Map();
+  for (const i of items) { const ex = i.exchange === "BSE" ? "BSE" : "NSE", t = tok[`${ex}:${i.symbol}`]; if (t) want.set(`${ex}|${t}`, i); }
+  if (!want.size) return out;
+  const byEx = {}; for (const k of want.keys()) { const [ex, t] = k.split("|"); (byEx[ex] ||= []).push(t); }
+  try {
+    const qs = await asUser(user, () => brokers.angel.quotes(byEx));
+    for (const [k, i] of want) {
+      const q = qs.get(k.split("|")[1]); if (!(q?.price > 0)) continue;
+      if (i.last > 0 && Math.abs(q.price / i.last - 1) > 0.4) continue;
+      const v = { price: q.price, prevClose: q.prevClose, low: q.low52, high: q.high52, source: "Angel One", asOf: q.asOf || new Date().toISOString(), at: Date.now() };
+      setLive(`${k.split("|")[0]}:${i.symbol}`, v); out.set(i.symbol, v);
+    }
+    if (out.size) console.log(`[live] Angel One quotes: ${out.size}/${want.size} priced`);
+  } catch (e) { await angelFail(e); }
+  return out;
+}
+// Daily bars for one stock (about a year), for the swing scan and charts
+async function angelBars(x) {
+  const user = await angelAccount(); if (!user) return null;
+  const ex = x.exchange === "BSE" ? "BSE" : "NSE", t = (await angelTokens())[`${ex}:${x.symbol}`]; if (!t) return null;
+  const to = istDay(), from = shiftDay(to, -380);
+  try { return await asUser(user, () => brokers.angel.candles(ex, t, from, to)); } catch (e) { await angelFail(e); return null; }
+}
+// Kite (Zerodha) LTP for many stocks in one request, when "kite" is in PRICE_SOURCES: exactly what the watchlist
+// Refresh does. Used first by every live path (Swing page, ⟳, the 3-minute refresh, Favourites, Market today).
+let kiteDownUntil = 0, kiteDownWhy = null;
+async function batchKite(items) {
+  const out = new Map(); if (!KITE_PRICES || kiteDownUntil > Date.now()) return out;
+  const nse = [...new Set(items.filter(i => (i.exchange || "NSE") === "NSE" && /^[A-Z0-9&-]{1,20}$/.test(i.symbol || "")).map(i => i.symbol))]; if (!nse.length) return out;
+  let kc = null, user = currentUser();
+  if (user) kc = await anyKiteWithSession().catch(() => null);
+  else await forEachUser(async () => { if (!kc) { const c = await anyKiteWithSession().catch(() => null); if (c) { kc = c; user = currentUser(); } } }); // background run: any account logged in to Kite
+  if (!kc) return out;
+  try {
+    const ltp = await asUser(user, async () => { const m = new Map(); for (let i = 0; i < nse.length; i += 200) for (const [k, v] of await kc.ltp(nse.slice(i, i + 200))) m.set(k, v); return m; });
+    const now = new Date().toISOString();
+    for (const it of items) {
+      const p = ltp.get(it.symbol); if (!(p > 0)) continue;
+      const k = `${it.exchange || "NSE"}:${it.symbol}`, prev = livePriceCache.get(k);
+      const v = { price: Number(p.toFixed(2)), prevClose: prev?.prevClose ?? null, low: prev?.low ?? null, high: prev?.high ?? null, source: "Kite", asOf: now, at: Date.now() };
+      setLive(k, v); out.set(it.symbol, v);
+    }
+    if (out.size) console.log(`[live] Kite LTP (one request): ${out.size}/${nse.length} priced`);
+  } catch (e) {
+    kiteDownWhy = e.loginRequired ? "login required (Integrations → Zerodha)" : errText(e).slice(0, 100); kiteDownUntil = Date.now() + (e.loginRequired ? 15 : 3) * 60e3;
+    console.warn(`[live] Kite LTP unavailable: ${kiteDownWhy}`);
+  }
+  return out;
+}
+let batchYahooAt = 0;
+async function batchYahoo(items, { minGapMs = 20e3 } = {}) {
+  const out = new Map(), list = items.filter(i => /^[A-Z0-9&-]{1,20}$/.test(i.symbol || ""));
+  if (!list.length || !PRICE_SOURCES.includes("yahoo") || yahooCooldown() > Date.now() || Date.now() - batchYahooAt < minGapMs && minGapMs > 0) return out;
+  batchYahooAt = Date.now();
+  try {
+    const qs = await yahooQuotes(list.map(i => ({ symbol: i.symbol, exchange: i.exchange || "NSE" })));
+    for (const i of list) {
+      const q = qs.get(i.symbol); if (!(q?.price > 0)) continue;
+      if (i.last > 0 && Math.abs(q.price / i.last - 1) > 0.4) continue; // 40% off the last price: wrong instrument
+      const v = { price: q.price, prevClose: Number.isFinite(q.pChange) ? Number((q.price / (1 + q.pChange / 100)).toFixed(2)) : null, low: q.low52 ?? null, high: q.high52 ?? null, source: "Yahoo", asOf: q.time || null, at: Date.now() };
+      setLive(`${i.exchange || "NSE"}:${i.symbol}`, v); out.set(i.symbol, v);
+    }
+    if (out.size) console.log(`[live] Yahoo quote (one request): ${out.size}/${list.length} priced`);
+  } catch (e) { console.log(`[live] Yahoo quote (one request) failed: ${errText(e).slice(0, 120)}`); }
+  return out;
+}
+async function livePrices(items, maxAgeMs = LIVE_MAX_AGE(), { budgetMs = 1500 } = {}) {
+  const out = new Map(), need = [], lateNeed = [], stale = [], deadline = Date.now() + budgetMs; // one time budget for the whole call
   for (const it of items) {
     const c = livePriceCache.get(`${it.exchange || "NSE"}:${it.symbol}`);
-    if (c) { out.set(it.symbol, c); if (Date.now() - c.at >= maxAgeMs) fetchLiveQuote(it).catch(() => {}); }
-    else if (liveTried.has(`${it.exchange || "NSE"}:${it.symbol}`)) { lateNeed.push(it); if (!livePending.has(`${it.exchange || "NSE"}:${it.symbol}`) && Date.now() - liveTried.get(`${it.exchange || "NSE"}:${it.symbol}`) >= maxAgeMs) fetchLiveQuote(it).catch(() => {}); } // asked before and still no price: do not wait again
+    if (c) { out.set(it.symbol, c); if (Date.now() - c.at >= maxAgeMs) stale.push(it); }
+    else if (liveTried.has(`${it.exchange || "NSE"}:${it.symbol}`)) { lateNeed.push(it); if (!livePending.has(`${it.exchange || "NSE"}:${it.symbol}`) && Date.now() - liveTried.get(`${it.exchange || "NSE"}:${it.symbol}`) >= maxAgeMs) stale.push(it); } // asked before and still no price: do not wait again
     else need.push(it);
+  }
+  // one combined Yahoo quote request first (as the Refresh prices button does); per-stock fetches only for the rest
+  if (need.length || stale.length) {
+    const batch = batchAngel([...need, ...stale]).then(a => batchKite([...need, ...stale].filter(i => !a.has(i.symbol))).then(k => new Map([...a, ...k]))).then(k => { for (const [sym, v] of k) if (need.some(i => i.symbol === sym)) out.set(sym, v); return batchYahoo([...need, ...stale].filter(i => !k.has(i.symbol)), { minGapMs: maxAgeMs === 0 ? 0 : 20e3 }).then(y => new Map([...k, ...y])); }), got = need.length && budgetMs > 0 ? await Promise.race([batch, new Promise(r => setTimeout(() => r(new Map()), Math.max(0, deadline - Date.now())))]) : new Map();
+    for (const [sym, v] of got) out.set(sym, v);
+    batch.then(g => { for (const it of stale) if (!g.has(it.symbol)) fetchLiveQuote(it).catch(() => {}); }).catch(() => {});
   }
   let pending = items.filter(i => out.has(i.symbol) && livePending.has(`${i.exchange || "NSE"}:${i.symbol}`)).length;
   if (need.length || lateNeed.length) {
-    if (KITE_PRICES && need.length) { const kc = await anyKiteWithSession().catch(() => null); if (kc) { try { for (const [k, q] of await kc.quotes(need.filter(i => (i.exchange || "NSE") === "NSE").map(i => i.symbol))) if (q.price > 0) { const v = { price: q.price, prevClose: q.close ?? null, source: "Kite", at: Date.now() }; out.set(k, v); setLive(`NSE:${k}`, v); } } catch { /* next */ } } }
     const jobs = need.filter(i => !out.has(i.symbol)).map(i => fetchLiveQuote(i).then(v => { if (v) out.set(i.symbol, v); }).catch(() => {}));
-    if (jobs.length) await Promise.race([Promise.all(jobs), new Promise(r => setTimeout(r, budgetMs))]);
+    if (jobs.length) await Promise.race([Promise.all(jobs), new Promise(r => setTimeout(r, Math.max(0, deadline - Date.now())))]);
     const still = [...need.filter(i => !out.has(i.symbol)), ...lateNeed]; pending += still.filter(i => livePending.has(`${i.exchange || "NSE"}:${i.symbol}`)).length;
     if (still.length) { // meanwhile: the newest saved price we have anywhere, marked with its date
       const [stocks, view, last, fund, etfBars] = await Promise.all([readWatchlist(), kiteHoldingsView().catch(() => ({ holdings: [] })), readJson(lastPricesFile, {}), readFundamentals(), readJson(etfBarsFile, {})]);
@@ -1138,7 +1252,7 @@ async function syncLivePrices() {
   return { stocks: next, changed: patch.size, bySource };
 }
 // A quote is "fresh" when its market timestamp is within 3 minutes (or the market is closed); NSE counts as fresh.
-function isFresh(q) { if (!q) return false; if (q.source === "NSE") return true; if (!marketIsOpen()) return !!q.asOf || q.source !== "Screener"; return !!q.asOf && Date.now() - Date.parse(q.asOf) < 3 * 60e3; }
+function isFresh(q) { if (!q) return false; if (q.source === "NSE" || q.source === "Angel One") return true; if (!marketIsOpen()) return !!q.asOf || q.source !== "Screener"; return !!q.asOf && Date.now() - Date.parse(q.asOf) < 3 * 60e3; }
 function pickFresher(a, b) { if (!a) return b; const ta = Date.parse(a.asOf || "") || 0, tb = Date.parse(b.asOf || "") || 0; return tb > ta ? b : a; }
 // Profit after tax if every position were sold now: charges add up per position; tax is worked out once for the whole
 // portfolio, so a loss in one stock offsets gains in another and the ₹1.25 L LTCG exemption is used only once.
@@ -1382,7 +1496,7 @@ async function swingView({ alerts = true, fresh = false } = {}) {
       await writeJson(U.alertsFile, { ...store, events: mergeEvents(store.events, evs) }); phonePush(evs);
     }
   }
-  const prices = await livePrices([...positions, ...watch], fresh ? 0 : 45e3);
+  const prices = await livePrices([...positions, ...watch], fresh ? 0 : LIVE_MAX_AGE());
   syncLivePrices().catch(() => {}); // the same quotes go to the watchlist, so Valuation and Home match this page
   const pricePending = prices.pending || 0;
   const view = evaluateSwing({ positions, watch, prices, settings: st.settings || {}, cash: st.cash?.balance ?? null });
@@ -1480,7 +1594,7 @@ async function etfHistory(stock, { force = false } = {}) {
   // Every source busy or failing: the saved history, with today's live price added as the latest day
   const saved = (await readJson(etfBarsFile, {}))[`${exchange}:${symbol}`];
   if (saved?.bars?.length >= 200) {
-    const bars = [...saved.bars], live = (await livePrices([{ symbol, exchange }], 60e3, { budgetMs: 6000 }).catch(() => new Map())).get(symbol);
+    const bars = [...saved.bars], live = (await livePrices([{ symbol, exchange }], LIVE_MAX_AGE(), { budgetMs: 6000 }).catch(() => new Map())).get(symbol);
     const today = Math.floor(Date.now() / 1000);
     if (live && !live.stale && live.price > 0) { if (bars.at(-1).t > today - 18 * 3600) bars[bars.length - 1] = { ...bars.at(-1), c: live.price }; else bars.push({ t: today, c: live.price, h: live.price, l: live.price }); }
     console.log(`[etf] ${symbol}: sources unavailable (${errs.join(" | ")}); using saved history from ${new Date(saved.at).toISOString().slice(0, 10)}`);
@@ -1603,16 +1717,19 @@ function eodSeed(sym, bars) { if (bars?.length && /^[A-Z0-9&-]+$/.test(sym)) eod
 // ---- Swing ideas: a daily scan of daily charts (shared cache: prices are public), ranked per account ----
 const swingScanFile = path.join(DATA_DIR, "swing-scan.json");
 const scanState = { running: false, done: 0, total: 0, startedAt: null, finishedAt: null, pausedUntil: 0, lastError: null };
+const SCAN_MARKET = process.env.SWING_SCAN_MARKET === "1";
 const SEED_STOCKS = SCRIP_SEED.filter(x => x.exchange !== "BSE" && !isEtf(x.symbol, x.name)).map(x => ({ symbol: x.symbol, name: x.name, exchange: "NSE" }));
 async function scanUniverse() {
   const mine = new Map(), kiteUsers = [];
   await forEachUser(async () => {
-    const [stocks, st] = await Promise.all([readWatchlist(), readJson(swingFile(), {})]);
+    const [stocks, st, act] = await Promise.all([readWatchlist(), readJson(swingFile(), {}), activeSymbols()]);
     for (const x of [...(st.positions || []), ...(st.watch || [])]) if (!mine.has(x.symbol)) mine.set(x.symbol, { symbol: x.symbol, name: x.name, exchange: x.exchange || "NSE" });
-    for (const x of stocks) { const sym = symOf(x); if (sym && !mine.has(sym) && !isEtf(sym, x.company)) mine.set(sym, { symbol: sym, name: x.company || sym, exchange: x.exchange || "NSE" }); }
+    for (const x of stocks) { const sym = symOf(x); if (sym && act.has(sym) && !mine.has(sym) && !isEtf(sym, x.company)) mine.set(sym, { symbol: sym, name: x.company || sym, exchange: x.exchange || "NSE" }); }
     if (!kiteUsers.length && await anyKiteWithSession().catch(() => null)) kiteUsers.push(currentUser());
   });
-  for (const x of SEED_STOCKS) if (!mine.has(x.symbol)) mine.set(x.symbol, x); // your own lists first, then the market list
+  // your holdings too; the ~170-stock market list only with SWING_SCAN_MARKET=1 (fewer chart requests = fewer blocks)
+  await forEachUser(async () => { const hold = await readHoldStore(); for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol && !mine.has(h.symbol) && !isEtf(h.symbol, h.name || "")) mine.set(h.symbol, { symbol: h.symbol, name: h.name || h.symbol, exchange: h.exchange || "NSE" }); });
+  if (SCAN_MARKET) for (const x of SEED_STOCKS) if (!mine.has(x.symbol)) mine.set(x.symbol, x);
   return { list: [...mine.values()].slice(0, 600), kiteUser: kiteUsers[0] || null };
 }
 const scanFresh = (e, force) => !!(e?.at && Date.now() - e.at < (e.s ? (force ? 6 : 18) : force ? 0 : 6) * 3600e3); // misses retried after 6 h (or on Scan now)
@@ -1624,6 +1741,7 @@ async function dailyBars(x, { kiteUser, tokens, sx }) {
   // Our own NSE end-of-day history first: no network at all
   if ((x.exchange || "NSE") === "NSE") { const own = await eodBars(x.symbol); if (own.length >= 200 && eodRecent(own)) return { bars: own, source: "NSE EOD" }; }
   const seeded = r => { eodSeed(x.symbol, r.bars); return r; };
+  { const ab = await angelBars(x).catch(() => null); if (ab?.length >= 60) return seeded({ bars: ab, source: "Angel One" }); } // your Angel account: no public-site limits
   const token = tokens.get(`${x.exchange || "NSE"}:${x.symbol}`);
   if (!cool.yahoo) {
     try { const { bars } = await fetchChart(x.symbol, { exchange: x.exchange, range: "1y" }); if (bars.length >= 60) return seeded({ bars, source: "Yahoo" }); errs.push("Yahoo: too little history"); }
@@ -1655,7 +1773,7 @@ function startSwingScan({ force = false } = {}) {
   (async () => {
     const cache = await readJson(swingScanFile, { snaps: {} }); cache.snaps ||= {};
     const save = () => writeJson(swingScanFile, cache);
-    const spacing = { Kite: 400, Yahoo: 2000, Screener: 2500 }, gap = Number(process.env.SWING_SCAN_SPACING_MS);
+    const spacing = { Kite: 400, "Angel One": 400, Yahoo: 2000, Screener: 2500 }, gap = Number(process.env.SWING_SCAN_SPACING_MS);
     try {
       const { list, kiteUser } = await scanUniverse();
       const master = await scripMaster(), tokens = new Map(master.list.filter(m => m.token).map(m => [`${m.exchange}:${m.symbol}`, m.token]));
@@ -1709,8 +1827,10 @@ async function trackIdeas(ideas) {
 async function swingIdeas() {
   const [cache, st, stocks, { rows }] = await Promise.all([readJson(swingScanFile, { snaps: {} }), readJson(swingFile(), {}), readWatchlist(), computeRows()]);
   const snaps = cache.snaps || {};
-  const mine = new Map(SEED_STOCKS.map(x => [x.symbol, { ...x, src: "market" }]));
-  for (const x of stocks) { const sym = symOf(x); if (sym && !isEtf(sym, x.company)) mine.set(sym, { symbol: sym, name: x.company || sym, exchange: x.exchange || "NSE", src: "watchlist" }); }
+  const mine = new Map(SCAN_MARKET ? SEED_STOCKS.map(x => [x.symbol, { ...x, src: "market" }]) : []);
+  if (!SCAN_MARKET) { const hold = await readHoldStore(); for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol && !isEtf(h.symbol, h.name || "")) mine.set(h.symbol, { symbol: h.symbol, name: h.name || h.symbol, exchange: h.exchange || "NSE", src: "holdings" }); }
+  const act = await activeSymbols();
+  for (const x of stocks) { const sym = symOf(x); if (sym && act.has(sym) && !isEtf(sym, x.company)) mine.set(sym, { symbol: sym, name: x.company || sym, exchange: x.exchange || "NSE", src: "watchlist" }); }
   for (const x of st.watch || []) mine.set(x.symbol, { symbol: x.symbol, name: x.name, exchange: x.exchange, src: "swing watchlist" });
   const bySym = new Map(rows.map(r => [String(r.symbol).toUpperCase(), r]));
   const items = [...mine.values()].map(x => { const r = bySym.get(x.symbol), v = r?.verdict; return { ...x, snap: snaps[x.symbol]?.s || null, verdict: v ? { key: v.key, label: v.label, inZone: v.inZone, fairBase: r.fairValue?.base ?? null, fairBull: r.fairValue?.bull ?? null } : null }; });
@@ -1721,7 +1841,7 @@ async function swingIdeas() {
     .map(i => ({ ...i, source: mine.get(i.symbol)?.src || "market", asOf: snaps[i.symbol]?.at || null }));
   const failed = items.filter(i => !snaps[i.symbol]?.s && snaps[i.symbol]?.error).length;
   const track = await trackIdeas(ideas).catch(e => { console.error(`[ideas-track] ${e.message}`); return null; });
-  return { ideas, sizing, track, scan: { running: scanState.running, done: scanState.done, total: scanState.total, scanned, failed, universe: items.length, lastRun: cache.lastRun || null, error: scanState.lastError, pausedUntil: scanState.pausedUntil > Date.now() ? scanState.pausedUntil : null, sources: scanState.sources || {}, kite: !!scanState.kite } };
+  return { ideas, sizing, track, scan: { market: SCAN_MARKET, running: scanState.running, done: scanState.done, total: scanState.total, scanned, failed, universe: items.length, lastRun: cache.lastRun || null, error: scanState.lastError, pausedUntil: scanState.pausedUntil > Date.now() ? scanState.pausedUntil : null, sources: scanState.sources || {}, kite: !!scanState.kite } };
 }
 // Resolve names typed in a dip list: short names traders use (HDFC → HDFCBANK, HCL → HCLTECH), exact NSE symbols, then the company list
 async function resolveDipNames(names) {
@@ -2195,7 +2315,7 @@ async function favouritesView() {
   const [{ rows }, hv, sw, ce, master] = await Promise.all([computeRows(), kiteHoldingsView(), readJson(swingFile(), {}), corpEvents(), scripMaster().catch(() => ({ list: [] }))]);
   const bySym = new Map(rows.map(r => [String(r.symbol).toUpperCase(), r])), held = new Map(hv.holdings.map(h => [h.symbol, h]));
   const names = new Map((master.list || []).filter(x => x.exchange === "NSE").map(x => [x.symbol, x.name]));
-  const prices = await livePrices(fav.map(sym => ({ symbol: sym, exchange: "NSE" })), 60e3, { budgetMs: 1200 });
+  const prices = await livePrices(fav.map(sym => ({ symbol: sym, exchange: "NSE" })), LIVE_MAX_AGE(), { budgetMs: 1200 });
   const today = istDay();
   return { symbols: fav, rows: fav.map(sym => {
     const r = bySym.get(sym), q = prices.get(sym), h = held.get(sym), p = (sw.positions || []).find(x => x.symbol === sym), w = (sw.watch || []).find(x => x.symbol === sym);
@@ -2422,7 +2542,7 @@ async function recordChanges(previous, next) {
 // The page sends back its own copy of the watchlist (edits, refresh). If it was open for a while, its prices are older than
 // the ones the server fetched since: keep, per stock, whichever price is newer (priceAt), so a stale tab never undoes a refresh.
 // "fetch failed" hides the reason; Node keeps it in e.cause (ENOTFOUND = DNS, ECONNREFUSED, ETIMEDOUT, certificate errors…).
-const errText = e => { const c = e?.cause; const why = c ? (c.code || c.message || "").toString() : ""; const where = c?.hostname || (c?.address ? `${c.address}${c.port ? `:${c.port}` : ""}` : ""); return `${e?.message || e}${why && !String(e?.message).includes(why) ? ` (${why}${where ? ` ${where}` : ""})` : ""}`; };
+const errText = e => { const c = e?.cause; const why = c ? (c.code || c.message || "").toString() : ""; const a = c?.address ? c : c?.errors?.find?.(x => x?.address) || null; const where = c?.hostname || (a ? `${a.address}${a.port ? `:${a.port}` : ""}` : ""); return `${e?.message || e}${why && !String(e?.message).includes(why) ? ` (${why}${where ? ` ${where}` : ""})` : ""}`; };
 const PRICE_FIELDS = ["price", "low", "high", "rangeUpdated", "priceAt", "priceSource", "feedStatus", "updated"];
 const priceTime = s => { const t = Date.parse(s?.priceAt || ""); return Number.isFinite(t) ? t : 0; };
 function keepNewerPrices(incoming, stored) {
@@ -2462,13 +2582,15 @@ function plausible(stock, quote) {
 async function getQuote(stock, kitePrices) {
   const sym = String(stock.marketSymbol).toUpperCase(), errors = [], trail = [];
   let quote = null, best = null;
+  const ap = kitePrices?.angel?.get(sym); // Angel One quote fetched for every stock in one go: the exchange price with its 52-week range
+  if (ap) { quote = { price: ap.price, low: ap.low ?? undefined, high: ap.high ?? undefined, source: "Angel One", asOf: ap.asOf }; console.log(`[price] ${sym}: angel: ✓ ₹${ap.price}`); return { ...quote, fallbackErrors: [] }; }
   for (const src of PRICE_SOURCES) {
     const t0 = Date.now();
     try {
       if (src === "kite") { const p = kitePrices.get(sym); if (!p) { trail.push("kite: no LTP"); continue; } quote = { price: Number(p.toFixed(2)), source: "Kite MCP (Zerodha LTP)" }; }
-      else if (src === "nse") { if (stock.exchange === "BSE") { trail.push("nse: BSE stock, skipped"); continue; } if (nseCooldown()) { trail.push(`nse: cooling down until ${new Date(nseCooldown()).toLocaleTimeString("en-IN")} (${lastNseStatus || "blocked"})`); errors.push("nse: cooling down"); continue; } const q = await paced("nse", 350, () => fetchNseQuote(sym)); if (!(q.price > 0)) throw new Error("answered without a price"); quote = { price: q.price, low: q.low52 || null, high: q.high52 || null, asOf: q.asOf || null, source: "NSE" }; plausible(stock, quote); }
+      else if (src === "nse") { if (stock.exchange === "BSE") { trail.push("nse: BSE stock, skipped"); continue; } if (nseCooldown()) { trail.push(`nse: cooling down until ${new Date(nseCooldown()).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} (${lastNseStatus || "blocked"})`); errors.push("nse: cooling down"); continue; } const q = await paced("nse", 350, () => fetchNseQuote(sym)); if (!(q.price > 0)) throw new Error("answered without a price"); quote = { price: q.price, low: q.low52 || null, high: q.high52 || null, asOf: q.asOf || null, source: "NSE" }; plausible(stock, quote); }
       else if (src === "yahoo") quote = await yahooQuote(stock.marketSymbol, stock.exchange);
-      else if (src === "screener") { if (stock.exchange === "BSE") { trail.push("screener: BSE stock, skipped"); continue; } if (screenerCooldown()) { trail.push(`screener: cooling down until ${new Date(screenerCooldown()).toLocaleTimeString("en-IN")}`); errors.push("screener: cooling down"); continue; } quote = await paced("screener", 1200, () => fetchScreenerPrice(stock)); plausible(stock, quote); }
+      else if (src === "screener") { if (stock.exchange === "BSE") { trail.push("screener: BSE stock, skipped"); continue; } if (screenerCooldown()) { trail.push(`screener: cooling down until ${new Date(screenerCooldown()).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}`); errors.push("screener: cooling down"); continue; } quote = await paced("screener", 1200, () => fetchScreenerPrice(stock)); plausible(stock, quote); }
       else { if (googleCooldown()) { trail.push("google: cooling down"); errors.push("google: cooling down"); continue; } quote = await paced("google", 500, () => fetchGoogleQuote(sym, { exchange: googleExchange(stock) })); plausible(stock, quote); }
       trail.push(`${src}: ✓ ₹${quote.price}${quote.asOf ? ` @ ${new Date(quote.asOf).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}` : ""} (${Date.now() - t0} ms)`);
     } catch (e) { quote = null; errors.push(`${src}: ${errText(e)}`); trail.push(`${src}: ✗ ${errText(e).slice(0, 160)} (${Date.now() - t0} ms)`); }
@@ -2521,7 +2643,20 @@ async function refreshOne(stock, withNews, kitePrices = new Map()) {
   } catch (error) { console.error(`[refresh] ${stock.company}: ${error.message}`); return { ...stock, feedStatus: `Refresh failed: ${error.message}` }; }
 }
 async function mapLimit(items, limit, worker) { const results = new Array(items.length); let cursor = 0; async function run() { while (cursor < items.length) { const i = cursor++; results[i] = await worker(items[i]); } } await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run)); return results; }
-async function refreshWatchlist(stocks, withNews = true) { console.log(`[refresh] Starting ${stocks.length}-stock refresh${withNews ? " with news" : ""} (sources: ${PRICE_SOURCES.join(" → ")}).`); const kitePrices = await fetchKitePrices(stocks); const refreshed = await mapLimit(stocks, 3, stock => refreshOne(stock, withNews, kitePrices)); await persistWatchlist(refreshed, stocks); if (refreshed.some(s => s.feedStatus === "Price refreshed")) { lastPriceRefreshAt = new Date().toISOString(); await writeJson(userFile("meta.json"), { ...(await readJson(userFile("meta.json"), {})), lastPriceRefresh: lastPriceRefreshAt }); } const bySrc = {}; for (const r of refreshed) if (r.feedStatus === "Price refreshed") bySrc[r.priceSource] = (bySrc[r.priceSource] || 0) + 1; console.log(`[refresh] Finished: ${refreshed.filter(s => s.feedStatus === "Price refreshed").length}/${stocks.length} prices refreshed ${JSON.stringify(bySrc)}; ${refreshed.filter(s => String(s.feedStatus).startsWith("Refresh failed")).length} failed.`); return refreshed; }
+// The stocks you actively follow: every watchlist, holdings, swing positions / watchlist and favourites. Stocks
+// tracked only because they are inside an X-ray fund (hundreds of them) keep their saved numbers and are valued when
+// the fund is opened, but are left out of the price refresh, the Refresh button and the daily chart scan: refreshing
+// them all made the free data sites block the server.
+async function activeSymbols() {
+  const [lists, st, hold, fav] = await Promise.all([readLists().catch(() => ({ lists: [] })), readJson(swingFile(), {}), readHoldStore(), readJson(favFile(), { symbols: [] })]);
+  const set = new Set();
+  for (const l of lists.lists || []) for (const x of l.symbols || []) set.add(String(x).toUpperCase());
+  for (const x of [...(st.positions || []), ...(st.watch || [])]) set.add(x.symbol);
+  for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol) set.add(String(h.symbol).toUpperCase());
+  for (const x of fav.symbols || []) set.add(String(x).toUpperCase());
+  return set;
+}
+async function refreshWatchlist(stocks, withNews = true, { only = null } = {}) { const act = only ? stocks.filter(s => only.has(symOf(s))) : stocks; console.log(`[refresh] Starting ${act.length}-stock refresh${withNews ? " with news" : ""}${only ? ` (${stocks.length - act.length} fund-only stocks left as they are)` : ""} (sources: ${PRICE_SOURCES.join(" → ")}).`); const kitePrices = await fetchKitePrices(act); kitePrices.angel = await batchAngel(act.map(s => ({ symbol: symOf(s), exchange: s.exchange || "NSE", last: s.price }))); const refreshed = await mapLimit(stocks, 3, stock => (only && !only.has(symOf(stock)) ? stock : refreshOne(stock, withNews, kitePrices))); await persistWatchlist(refreshed, stocks); if (refreshed.some(s => s.feedStatus === "Price refreshed")) { lastPriceRefreshAt = new Date().toISOString(); await writeJson(userFile("meta.json"), { ...(await readJson(userFile("meta.json"), {})), lastPriceRefresh: lastPriceRefreshAt }); } const bySrc = {}; for (const r of refreshed) if (r.feedStatus === "Price refreshed") bySrc[r.priceSource] = (bySrc[r.priceSource] || 0) + 1; console.log(`[refresh] Finished: ${refreshed.filter(s => s.feedStatus === "Price refreshed").length}/${stocks.length} prices refreshed ${JSON.stringify(bySrc)}; ${refreshed.filter(s => String(s.feedStatus).startsWith("Refresh failed")).length} failed.`); return refreshed; }
 function marketIsOpen() { if (process.env.MARKET_ALWAYS_OPEN === "1") return true; // testing only
   return marketIsOpenNow(); }
 function marketIsOpenNow() { const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts().filter(p => p.type !== "literal").map(p => [p.type, p.value])); const minutes = Number(parts.hour) * 60 + Number(parts.minute); return !["Sat", "Sun"].includes(parts.weekday) && minutes >= 555 && minutes <= 930; }
@@ -2532,7 +2667,9 @@ async function forEachUser(fn) { for (const u of auth.listUsers()) { try { await
 // ---- Live prices for every account, every PRICE_REFRESH_SECONDS (default 60) while the market is open ----
 // Each stock is fetched once for all accounts: NSE one by one (paced), then Yahoo in batches of 40, then Yahoo's chart,
 // Google and Screener for what is left, inside a time budget. A run that takes longer simply delays the next one.
-const PRICE_REFRESH_SEC = Math.max(30, Number(process.env.PRICE_REFRESH_SECONDS) || 60);
+// Every 3 minutes by default (was 1): the free price sites block an address that asks too often. PRICE_REFRESH_SECONDS overrides.
+const PRICE_REFRESH_SEC = Math.max(30, Number(process.env.PRICE_REFRESH_SECONDS) || 180);
+const LIVE_MAX_AGE = () => Math.max(60e3, PRICE_REFRESH_SEC * 800); // a cached quote younger than this is not fetched again
 const priceState = { running: false, lastRun: null, lastDurationMs: null, lastCount: 0, lastFailed: 0, bySource: {}, lastError: null };
 const quoteCache = new Map(); // "EX:SYM" -> { price, low, high, prevClose, asOf, source, at }
 let priceRun = null;
@@ -2541,9 +2678,10 @@ async function fetchQuotesFast(items, budgetMs) {
   const fresh = q => q && (q.source === "NSE" || (q.asOf && Date.now() - Date.parse(q.asOf) < 3 * 60e3) || !marketIsOpen());
   const ok = (i, q) => { if (!(q?.price > 0)) return false; if (i.last > 0 && Math.abs(q.price / i.last - 1) > 0.4) return false; return true; }; // a quote 40% off the last price = wrong instrument
   // 1. Head start: one Yahoo request for every stock at once (a few hundred ms when it works).
-  if (PRICE_SOURCES.includes("yahoo") && items.length > 3 && !(yahooCooldown() > Date.now())) {
-    try { const qs = await yahooQuotes(items.map(i => ({ symbol: i.symbol, exchange: i.exchange }))); for (const i of items) { const q = qs.get(i.symbol); const v = q && { price: q.price, low: q.low52 ?? null, high: q.high52 ?? null, prevClose: Number.isFinite(q.pChange) && q.price ? Number((q.price / (1 + q.pChange / 100)).toFixed(2)) : null, asOf: q.time || null, source: "Yahoo" }; if (ok(i, v)) { out.set(key(i), v); setLive(key(i), { ...v, at: Date.now() }); } } } catch (e) { console.log(`[prices] Yahoo batch unavailable (${errText(e).slice(0, 80)}); going stock by stock`); }
-  }
+  for (const [sym, v] of await batchAngel(items)) { const it = items.find(x => x.symbol === sym); if (it && ok(it, v)) out.set(key(it), v); }
+  for (const [sym, v] of await batchKite(items.filter(i => !out.has(key(i))))) { const it = items.find(x => x.symbol === sym); if (it && ok(it, v)) out.set(key(it), v); }
+  for (const [sym, v] of await batchYahoo(items.filter(i => !out.has(key(i))), { minGapMs: 0 })) { const it = items.find(x => x.symbol === sym); if (it && ok(it, v)) out.set(key(it), v); }
+
   // 2. Exactly the Swing page's path for everything else (NSE → Yahoo → Google → Screener, newest quote wins), four
   //    stocks at a time; each site keeps its own pacing. Whatever is unfinished at the deadline completes in the
   //    background into the shared cache, and syncLivePrices() writes it to the watchlists on the next check.
@@ -2562,13 +2700,13 @@ async function refreshAllPrices({ user = null, force = false } = {}) {
       // Everything to price: watchlists + swing positions and swing watchlists, of one account or all
       const items = new Map(), accounts = [];
       const collect = async () => {
-        const [stocks, st] = await Promise.all([readWatchlist(), readJson(swingFile(), {})]);
+        const [stocks, st, act] = await Promise.all([readWatchlist(), readJson(swingFile(), {}), activeSymbols()]);
         accounts.push(currentUser());
-        for (const x of stocks) { const sym = symOf(x); if (sym) items.set(`${x.exchange || "NSE"}:${sym}`, { symbol: sym, exchange: x.exchange || "NSE", last: x.price }); }
+        for (const x of stocks) { const sym = symOf(x); if (sym && act.has(sym)) items.set(`${x.exchange || "NSE"}:${sym}`, { symbol: sym, exchange: x.exchange || "NSE", last: x.price }); }
         for (const x of [...(st.positions || []), ...(st.watch || [])]) { const k = `${x.exchange || "NSE"}:${x.symbol}`; if (!items.has(k)) items.set(k, { symbol: x.symbol, exchange: x.exchange || "NSE" }); }
       };
       if (user) await asUser(user, collect); else await forEachUser(collect);
-      const all = [...items.values()], need = all.filter(i => force || !(livePriceCache.get(`${i.exchange}:${i.symbol}`)?.at > Date.now() - 45e3));
+      const all = [...items.values()], need = all.filter(i => force || !(livePriceCache.get(`${i.exchange}:${i.symbol}`)?.at > Date.now() - LIVE_MAX_AGE()));
       // The header button waits ~12 s (the rest finishes in the background); the timer allows most of its interval.
       const got = await fetchQuotesFast(need, force ? 12e3 : Math.max(20e3, PRICE_REFRESH_SEC * 800));
       for (const [k, q] of got) quoteCache.set(k, { ...q, at: Date.now() });
@@ -2597,7 +2735,7 @@ setInterval(() => {
   const mins = Number(t.hour) * 60 + Number(t.minute), day = istDay();
   if (["Sat", "Sun"].includes(t.weekday) || mins < 940 || mins > 1020 || lastCloseRefreshDay === day) return;
   lastCloseRefreshDay = day; console.log("[refresh] Closing-price refresh for every account.");
-  forEachUser(async () => { const stocks = await readWatchlist(); if (stocks.length) { await refreshWatchlist(stocks, false); await runAlerts((await computeRows()).rows); } });
+  forEachUser(async () => { const stocks = await readWatchlist(); if (stocks.length) { await refreshWatchlist(stocks, false, { only: await activeSymbols() }); await runAlerts((await computeRows()).rows); } });
 }, 5 * 60 * 1000).unref();
 
 // Daily (after 19:00 IST) refresh of stale or missing fundamentals, a few at a time. Disable with AUTO_FUNDAMENTALS=0.
@@ -2690,7 +2828,7 @@ async function appHandler(req, res, url) {
       await syncLivePrices();
       return reply(res, 200, { prices: Object.fromEntries([...got].filter(([, v]) => !v.stale).map(([k, v]) => [k, { price: v.price, source: v.source, asOf: v.asOf || null }])), pending: got.pending });
     }
-    if (url.pathname === "/api/prices/now" && req.method === "POST") {
+    if (url.pathname === "/api/prices/now" && req.method === "POST") { // manualRetryAt: per source, when ⟳ last lifted its pause
       // ⟳ on one stock: fetch it right now, first in line. Sources paused after a refusal get one more try, and a
       // logged-in Kite answers last if nothing else does (an explicit request, so a possibly late Kite price is better
       // than a two-day-old close). Answers with the price, or with what every source said.
@@ -2698,10 +2836,23 @@ async function appHandler(req, res, url) {
       if (!/^[A-Z0-9&-]{1,20}$/.test(sym)) return reply(res, 400, { message: "Which stock?" });
       const key = `${ex}:${sym}`, before = livePriceCache.get(key);
       await livePending.get(key)?.catch(() => null); // a fetch already running for it: let it finish, then go again
-      if (nseCooldown()) resetNse(); if (screenerCooldown()) resetScreener(); if (googleCooldown()) resetGoogle();
+      // A paused source gets one extra try per 15 minutes from ⟳, not one per click: pressing ⟳ on several stocks
+      // in a row would otherwise ask a site that is refusing us again and again, and lengthen its ban.
+      const now = Date.now(), retried = [];
+      for (const [name, paused, reset] of [["NSE", nseCooldown, resetNse], ["Screener", screenerCooldown, resetScreener], ["Google", googleCooldown, resetGoogle], ["Yahoo", chartCooldown, () => chartBackoff.reset()]]) {
+        if (!paused()) continue;
+        if (now - (manualRetryAt.get(name) || 0) >= 15 * 60e3) { manualRetryAt.set(name, now); reset(); retried.push(name); }
+      }
       const stocks = await readWatchlist(), x = stocks.find(y => symOf(y) === sym);
-      let q = await fetchLiveQuote({ symbol: sym, exchange: ex, last: x?.price, name: x?.company }).catch(() => null);
-      const errs = q ? [] : [...(liveErrs.get(key) || [])];
+      if (KITE_PRICES && kiteDownUntil > Date.now() && !kiteDownWhy?.startsWith("login")) kiteDownUntil = 0; // ⟳: give Kite another go unless it needs a login
+      if (angelDownUntil > Date.now() && !angelDownWhy?.startsWith("login")) angelDownUntil = 0;
+      let q = (await batchAngel([{ symbol: sym, exchange: ex }])).get(sym) || (await batchKite([{ symbol: sym, exchange: ex }])).get(sym) || null;
+      if (!q) q = await fetchLiveQuote({ symbol: sym, exchange: ex, last: x?.price, name: x?.company }).catch(() => null);
+      const errs = q ? [] : [...(ANGEL_PRICES ? [`Angel One: ${angelDownUntil > Date.now() ? angelDownWhy : "not connected or no price"}`] : []), ...(KITE_PRICES ? [`Kite: ${kiteDownUntil > Date.now() ? kiteDownWhy : "no price"}`] : []), ...(liveErrs.get(key) || [])];
+      if (!q && ex === "NSE" && !PRICE_SOURCES.includes("nse")) { // the exchange's own quote, asked for even when PRICE_SOURCES leaves it out
+        try { const n = await fetchNseQuote(sym); if (n.price > 0) { q = { price: n.price, prevClose: n.prevClose ?? null, low: n.low52 || null, high: n.high52 || null, source: "NSE", asOf: n.asOf || new Date().toISOString(), at: Date.now() }; setLive(key, q); } }
+        catch (e) { errs.unshift(`NSE: ${errText(e).slice(0, 90)} (NSE is not in your PRICE_SOURCES=${PRICE_SOURCES.join(",")})`); }
+      }
       if (!q && !KITE_PRICES) {
         try { const kc = await anyKiteWithSession(); if (kc) { const p = (await kc.ltp([sym], ex)).get(sym); if (p > 0) { q = { price: p, prevClose: before?.prevClose ?? null, source: "Kite", asOf: new Date().toISOString(), at: Date.now() }; setLive(key, q); } else errs.push("Kite: no price returned"); } else errs.push("Kite: not logged in"); }
         catch (e) { errs.push(`Kite: ${errText(e).slice(0, 80)}`); }
@@ -3337,7 +3488,7 @@ async function appHandler(req, res, url) {
       return reply(res, 200, history);
     }
     if (url.pathname === "/api/watchlist" && req.method === "POST") { let { stocks } = await readBody(req); if (!Array.isArray(stocks)) return reply(res, 400, { message: "stocks must be an array" }); await withWatchlistLock(async () => { const cur = await readWatchlist(); stocks = keepNewerPrices(stocks, cur); await persistWatchlist(stocks, cur); }); try { const st = await readLists(); await writeJson(U.listsFile, prune(st, stocks.map(symOf))); } catch {} return reply(res, 200, { ok: true, count: stocks.length }); }
-    if (url.pathname === "/api/refresh" && req.method === "POST") { const { stocks } = await readBody(req); const saved = await readWatchlist(); const target = Array.isArray(stocks) && stocks.length ? keepNewerPrices(stocks, saved) : saved; if (!target.length) return reply(res, 400, { message: "Watchlist is empty. Open the app once to publish it." }); const refreshed = await refreshWatchlist(target, true); return reply(res, 200, { ok: true, stocks: refreshed, refreshed: refreshed.filter(s => s.feedStatus === "Price refreshed").length }); }
+    if (url.pathname === "/api/refresh" && req.method === "POST") { const { stocks } = await readBody(req); const saved = await readWatchlist(); const target = Array.isArray(stocks) && stocks.length ? keepNewerPrices(stocks, saved) : saved; if (!target.length) return reply(res, 400, { message: "Watchlist is empty. Open the app once to publish it." }); const refreshed = await refreshWatchlist(target, true, { only: target.length > 20 ? await activeSymbols() : null }); return reply(res, 200, { ok: true, stocks: refreshed, refreshed: refreshed.filter(s => s.feedStatus === "Price refreshed").length }); }
     if (url.pathname === "/api/valuation" && req.method === "GET") {
       const { fundamentals, rows } = await computeRows();
       // the daily verdict log and alert checks run after the answer is sent, not in the page's way
@@ -3360,6 +3511,14 @@ async function appHandler(req, res, url) {
       const targets = (Array.isArray(ids) && ids.length ? stocks.filter(s => ids.includes(s.id)) : []).slice(0, 10);
       if (!targets.length) return reply(res, 400, { message: "No matching stocks (max 10 per call)." });
       console.log(`[fundamentals] Fetching ${targets.length} stock(s).`);
+      // "Get valuation" on one stock is an explicit request: a paused source gets one real try (at most once per 15
+      // minutes per source, shared with ⟳), so a ban that has already lifted is noticed at once.
+      if (force && targets.length <= 2) {
+        const now = Date.now();
+        for (const [name, paused, reset] of [["Screener", screenerCooldown, resetScreener], ["Yahoo fundamentals", yahooCooldown, resetYahooSession], ["NSE", nseCooldown, resetNse]]) {
+          if (paused() > now && now - (manualRetryAt.get(name) || 0) >= 15 * 60e3) { manualRetryAt.set(name, now); reset(); console.log(`[fundamentals] ${name} paused: one manual retry`); }
+        }
+      }
       const [results] = await Promise.all([runFundamentalsFetch(targets, force, ["screener", "yahoo", "nse"].includes(source) ? source : "auto"),
         // and the live price at the same time, on the Swing page's path, so the valuation uses today's price
         livePrices(targets.filter(t => symOf(t)).map(t => ({ symbol: symOf(t), exchange: t.exchange || "NSE", last: t.price })), 20e3, { budgetMs: 8000 }).catch(() => null)]);

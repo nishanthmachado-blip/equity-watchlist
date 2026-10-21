@@ -248,7 +248,11 @@ Use this option if the team standardises on ALBs.
 | `ANGEL_*`, `DHAN_*`, `GROWW_*`, `INDMONEY_*` | none | The **owner's** broker credentials (optional; other accounts never see these) |
 | `APP_URL` | `PUBLIC_URL` | Link added to Telegram alerts ("Open Equity Watchlist"); leave unset for no link |
 | `TELEGRAM_API` | `https://api.telegram.org` | Telegram Bot API base (only change for a proxy or tests) |
-| `PRICE_REFRESH_SECONDS` | `60` | How often prices refresh while the market is open (minimum 30). One shared run for all accounts. |
+| `PRICE_REFRESH_SECONDS` | `180` | How often prices refresh while the market is open (minimum 30). One shared run for all accounts. Lower values make NSE / Yahoo / Screener block the server sooner. |
+| `ANGEL_PRICES` | on | Live prices and daily charts from your Angel One account (SmartAPI, read-only market data) whenever it is connected. `0` turns it off. |
+| `ANGEL_SCRIP_URL` | Angel's public instrument list | Where the symbol → instrument-token list is downloaded from (weekly). Only for a mirror or tests. |
+| `ANGEL_API_ROOT` | `https://apiconnect.angelone.in` | Angel One API address. Only for a proxy or tests. |
+| `SWING_SCAN_MARKET` | off | `1` adds ~170 large and mid caps to the daily swing-ideas chart scan (by default it scans only your watchlists, swing stocks and holdings). |
 | `MARKET_ALWAYS_OPEN` | off | Testing only: `1` treats the market as open at any hour |
 | `SWING_SCAN_SPACING_MS` | `1200` | Pause between chart requests in the daily swing-ideas scan (~185 stocks + watchlists, about 5 minutes after 15:50 IST on weekdays) |
 | `SCREENER_BASE` | `https://www.screener.in` | Screener base URL (only change for a proxy or tests) |

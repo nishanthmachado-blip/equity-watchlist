@@ -5,9 +5,9 @@
 // return a wrong number, and callers fall back to the next price source. Personal research use only;
 // respect Google's terms. For an officially supported route use Google Sheets' GOOGLEFINANCE() function.
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
-let cooldownUntil = 0;
+let cooldownUntil = 0, noPrice = 0;
 export const googleConfig = { cooldownMs: 10 * 60 * 1000, timeoutMs: 12000, exchange: process.env.GOOGLE_FINANCE_EXCHANGE || "NSE" };
-export class GoogleBlocked extends Error { constructor(until, detail) { super(`Google Finance is throttling this connection${detail ? ` (${detail})` : ""}; pausing until ${new Date(until).toLocaleTimeString("en-IN")}`); this.rateLimited = true; } }
+export class GoogleBlocked extends Error { constructor(until, detail) { super(`Google Finance is throttling this connection${detail ? ` (${detail})` : ""}; pausing until ${new Date(until).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} IST`); this.rateLimited = true; } }
 export function googleCooldown(now = Date.now()) { return cooldownUntil > now ? cooldownUntil : 0; }
 export function resetGoogle() { cooldownUntil = 0; }
 
@@ -47,6 +47,10 @@ export async function fetchGoogleQuote(symbol, { exchange = googleConfig.exchang
   if (response.status === 404) throw new Error(`Google Finance: ${sym}:${exchange} not found`);
   if (!response.ok) throw new Error(`Google Finance: HTTP ${response.status}`);
   if (/\/sorry\//.test(response.url || "")) { cooldownUntil = Date.now() + googleConfig.cooldownMs; throw new GoogleBlocked(cooldownUntil, "\"unusual traffic\" check"); }
-  try { return { ...parseGoogleQuote(await response.text(), sym), symbol: sym, source: "Google Finance" }; }
-  catch (e) { if (e.blocked) { cooldownUntil = Date.now() + googleConfig.cooldownMs; throw new GoogleBlocked(cooldownUntil, "\"unusual traffic\" check page"); } throw e; }
+  try { const q = { ...parseGoogleQuote(await response.text(), sym), symbol: sym, source: "Google Finance" }; noPrice = 0; return q; }
+  catch (e) {
+    if (e.blocked) { cooldownUntil = Date.now() + googleConfig.cooldownMs; throw new GoogleBlocked(cooldownUntil, "\"unusual traffic\" check page"); }
+    if (/layout not recognised/.test(e.message) && ++noPrice >= 3) { noPrice = 0; cooldownUntil = Date.now() + 30 * 60e3; throw new GoogleBlocked(cooldownUntil, "3 pages in a row without a price"); }
+    throw e;
+  }
 }

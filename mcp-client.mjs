@@ -113,6 +113,7 @@ function httpTransport({ url, headers = () => ({}), fetchImpl = fetch, timeoutMs
     const myId = id++, response = await post({ jsonrpc: "2.0", id: myId, method, params });
     if (response.status === 404 || response.status === 410) throw new McpError("session-gone");
     const text = await response.text();
+    if (response.status === 400 && session.get()?.sessionId && /invalid session|session (id )?(not found|expired|unknown)|unknown session/i.test(text)) throw new McpError("session-gone");
     if (response.status === 401) throw new McpError("The MCP server needs you to log in.", { authRequired: true, wwwAuthenticate: response.headers.get("www-authenticate") });
     if (!response.ok) throw new McpError(`MCP HTTP ${response.status}${text ? `: ${text.slice(0, 160)}` : ""}`, { loginRequired: response.status === 403 });
     let msg; try { msg = parseRpcBody(text, response.headers.get("content-type"), myId); } catch { throw new McpError(`The MCP server returned unreadable data: ${text.slice(0, 120)}`); }

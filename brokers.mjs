@@ -25,7 +25,8 @@ export const GROWW_ROOT = "https://api.groww.in";
 export const INDMONEY_ROOT = "https://api.indstocks.com"; // INDmoney's Indian-stocks trading API (INDstocks)
 
 export const READ_ONLY_ROUTES = Object.freeze({
-  angel: Object.freeze(["POST /rest/auth/angelbroking/user/v1/loginByPassword", "GET /rest/secure/angelbroking/user/v1/getProfile", "GET /rest/secure/angelbroking/portfolio/v1/getAllHolding"]),
+  angel: Object.freeze(["POST /rest/auth/angelbroking/user/v1/loginByPassword", "GET /rest/secure/angelbroking/user/v1/getProfile", "GET /rest/secure/angelbroking/portfolio/v1/getAllHolding",
+    "POST /rest/secure/angelbroking/market/v1/quote/", "POST /rest/secure/angelbroking/historical/v1/getCandleData"]), // market data: read-only quotes and daily candles
   dhan: Object.freeze(["POST /app/generateAccessToken", "GET /v2/profile", "GET /v2/holdings", "POST /v2/marketfeed/ltp"]),
   groww: Object.freeze(["POST /v1/token/api/access", "GET /v1/user/detail", "GET /v1/holdings/user", "GET /v1/live-data/ltp"]),
   indmoney: Object.freeze(["GET /user/profile", "GET /portfolio/holdings"])
@@ -90,6 +91,37 @@ export function makeHolding({ symbol, exchange, isin, qty, avg, last, pnl, close
 }
 const keep = list => list.filter(h => h.symbol && h.qty > 0);
 
+// ---- Angel One market data ----
+// Angel's public instrument list (OpenAPIScripMaster.json) → "NSE:SYMBOL" / "BSE:SYMBOL" → instrument token.
+// NSE cash stocks are listed as "TCS-EQ" (or -BE etc.); BSE ones by their symbol.
+export function parseAngelScripMaster(list) {
+  const map = {};
+  for (const x of Array.isArray(list) ? list : []) {
+    const ex = x.exch_seg, tok = String(x.token || ""); if (!tok || (ex !== "NSE" && ex !== "BSE") || (x.instrumenttype && x.instrumenttype !== "")) continue;
+    const sym = String(x.symbol || ""), m = ex === "NSE" ? sym.match(/^(.+)-(EQ|BE|BZ|SM|ST)$/) : [null, sym];
+    if (!m) continue;
+    const key = `${ex}:${m[1].toUpperCase()}`;
+    if (!map[key] || /-EQ$/.test(sym)) map[key] = tok; // the main EQ series wins
+  }
+  return map;
+}
+// market/v1/quote FULL answer → Map(token → quote)
+export function normalizeAngelQuotes(json) {
+  const out = new Map(), num = v => (Number.isFinite(Number(v)) && v !== null && v !== "" ? Number(v) : null);
+  for (const q of json?.data?.fetched || []) {
+    const ltp = num(q.ltp); if (!(ltp > 0)) continue;
+    const t = String(q.exchFeedTime || q.exchTradeTime || ""), m = t.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4}) (\d{2}):(\d{2}):(\d{2})/);
+    const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+    const asOf = m && m[2].toLowerCase() in MON ? new Date(Date.UTC(+m[3], MON[m[2].toLowerCase()], +m[1], +m[4], +m[5], +m[6]) - 5.5 * 3600e3).toISOString() : null; // exchange time is IST
+    out.set(String(q.symbolToken), { price: ltp, prevClose: num(q.close), open: num(q.open), dayHigh: num(q.high), dayLow: num(q.low), high52: num(q["52WeekHigh"]), low52: num(q["52WeekLow"]), volume: num(q.tradeVolume), asOf });
+  }
+  return out;
+}
+// getCandleData answer → daily bars { t (seconds), o, h, l, c, v }, oldest first
+export function normalizeAngelCandles(json) {
+  return (Array.isArray(json?.data) ? json.data : []).map(r => ({ t: Math.floor(Date.parse(r[0]) / 1000), o: Number(r[1]), h: Number(r[2]), l: Number(r[3]), c: Number(r[4]), v: Number(r[5]) }))
+    .filter(b => Number.isFinite(b.t) && b.c > 0).sort((a, b) => a.t - b.t);
+}
 export function normalizeAngelHoldings(json) {
   if (json?.data === null || json?.data === "") return []; // Angel answers data:null when the account holds nothing
   const list = Array.isArray(json?.data?.holdings) ? json.data.holdings : Array.isArray(json?.data) ? json.data : null;
@@ -141,7 +173,7 @@ export function createBrokerClients({ env = process.env, fetchImpl = fetch, sess
   const fieldOf = (id, name) => CREDENTIAL_FIELDS[id].find(f => f.name === name);
   const val = (id, name) => String(saved[id]?.[name] || env[fieldOf(id, name).env] || "").trim();
   const sourceOf = (id, name) => saved[id]?.[name] ? "app" : env[fieldOf(id, name).env] ? ".env" : null;
-  const R = { angel: roots.angel || ANGEL_ROOT, dhan: roots.dhan || DHAN_ROOT, dhanAuth: roots.dhanAuth || DHAN_AUTH_ROOT, groww: roots.groww || GROWW_ROOT, indmoney: roots.indmoney || INDMONEY_ROOT };
+  const R = { angel: roots.angel || env.ANGEL_API_ROOT || ANGEL_ROOT, dhan: roots.dhan || DHAN_ROOT, dhanAuth: roots.dhanAuth || DHAN_AUTH_ROOT, groww: roots.groww || GROWW_ROOT, indmoney: roots.indmoney || INDMONEY_ROOT };
   let sessions = null;
   async function load() { if (!sessions) { try { sessions = JSON.parse(await fs.readFile(sessionFile, "utf8")) || {}; } catch { sessions = {}; } } return sessions; }
   async function save() { await fs.mkdir(path.dirname(sessionFile), { recursive: true }); await fs.writeFile(sessionFile, JSON.stringify(sessions, null, 2), { mode: 0o600 }); }
@@ -181,6 +213,13 @@ export function createBrokerClients({ env = process.env, fetchImpl = fetch, sess
     if (!r.ok || !r.json || r.json.status === false) throw fail("angel", r, { loginCodes: ANGEL_LOGIN_CODES });
     return r.json;
   }
+  async function angelPost(route, body) {
+    const s = await getSession("angel"); if (!s?.jwt) throw needLogin("angel");
+    const r = await request("angel", "POST", R.angel, route, { headers: angelHeaders(s.jwt), body });
+    if (r.status === 429 || /exceeding access rate|rate limit/i.test(r.text || "")) throw new BrokerError("Angel One: too many requests just now", { rateLimited: true, status: r.status });
+    if (!r.ok || !r.json || r.json.status === false) throw fail("angel", r, { loginCodes: ANGEL_LOGIN_CODES });
+    return r.json;
+  }
   const angel = {
     id: "angel", name: BROKER_NAMES.angel,
     modes() {
@@ -205,6 +244,20 @@ export function createBrokerClients({ env = process.env, fetchImpl = fetch, sess
     },
     async profile() { const j = await angelGet("/rest/secure/angelbroking/user/v1/getProfile"); const p = j.data || {}; return { userId: String(p.clientcode || (await getSession("angel"))?.clientCode || ""), name: p.name || null, email: p.email || null }; },
     async holdings() { return { holdings: normalizeAngelHoldings(await angelGet("/rest/secure/angelbroking/portfolio/v1/getAllHolding")), priceNote: null }; },
+    // Live quotes: { NSE: [tokens], BSE: [tokens] }, at most 50 tokens per request (Angel's limit)
+    async quotes(exchangeTokens) {
+      const out = new Map(), all = Object.entries(exchangeTokens).flatMap(([ex, toks]) => toks.map(t => [ex, String(t)]));
+      for (let i = 0; i < all.length; i += 50) {
+        const part = {}; for (const [ex, t] of all.slice(i, i + 50)) (part[ex] ||= []).push(t);
+        for (const [k, v] of normalizeAngelQuotes(await angelPost("/rest/secure/angelbroking/market/v1/quote/", { mode: "FULL", exchangeTokens: part }))) out.set(k, v);
+      }
+      return out;
+    },
+    // Daily candles for one instrument, from / to as "YYYY-MM-DD"
+    async candles(exchange, token, from, to) {
+      return normalizeAngelCandles(await angelPost("/rest/secure/angelbroking/historical/v1/getCandleData", { exchange, symboltoken: String(token), interval: "ONE_DAY", fromdate: `${from} 09:15`, todate: `${to} 15:30` }));
+    },
+    connectedForData: async () => !!(await getSession("angel"))?.jwt || !!autoMode("angel"),
     forget: () => setSession("angel", null)
   };
 
@@ -402,7 +455,7 @@ export function createBrokerClients({ env = process.env, fetchImpl = fetch, sess
     }
   }
   for (const c of Object.values(clients)) {
-    for (const k of ["profile", "holdings"]) { const raw = c[k]; c[k] = (...args) => autoBusy[c.id] ? raw.apply(c, args) : withAutoLogin(c, () => raw.apply(c, args)); }
+    for (const k of ["profile", "holdings", "quotes", "candles"]) { const raw = c[k]; if (!raw) continue; c[k] = (...args) => autoBusy[c.id] ? raw.apply(c, args) : withAutoLogin(c, () => raw.apply(c, args)); }
     c.autoMode = () => autoMode(c.id);
     // Account details for this broker's MCP server (server-side only, never sent to the page): saved settings plus the
     // current day-session token when the REST login made one.

@@ -13,7 +13,9 @@ export function nseCooldown(now = Date.now()) { return cooldownUntil > now ? coo
 export function resetNse() { cookieCache = null; cooldownUntil = 0; quietFails = 0; }
 const BROWSER = { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", "Accept-Encoding": "gzip, deflate, br", Connection: "keep-alive", "sec-ch-ua": '"Chromium";v="124", "Not-A.Brand";v="99"', "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Linux"' };
 export let lastNseStatus = null;
-function block(where = "", status = "") { lastNseStatus = `${where} HTTP ${status}`.trim(); cooldownUntil = Date.now() + nseConfig.cooldownMs; cookieCache = null; return new NseBlocked(cooldownUntil, lastNseStatus); }
+let blockStreak = 0; // blocks in a row: 5 → 10 → 20 → 40 → 60 min (asking a site that blocks us only extends the ban)
+export const nseOk = () => { blockStreak = 0; };
+function block(where = "", status = "") { lastNseStatus = `${where} HTTP ${status}`.trim(); blockStreak++; cooldownUntil = Date.now() + Math.min(60 * 60e3, nseConfig.cooldownMs * 2 ** (blockStreak - 1)); cookieCache = null; return new NseBlocked(cooldownUntil, lastNseStatus); }
 const withTimeout = o => ({ ...o, signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(nseConfig.timeoutMs) : undefined });
 async function cookies(f) {
   if (cookieCache && Date.now() - cookieCache.at < 10 * 60 * 1000) return cookieCache.value;
@@ -41,7 +43,7 @@ let quietFails = 0;
 export async function fetchNseQuote(symbol, fetchImpl = fetch) {
   if (!/^[A-Z0-9&-]+$/.test(symbol)) throw new Error("bad symbol");
   const cd = nseCooldown(); if (cd) throw new NseBlocked(cd);
-  try { const q = await nseQuoteOnce(symbol, fetchImpl); quietFails = 0; return q; }
+  try { const q = await nseQuoteOnce(symbol, fetchImpl); quietFails = 0; blockStreak = 0; return q; }
   catch (e) {
     if (!(e instanceof NseBlocked) && e.message !== "bad symbol" && !/HTTP 404/.test(e.message) && ++quietFails >= nseConfig.failsBeforePause) { quietFails = 0; const b = block(`no answer (${String(e.cause?.code || e.name || e.message).slice(0, 40)})`); e.message += `; ${b.message}`; }
     throw e;
@@ -99,7 +101,7 @@ export async function fetchNseJson(apiPath, { referer = "https://www.nseindia.co
   if (res.status === 403 || res.status === 429) { if (soft) throw Object.assign(new Error(`NSE refused this request (HTTP ${res.status})`), { refused: true }); throw block(apiPath, res.status); }
   if (res.status === 404) throw new Error(`NSE has no ${apiPath} endpoint (404)`);
   if (!res.ok) throw new Error(`NSE HTTP ${res.status}`);
-  return res.json();
+  blockStreak = 0; return res.json();
 }
 
 // Daily price history from NSE's historical-data API, in chunks of ~1 year (the most NSE serves per request).
