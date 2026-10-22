@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const ANGEL_ROOT = "https://apiconnect.angelone.in";
+export const ANGEL_WS_URL = "wss://smartapisocket.angelone.in/smart-stream"; // live market-data feed (read-only)
 export const DHAN_ROOT = "https://api.dhan.co";
 export const DHAN_AUTH_ROOT = "https://auth.dhan.co";
 export const GROWW_ROOT = "https://api.groww.in";
@@ -173,7 +174,7 @@ export function createBrokerClients({ env = process.env, fetchImpl = fetch, sess
   const fieldOf = (id, name) => CREDENTIAL_FIELDS[id].find(f => f.name === name);
   const val = (id, name) => String(saved[id]?.[name] || env[fieldOf(id, name).env] || "").trim();
   const sourceOf = (id, name) => saved[id]?.[name] ? "app" : env[fieldOf(id, name).env] ? ".env" : null;
-  const R = { angel: roots.angel || env.ANGEL_API_ROOT || ANGEL_ROOT, dhan: roots.dhan || DHAN_ROOT, dhanAuth: roots.dhanAuth || DHAN_AUTH_ROOT, groww: roots.groww || GROWW_ROOT, indmoney: roots.indmoney || INDMONEY_ROOT };
+  const R = { angel: roots.angel || env.ANGEL_API_ROOT || ANGEL_ROOT, angelWs: roots.angelWs || env.ANGEL_WS_URL || ANGEL_WS_URL, dhan: roots.dhan || DHAN_ROOT, dhanAuth: roots.dhanAuth || DHAN_AUTH_ROOT, groww: roots.groww || GROWW_ROOT, indmoney: roots.indmoney || INDMONEY_ROOT };
   let sessions = null;
   async function load() { if (!sessions) { try { sessions = JSON.parse(await fs.readFile(sessionFile, "utf8")) || {}; } catch { sessions = {}; } } return sessions; }
   async function save() { await fs.mkdir(path.dirname(sessionFile), { recursive: true }); await fs.writeFile(sessionFile, JSON.stringify(sessions, null, 2), { mode: 0o600 }); }
@@ -239,7 +240,7 @@ export function createBrokerClients({ env = process.env, fetchImpl = fetch, sess
       const r = await request("angel", "POST", R.angel, "/rest/auth/angelbroking/user/v1/loginByPassword", { headers: angelHeaders(), body: { clientcode, password, totp: code } });
       const jwt = String(r.json?.data?.jwtToken || "").replace(/^Bearer\s+/i, "");
       if (!r.ok || r.json?.status === false || !jwt) { const e = fail("angel", r); e.loginRequired = false; throw e; }
-      await setSession("angel", { jwt, refreshToken: r.json.data.refreshToken || null, clientCode: clientcode });
+      await setSession("angel", { jwt, refreshToken: r.json.data.refreshToken || null, feedToken: r.json.data.feedToken || null, clientCode: clientcode });
       return { connected: true, profile: await angel.profile().catch(() => ({ userId: clientcode, name: null })) };
     },
     async profile() { const j = await angelGet("/rest/secure/angelbroking/user/v1/getProfile"); const p = j.data || {}; return { userId: String(p.clientcode || (await getSession("angel"))?.clientCode || ""), name: p.name || null, email: p.email || null }; },
@@ -256,6 +257,13 @@ export function createBrokerClients({ env = process.env, fetchImpl = fetch, sess
     // Daily candles for one instrument, from / to as "YYYY-MM-DD"
     async candles(exchange, token, from, to, interval = "ONE_DAY") { // interval: ONE_MINUTE … ONE_HOUR, ONE_DAY
       return normalizeAngelCandles(await angelPost("/rest/secure/angelbroking/historical/v1/getCandleData", { exchange, symboltoken: String(token), interval, fromdate: `${from} 09:15`, todate: `${to} 15:30` }));
+    },
+    // Connection details for the live price feed (market data only). fresh: log in again first (a new feed token).
+    async streamAuth({ fresh = false } = {}) {
+      if (fresh && autoMode("angel")) await angel.login({ mode: autoMode("angel") });
+      const s = await getSession("angel"), c = angelCfg();
+      if (!s?.jwt || !s.feedToken) throw needLogin("angel"); // older sessions have no feed token: the auto-login makes a new one
+      return { url: R.angelWs, headers: { Authorization: `Bearer ${s.jwt}`, "x-api-key": c.apiKey, "x-client-code": s.clientCode || c.clientCode, "x-feed-token": s.feedToken } };
     },
     connectedForData: async () => !!(await getSession("angel"))?.jwt || !!autoMode("angel"),
     forget: () => setSession("angel", null)
@@ -455,7 +463,7 @@ export function createBrokerClients({ env = process.env, fetchImpl = fetch, sess
     }
   }
   for (const c of Object.values(clients)) {
-    for (const k of ["profile", "holdings", "quotes", "candles"]) { const raw = c[k]; if (!raw) continue; c[k] = (...args) => autoBusy[c.id] ? raw.apply(c, args) : withAutoLogin(c, () => raw.apply(c, args)); }
+    for (const k of ["profile", "holdings", "quotes", "candles", "streamAuth"]) { const raw = c[k]; if (!raw) continue; c[k] = (...args) => autoBusy[c.id] ? raw.apply(c, args) : withAutoLogin(c, () => raw.apply(c, args)); }
     c.autoMode = () => autoMode(c.id);
     // Account details for this broker's MCP server (server-side only, never sent to the page): saved settings plus the
     // current day-session token when the REST login made one.

@@ -45,7 +45,7 @@ test("⟳ gets the price from your Angel One account (logs in by itself), even w
   const F = `http://127.0.0.1:${fport}`, dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "ew-ang-")), port = await freePort();
   const child = spawn(process.execPath, ["server.mjs"], { cwd: root, env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, SETUP_CODE: "ang-code", AUTO_FUNDAMENTALS: "0", KITE_MCP_ENABLED: "0", EOD: "0", BACKUP: "0",
     PRICE_SOURCES: "nse,yahoo,screener", NSE_BASE: "http://127.0.0.1:9", YAHOO_CHART_BASE: "http://127.0.0.1:9", SCREENER_BASE: "http://127.0.0.1:9",
-    ANGEL_API_ROOT: F, ANGEL_SCRIP_URL: `${F}/scrip`, ANGEL_API_KEY: "key", ANGEL_CLIENT_CODE: "A1", ANGEL_PIN: "1234", ANGEL_TOTP_SECRET: "JBSWY3DPEHPK3PXP" }, stdio: ["ignore", "pipe", "pipe"] });
+    ANGEL_API_ROOT: F, ANGEL_SCRIP_URL: `${F}/scrip`, ANGEL_API_KEY: "key", ANGEL_CLIENT_CODE: "A1", ANGEL_PIN: "1234", ANGEL_TOTP_SECRET: "JBSWY3DPEHPK3PXP", ANGEL_STREAM: "0" }, stdio: ["ignore", "pipe", "pipe"] });
   let log = ""; child.stdout.on("data", d => log += d); child.stderr.on("data", d => log += d);
   const call = async (p, { cookie, body } = {}) => { const r = await fetch(`http://127.0.0.1:${port}${p}`, { method: body ? "POST" : "GET", headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined }); const t = await r.text(); let json = null; try { json = JSON.parse(t); } catch {} return { status: r.status, json, text: t, cookie: (r.headers.get("set-cookie") || "").split(";")[0] }; };
   try {

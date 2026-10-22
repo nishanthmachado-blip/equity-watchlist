@@ -4,18 +4,19 @@
 // If the stream is unavailable (some proxies block it) it falls back to checking every 30 s.
 (() => {
   const $ = s => document.querySelector(s);
-  let st = null, busy = false, total = 0, got = null, es = null, live = false, lastQuoteAt = null, dirty = false, timer = null, lastRun = 0, refreshWait = null, pollTimer = null, lastSeen = null;
+  let lastStreamAt = 0, st = null, busy = false, total = 0, got = null, es = null, live = false, lastQuoteAt = null, dirty = false, timer = null, lastRun = 0, refreshWait = null, pollTimer = null, lastSeen = null;
   const hm = t => (t ? new Date(t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : null);
   const visible = () => ["homeView", "swingView", "portfolioView", "nwView"].find(id => $(`#${id}`) && !$(`#${id}`).hidden) || "other";
   function paint() {
     const b = $("#pricesBtn"), t = $("#pricesTime"); if (!b) return;
     const latest = Math.max(lastQuoteAt || 0, Date.parse(st?.myLatestPriceAt || "") || 0) || null;
     const age = latest ? Math.round((Date.now() - latest) / 60e3) : null;
-    t.textContent = busy ? (got && total ? `Updating ${Math.min(got.size, total)}/${total}` : "Updating…") : latest ? (st?.marketOpen && age !== null && age <= 2 ? `Live · ${hm(latest)}` : `Prices ${hm(latest)}`) : "Refresh prices";
+    const feed = st?.marketOpen && Date.now() - lastStreamAt < 60e3;
+    t.textContent = busy ? (got && total ? `Updating ${Math.min(got.size, total)}/${total}` : "Updating…") : feed ? "Live · Angel One" : latest ? (st?.marketOpen && age !== null && age <= 2 ? `Live · ${hm(latest)}` : `Prices ${hm(latest)}`) : "Refresh prices";
     b.classList.toggle("stale", !!(st?.marketOpen && age !== null && age > 5));
     b.classList.toggle("is-loading", busy);
     b.classList.toggle("is-live", live);
-    b.title = `${st?.marketOpen ? `Market open: prices stream in as they change (checked every ${st.intervalSec >= 60 ? `${Math.round(st.intervalSec / 60)} min` : `${st.intervalSec} s`}).` : "Market closed."} Click to refresh now.${live ? "" : " (Live updates unavailable; checking every 30 s.)"}`;
+    b.title = `${feed ? "Market open: live prices from your Angel One account, updated the moment they change (the screen redraws every 10 s)." : st?.marketOpen ? `Market open: prices stream in as they change (checked every ${st.intervalSec >= 60 ? `${Math.round(st.intervalSec / 60)} min` : `${st.intervalSec} s`}).` : "Market closed."} Click to refresh now.${live ? "" : " (Live updates unavailable; checking every 30 s.)"}`;
   }
   // Reload the data of the screen that is open; other screens are marked and reloaded when you open them
   async function refreshVisible() {
@@ -29,14 +30,16 @@
     } catch (e) { console.warn("price redraw:", e); }
     window.dispatchEvent(new CustomEvent("prices:updated"));
   }
-  function schedule() { if (document.hidden) { dirty = true; return; } if (timer) return; timer = setTimeout(refreshVisible, Math.max(250, 2000 - (Date.now() - lastRun))); }
+  // With Angel One's live feed prices change every second: redraw the open screen at most every 10 s then (every 2 s otherwise)
+  let streaming = false;
+  function schedule() { if (document.hidden) { dirty = true; return; } if (timer) return; timer = setTimeout(refreshVisible, Math.max(250, (streaming ? 10000 : 2000) - (Date.now() - lastRun))); }
   // Switching screens: catch up if prices changed while it was hidden
   const wrapSetView = () => { const orig = window.setView; if (typeof orig !== "function" || orig.__live) return; const w = function (v) { const r = orig.apply(this, arguments); if (dirty) schedule(); return r; }; w.__live = true; window.setView = w; };
   function connect() {
     if (!("EventSource" in window)) return startPolling();
     es = new EventSource("/api/events");
-    es.addEventListener("hello", e => { live = true; const h = JSON.parse(e.data); st = { ...(st || {}), marketOpen: h.marketOpen, intervalSec: h.intervalSec }; total = h.symbols || 0; stopPolling(); paint(); });
-    es.addEventListener("prices", e => { const x = JSON.parse(e.data); lastQuoteAt = Date.now(); if (got) for (const k of Object.keys(x.quotes)) got.add(k); window.liveQuotes = { ...(window.liveQuotes || {}), ...x.quotes }; window.dispatchEvent(new CustomEvent("prices:quotes", { detail: x.quotes })); schedule(); paint(); });
+    es.addEventListener("hello", e => { live = true; const h = JSON.parse(e.data); st = { ...(st || {}), marketOpen: h.marketOpen, intervalSec: h.intervalSec }; streaming = !!h.streaming; total = h.symbols || 0; stopPolling(); paint(); });
+    es.addEventListener("prices", e => { const x = JSON.parse(e.data); lastQuoteAt = Date.now(); if (Object.values(x.quotes).some(q => q.stream)) { streaming = true; lastStreamAt = Date.now(); } else if (Date.now() - lastStreamAt > 60e3) streaming = false; if (got) for (const k of Object.keys(x.quotes)) got.add(k); window.liveQuotes = { ...(window.liveQuotes || {}), ...x.quotes }; window.dispatchEvent(new CustomEvent("prices:quotes", { detail: x.quotes })); schedule(); paint(); });
     es.addEventListener("alert", e => { const x = JSON.parse(e.data); window.toast?.(`🔔 ${x.titles.join(" · ")}${x.count > x.titles.length ? ` +${x.count - x.titles.length} more` : ""}`, { kind: "ok", ms: 8000 }); window.dispatchEvent(new CustomEvent("prices:alert", { detail: x })); window.pollAlerts?.(); });
     es.addEventListener("refresh", e => { const x = JSON.parse(e.data); if (refreshWait) { refreshWait(x); refreshWait = null; } });
     es.onerror = () => { live = false; paint(); if (es.readyState === EventSource.CLOSED) { startPolling(); setTimeout(connect, 15e3); } else startPolling(); };
@@ -68,7 +71,7 @@
     $("#pricesBtn")?.addEventListener("click", refreshNow);
     wrapSetView();
     try { const r = await fetch("/api/prices/status"); if (r.ok) { st = await r.json(); lastSeen = st.version; } } catch { /* fine */ }
-    paint(); connect(); setInterval(paint, 30e3);
+    paint(); connect(); setInterval(paint, 15e3);
     document.addEventListener("visibilitychange", () => { if (!document.hidden && dirty) schedule(); });
   });
   window.liveStream = () => live;

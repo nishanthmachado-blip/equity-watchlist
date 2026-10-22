@@ -1,5 +1,26 @@
 # Equity Watchlist MVP
 
+## v5.33.0: live prices from Angel One, and events and actions on the chart
+**Live prices pushed by Angel One**
+- While the market is open, the app keeps one connection to Angel One's live market-data feed (SmartAPI WebSocket 2.0) and follows up to 1,000 of your stocks: swing positions and holdings first, then the swing watchlist, your lists and favourites.
+- Each price change reaches the app within a second and is pushed to open pages. The header shows **Live · Angel One**; the open screen redraws every 10 s (prices themselves are current to the second).
+- Stocks on the feed don't need the 3-minute refresh any more (their price is already fresh), so NSE / Yahoo / Screener / Google are asked far less often.
+- Market data only: the feed has no order functions. It logs in with your saved Angel One details (the login now keeps Angel's feed token), reconnects by itself, logs in again after repeated failures, and stops 10 minutes after the close.
+- Price alerts on a stock on the feed are checked at most every 5 seconds. **Price status** (`/api/prices/status`) shows the feed's state, how many stocks it follows and the last tick.
+- `ANGEL_STREAM=0` turns the feed off (prices then work as before).
+
+**Chart: events**
+- Marks on the candles: **B / S** your swing buys and sells, **R** results, **D** dividend ex-dates, **O** order-win announcements (with the order value), bonus / split. Hover a candle to read them. "Coming up" shows the next results / dividend dates.
+- An **Events** checkbox hides them.
+
+**Chart: click a price**
+- Click anywhere on the chart to get a menu for that price: **🔔 alert me when it goes above / below**, **🛑 set (or move) the stop-loss** of your swing position, **➖ draw a line**, or **📐 start a trend line** (click a second point; the line carries on to today).
+- Your price alerts show on the chart as red dotted lines. **✏️ My lines** lists your lines and alerts on that stock, with ✕ to delete each one.
+- Lines are saved per stock in your account (`chart-lines.json`, private to your login).
+- With the live feed on, the last candle moves as the price changes and the title shows **● Live**.
+
+Tests: the live feed (Angel's binary layout, subscribe / unsubscribe, one tick per stock per second, reconnect, and the full path to the page through a stand-in Angel One server); chart events, lines, alert and stop-loss from the chart. Perf: unchanged (the feed works in the background; no page waits for it).
+
 ## v5.32.1: holdings tiles colours
 - My holdings: only **Profit / loss** is red or green now. **Current value** has its own blue colour, so a loss no longer turns it red.
 

@@ -41,6 +41,8 @@ import { parseNseEvents, parseYahooCalendar, eventsFor, swingEventAdvice } from 
 import { returnsView, indexTwin, swingFlows, dividendsReceived, forwardDividends, xirr } from "./returns.mjs";
 import { logIdeas, judgeIdea, ideaStats } from "./ideastrack.mjs";
 import { RULE_TYPES, sanitizeRule, describeRule, checkLiveRule, checkEodRule } from "./alertrules.mjs";
+import { chartEvents, applyDrawingOp } from "./chartmarks.mjs";
+import { createAngelStream } from "./angelstream.mjs";
 import { morningDigest, eveningDigest } from "./digest.mjs";
 import { DEFAULT_BASKET, sanitizeBasket, basketView } from "./accumulate.mjs";
 import { backupConfig, gz, gunz, verifyBackup, writeLocal, listLocal, readLocal, pruneLocal, s3Put } from "./backup.mjs";
@@ -1105,8 +1107,8 @@ async function angelTokens() {
   return angelTok?.map || {};
 }
 // The Angel account to ask with: this account's own when it has one, else (background runs) any connected account.
-async function angelAccount() {
-  if (!ANGEL_PRICES || angelDownUntil > Date.now()) return null;
+async function angelAccount({ ignorePause = false } = {}) {
+  if (!ANGEL_PRICES || (!ignorePause && angelDownUntil > Date.now())) return null;
   const mine = currentUser() ? await brokers.angel.connectedForData().catch(() => false) : false;
   if (mine) return currentUser();
   let found = null; await forEachUser(async () => { if (!found && await brokers.angel.connectedForData().catch(() => false)) found = currentUser(); });
@@ -1202,8 +1204,69 @@ async function chartLevels(symbol) {
     const r = rows.find(x => String(x.symbol).toUpperCase() === symbol);
     if (r?.zoneLow && r?.zoneHigh) { out.push({ price: r.zoneLow, label: "Buy zone low", kind: "zone" }, { price: r.zoneHigh, label: "Buy zone high", kind: "zone" }); }
     if (r?.fairValue?.base) out.push({ price: r.fairValue.base, label: "Fair value (base)", kind: "fair" });
+    const rules = (await readJson(rulesFile(), { rules: [] })).rules || [];
+    for (const x of rules) if (x.active && x.symbol === symbol && (x.type === "above" || x.type === "below")) out.push({ price: x.value, label: `🔔 ${x.type === "above" ? "Above" : "Below"} ₹${x.value.toLocaleString("en-IN")}`, type: x.type, kind: "alert", id: x.id });
   } catch { /* levels are optional */ }
   return out.filter(l => Number.isFinite(l.price) && l.price > 0);
+}
+// ---- Live prices pushed by Angel One (SmartAPI WebSocket, market data only) while the market is open ----
+// One connection follows up to 1,000 of the stocks you follow (swing positions and holdings first). Each change lands in
+// the shared price cache within a second; the 3-minute refresh then skips those stocks (their price is fresh), so the
+// public sites are asked far less. ANGEL_STREAM=0 turns it off; ANGEL_WS_URL points it elsewhere (tests).
+const ANGEL_STREAM = ANGEL_PRICES && process.env.ANGEL_STREAM !== "0";
+const streamSym = new Map(); // "NSE|token" -> symbol
+let streamListAt = 0, streamOpenAt = 0, streamBusy = false;
+const angelStream = createAngelStream({
+  auth: async ({ fresh }) => { const u = await angelAccount({ ignorePause: true }); if (!u) throw new Error("Angel One is not connected"); return asUser(u, () => brokers.angel.streamAuth({ fresh })); },
+  onTicks: ticks => {
+    for (const t of ticks) {
+      const sym = streamSym.get(`${t.exchange}|${t.token}`); if (!sym) continue;
+      const key = `${t.exchange}:${sym}`, prev = livePriceCache.get(key);
+      setLive(key, { price: t.price, prevClose: t.prevClose > 0 ? t.prevClose : prev?.prevClose ?? null, low: prev?.low ?? null, high: prev?.high ?? null, dayOpen: t.open > 0 ? t.open : null, dayHigh: t.high > 0 ? t.high : null, dayLow: t.low > 0 ? t.low : null, volume: t.volume ?? null,
+        source: "Angel One", stream: true, asOf: new Date(t.at > 1e12 && t.at < 4e12 ? t.at : Date.now()).toISOString(), at: Date.now() });
+    }
+  },
+  log: m => console.log(`[angel-live] ${m}`)
+});
+// What to follow, most important first: swing positions, holdings, swing watchlist, then lists and favourites
+async function streamItems() {
+  const tiers = [[], [], [], []], tok = await angelTokens();
+  await forEachUser(async () => {
+    const [st, hold, act, wl] = await Promise.all([readJson(swingFile(), {}), readHoldStore(), activeSymbols(), readWatchlist().catch(() => [])]);
+    const exOf = new Map(wl.map(x => [symOf(x), x.exchange === "BSE" ? "BSE" : "NSE"]));
+    for (const p of st.positions || []) tiers[0].push([p.exchange === "BSE" ? "BSE" : "NSE", p.symbol]);
+    for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol) tiers[1].push([h.exchange === "BSE" ? "BSE" : "NSE", String(h.symbol).toUpperCase()]);
+    for (const w of st.watch || []) tiers[2].push([w.exchange === "BSE" ? "BSE" : "NSE", w.symbol]);
+    for (const sym of act) tiers[3].push([exOf.get(sym) || "NSE", sym]);
+  });
+  const out = [], seen = new Set(); streamSym.clear();
+  for (const [ex, sym] of tiers.flat()) {
+    const t = tok[`${ex}:${sym}`] || (ex === "BSE" ? tok[`NSE:${sym}`] : null), e2 = tok[`${ex}:${sym}`] ? ex : "NSE";
+    if (!t || seen.has(`${e2}|${t}`)) continue; seen.add(`${e2}|${t}`); streamSym.set(`${e2}|${t}`, sym); out.push({ exchange: e2, token: t });
+  }
+  return out;
+}
+async function streamCheck() {
+  if (!ANGEL_STREAM || streamBusy) return; streamBusy = true;
+  try {
+    if (!marketIsOpen()) { if (angelStream.running() && Date.now() - streamOpenAt > 10 * 60e3) { angelStream.stop(); console.log("[angel-live] market closed: feed stopped"); } return; }
+    streamOpenAt = Date.now();
+    if (!(await angelAccount({ ignorePause: true }))) { if (angelStream.running()) angelStream.stop(); return; }
+    if (!angelStream.running() || Date.now() - streamListAt > 120e3) { streamListAt = Date.now(); angelStream.setTokens(await streamItems()); }
+    if (!angelStream.running()) angelStream.start();
+  } catch (e) { console.warn(`[angel-live] ${e.message}`); }
+  finally { streamBusy = false; }
+}
+if (ANGEL_STREAM) { setInterval(() => streamCheck(), 30e3).unref(); setTimeout(() => streamCheck(), 4000).unref(); }
+const streamView = () => ({ enabled: ANGEL_STREAM, ...angelStream.status() });
+
+// Marks on the chart: results, dividends, bonuses / splits, order wins and your own swing buys and sells
+const chartLinesFile = () => userFile("chart-lines.json");
+async function chartMarks(symbol) {
+  try {
+    const [corp, divCache, ord, st] = await Promise.all([corpEvents(), readJson(dividendsFile, {}), readJson(ordersFile, { orders: [] }), readJson(swingFile(), {})]);
+    return chartEvents(symbol, { today: istDay(), corp, divs: divCache[symbol]?.events || [], orders: ord.orders || [], ledger: buildLedger(st.positions || [], st.closed || []).entries });
+  } catch (e) { console.warn(`[chart] events for ${symbol}: ${e.message}`); return []; }
 }
 // Kite (Zerodha) LTP for many stocks in one request, when "kite" is in PRICE_SOURCES: exactly what the watchlist
 // Refresh does. Used first by every live path (Swing page, ⟳, the 3-minute refresh, Favourites, Market today).
@@ -1371,8 +1434,10 @@ async function hiLo52(sym) {
   const v = bars.length >= 100 ? { day, hi: Math.max(...bars.map(b => b.h ?? b.c)), lo: Math.min(...bars.map(b => b.l ?? b.c)) } : { day, hi: null, lo: null };
   range52.set(sym, v); return v;
 }
+const ruleCheckedAt = new Map(); // live-feed prices change every second: check a stock's alerts at most every 5 s
 priceBus.on("quote", (key, q) => {
   const sym = key.slice(key.indexOf(":") + 1), users = rulesIndex.get(sym); if (!users?.size || q.stale || !(q.price > 0)) return;
+  if (q.stream) { if (Date.now() - (ruleCheckedAt.get(key) || 0) < 5000) return; ruleCheckedAt.set(key, Date.now()); }
   for (const u of users.values()) asUser(u, () => withUserLock(async () => {
     const st = await readJson(rulesFile(), { rules: [] }), day = istDay(), hl = await hiLo52(sym), evs = []; let changed = false;
     st.rules = (st.rules || []).map(r => { if (r.symbol !== sym) return r; const x = checkLiveRule(r, { price: q.price, prevClose: q.prevClose, high: hl.hi, low: hl.lo }, day); if (!x) return r; changed = true; evs.push(x.event); return x.rule; });
@@ -2833,7 +2898,7 @@ async function appHandler(req, res, url) {
     if (url.pathname === "/api/eod/run" && req.method === "POST") { if (currentUser().role !== "owner") return reply(res, 403, { message: "Owner only." }); runEod().catch(() => {}); return reply(res, 202, { started: true }); }
     if (url.pathname === "/api/prices/status" && req.method === "GET") {
       const { stocks } = await syncLivePrices(), latest = stocks.reduce((m, x) => Math.max(m, Date.parse(x.priceAt || "") || 0), 0);
-      return reply(res, 200, { ...priceState, intervalSec: PRICE_REFRESH_SEC, marketOpen: marketIsOpen(), myLatestPriceAt: latest ? new Date(latest).toISOString() : null, version: priceVersion(stocks), pending: myPending(stocks) });
+      return reply(res, 200, { ...priceState, stream: streamView(), intervalSec: PRICE_REFRESH_SEC, marketOpen: marketIsOpen(), myLatestPriceAt: latest ? new Date(latest).toISOString() : null, version: priceVersion(stocks), pending: myPending(stocks) });
     }
     // Refresh now: answers at once; prices stream to the page over /api/events as they arrive, then a "refresh" event
     // carries the summary (wait=1 keeps the old behaviour of answering when done, for scripts).
@@ -2863,21 +2928,21 @@ async function appHandler(req, res, url) {
     // Live updates for this page: new prices for this account's stocks, refresh results. One stream per open tab.
     if (url.pathname === "/api/events" && req.method === "GET") {
       const user = currentUser(); let syms = new Set();
-      const loadSyms = async () => { const [stocks, st] = await Promise.all([readWatchlist(), readJson(swingFile(), {})]); syms = new Set([...stocks.filter(x => symOf(x)).map(x => `${x.exchange || "NSE"}:${symOf(x)}`), ...[...(st.positions || []), ...(st.watch || [])].map(x => `${x.exchange || "NSE"}:${x.symbol}`)]); };
+      const loadSyms = async () => { const [stocks, st, hold] = await Promise.all([readWatchlist(), readJson(swingFile(), {}), readHoldStore()]); syms = new Set([...stocks.filter(x => symOf(x)).map(x => `${x.exchange || "NSE"}:${symOf(x)}`), ...[...(st.positions || []), ...(st.watch || [])].map(x => `${x.exchange || "NSE"}:${x.symbol}`), ...Object.values(hold.accounts || {}).flatMap(a => (a.holdings || []).filter(h => h.symbol).map(h => `${h.exchange === "BSE" ? "BSE" : "NSE"}:${String(h.symbol).toUpperCase()}`))]); };
       await loadSyms();
       res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" });
       const send = (event, data) => { try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* closed */ } };
       let batch = {}, timer = null;
       const onQuote = (key, q) => {
         if (!syms.has(key)) return;
-        batch[key.slice(key.indexOf(":") + 1)] = { price: q.price, asOf: q.asOf || null, source: q.source, prevClose: q.prevClose ?? null };
+        batch[key.slice(key.indexOf(":") + 1)] = { price: q.price, asOf: q.asOf || null, source: q.source, prevClose: q.prevClose ?? null, ...(q.stream ? { stream: true, dayOpen: q.dayOpen ?? null, dayHigh: q.dayHigh ?? null, dayLow: q.dayLow ?? null, volume: q.volume ?? null } : {}) };
         if (!timer) timer = setTimeout(() => { timer = null; const b = batch; batch = {}; send("prices", { quotes: b, at: Date.now() }); }, 300);
       };
       const onUser = (uid, event, data) => { if (uid === user.id) { if (event === "symbols") asUser(user, loadSyms).catch(() => {}); else send(event, data); } };
       priceBus.on("quote", onQuote); priceBus.on("user", onUser);
       const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch { /* closed */ } }, 25e3);
       const rs = setInterval(() => asUser(user, loadSyms).catch(() => {}), 60e3);
-      send("hello", { marketOpen: marketIsOpen(), intervalSec: PRICE_REFRESH_SEC, symbols: syms.size });
+      send("hello", { marketOpen: marketIsOpen(), intervalSec: PRICE_REFRESH_SEC, symbols: syms.size, streaming: angelStream.status().state === "live" });
       req.on("close", () => { priceBus.off("quote", onQuote); priceBus.off("user", onUser); clearInterval(hb); clearInterval(rs); clearTimeout(timer); });
       return;
     }
@@ -2890,12 +2955,21 @@ async function appHandler(req, res, url) {
       await syncLivePrices();
       return reply(res, 200, { prices: Object.fromEntries([...got].filter(([, v]) => !v.stale).map(([k, v]) => [k, { price: v.price, source: v.source, asOf: v.asOf || null }])), pending: got.pending });
     }
+    if (url.pathname === "/api/chart/lines" && req.method === "POST") {
+      const b = await readBody(req), symbol = String(b.symbol || "").trim().toUpperCase();
+      if (!/^[A-Z0-9&-]{1,20}$/.test(symbol)) return reply(res, 400, { message: "Which stock?" });
+      try {
+        let lines = [];
+        await withUserLock(async () => { const st = applyDrawingOp(await readJson(chartLinesFile(), {}), symbol, b.op, b.line || b); await writeJson(chartLinesFile(), st); lines = st[symbol] || []; });
+        return reply(res, 200, { lines });
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
     if (url.pathname === "/api/chart" && req.method === "GET") {
       const symbol = String(url.searchParams.get("symbol") || "").trim().toUpperCase(), exchange = url.searchParams.get("exchange") === "BSE" ? "BSE" : "NSE", tf = CHART_TF[url.searchParams.get("tf")] ? url.searchParams.get("tf") : "6M";
       if (!/^[A-Z0-9&-]{1,20}$/.test(symbol)) return reply(res, 400, { message: "Which stock?" });
-      const [d, levels] = await Promise.all([chartBars(symbol, exchange, tf), chartLevels(symbol)]);
-      const live = livePriceCache.get(`${exchange}:${symbol}`);
-      return reply(res, 200, { symbol, exchange, tf, ...d, levels, live: live ? { price: live.price, prevClose: live.prevClose ?? null, source: live.source, asOf: live.asOf || null } : null });
+      const [d, levels, events, lines, sw] = await Promise.all([chartBars(symbol, exchange, tf), chartLevels(symbol), chartMarks(symbol), readJson(chartLinesFile(), {}), readJson(swingFile(), {})]);
+      const live = livePriceCache.get(`${exchange}:${symbol}`), pos = (sw.positions || []).find(p => p.symbol === symbol);
+      return reply(res, 200, { symbol, exchange, tf, ...d, levels, events, lines: lines[symbol] || [], position: pos ? { id: pos.id, stopLoss: pos.stopLoss ?? null, avgPrice: pos.avgPrice } : null, streaming: angelStream.status().state === "live", live: live ? { price: live.price, prevClose: live.prevClose ?? null, source: live.source, asOf: live.asOf || null } : null });
     }
     if (url.pathname === "/api/prices/now" && req.method === "POST") { // manualRetryAt: per source, when ⟳ last lifted its pause
       // ⟳ on one stock: fetch it right now, first in line. Sources paused after a refusal get one more try, and a
@@ -3260,6 +3334,11 @@ async function appHandler(req, res, url) {
           else { if (!prev && st.positions.length >= 100) throw new Error("At most 100 swing positions."); st.positions = prev ? st.positions.map(x => (x.id === p.id ? p : x)) : [...st.positions, p]; }
         }
         else if (op === "watch") { const prev = b.id ? find("watch", b.id) : null; if (!prev && st.watch.length >= 100) throw new Error("At most 100 swing watchlist entries."); const w = sanitizeWatch(b, prev); st.watch = prev ? st.watch.map(x => (x.id === w.id ? w : x)) : [...st.watch, w]; }
+        else if (op === "stop") { // set or clear just the stop-loss (from the chart)
+          const p = find("positions", b.id), v = b.stopLoss === null || b.stopLoss === "" ? null : Math.round(Number(String(b.stopLoss).replace(/[₹,\s]/g, "")) * 100) / 100;
+          if (v !== null && !(v > 0)) throw new Error("Enter a stop-loss price.");
+          st.positions = st.positions.map(x => (x.id === p.id ? { ...x, stopLoss: v } : x)); notice = v === null ? `${p.name}: stop-loss removed.` : `${p.name}: stop-loss set at ₹${v.toLocaleString("en-IN")}.`;
+        }
         else if (op === "delete") { st.positions = st.positions.filter(x => x.id !== b.id); st.watch = st.watch.filter(x => x.id !== b.id); }
         else if (op === "buy") { const p = find("positions", b.id), q = Number(b.qty), pr = Number(b.price); if (!(q > 0 && Number.isInteger(q) && pr > 0)) throw new Error("Enter whole shares and a price."); const at = tradeDate(b.date); st.positions = st.positions.map(x => (x.id === p.id ? applyBuy(x, q, pr, at) : x)); moveCash(st, -q * pr, `Bought ${q} ${p.symbol} @ ₹${pr} on ${at.slice(0, 10)}`); }
         else if (op === "sell") {

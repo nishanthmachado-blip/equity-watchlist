@@ -250,6 +250,8 @@ Use this option if the team standardises on ALBs.
 | `TELEGRAM_API` | `https://api.telegram.org` | Telegram Bot API base (only change for a proxy or tests) |
 | `PRICE_REFRESH_SECONDS` | `180` | How often prices refresh while the market is open (minimum 30). One shared run for all accounts. Lower values make NSE / Yahoo / Screener block the server sooner. |
 | `ANGEL_PRICES` | on | Live prices, daily price history and the 📈 price charts (intraday too) from your Angel One account (SmartAPI, read-only market data) whenever it is connected. `0` turns it off (daily charts then use saved NSE closes / Yahoo; no intraday). |
+| `ANGEL_STREAM` | on | Live prices pushed by Angel One while the market is open (SmartAPI WebSocket, market data only; up to 1,000 of your stocks). `0` turns it off. Needs `ANGEL_PRICES` on and Angel One connected. |
+| `ANGEL_WS_URL` | Angel's feed | Address of the live feed (only for testing). |
 | `ANGEL_SCRIP_URL` | Angel's public instrument list | Where the symbol → instrument-token list is downloaded from (weekly). Only for a mirror or tests. |
 | `ANGEL_API_ROOT` | `https://apiconnect.angelone.in` | Angel One API address. Only for a proxy or tests. |
 | `SWING_SCAN_MARKET` | off | `1` adds ~170 large and mid caps to the daily swing-ideas chart scan (by default it scans only your watchlists, swing stocks and holdings). |

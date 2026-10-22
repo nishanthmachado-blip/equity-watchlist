@@ -7,6 +7,29 @@ import net from "node:net";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { chartEvents, applyDrawingOp, sanitizeDrawing } from "../chartmarks.mjs";
+
+test("chart marks: results, dividends, order wins and your trades; upcoming ones flagged", () => {
+  const ev = chartEvents("TCS", { today: "2026-10-21",
+    corp: { events: [{ symbol: "TCS", date: "2026-07-10", kind: "results", label: "Results" }, { symbol: "TCS", date: "2026-11-05", kind: "results", label: "Results" }, { symbol: "INFY", date: "2026-07-11", kind: "results" }],
+      actions: [{ symbol: "TCS", exDate: "2026-07-18", kind: "dividend", amount: 11, label: "Dividend" }] },
+    divs: [{ d: "2026-07-18", a: 11 }, { d: "2025-07-18", a: 10 }],
+    orders: [{ symbol: "TCS", day: "2026-09-01", valueCr: 1250, text: "Bagging of order" }, { symbol: "INFY", day: "2026-09-02", valueCr: 9 }],
+    ledger: [{ type: "BUY", symbol: "TCS", date: "2026-08-03", at: "2026-08-03T05:00:00Z", qty: 5, price: 3000 }, { type: "SELL", symbol: "TCS", date: "2026-09-10", at: "2026-09-10T06:00:00Z", qty: 5, price: 3300, pnl: 1500, pnlPct: 10 }] });
+  assert.deepEqual(ev.map(e => [e.kind, e.date]), [["dividend", "2025-07-18"], ["results", "2026-07-10"], ["dividend", "2026-07-18"], ["buy", "2026-08-03"], ["order", "2026-09-01"], ["sell", "2026-09-10"], ["results", "2026-11-05"]]);
+  assert.equal(ev.at(-1).upcoming, true);
+  assert.match(ev.find(e => e.kind === "order").label, /1,250 Cr/);
+  assert.match(ev.find(e => e.kind === "sell").detail, /\+₹1,500 \(10%\)/);
+});
+test("chart lines: add / delete / clear, with checks", () => {
+  let st = applyDrawingOp({}, "TCS", "add", { kind: "h", price: "₹3,050.5" });
+  st = applyDrawingOp(st, "TCS", "add", { kind: "trend", t1: 2000, p1: 120, t2: 1000, p2: 100 });
+  assert.deepEqual(st.TCS.map(l => l.kind === "h" ? l.price : [l.t1, l.p1, l.t2, l.p2]), [3050.5, [1000, 100, 2000, 120]], "trend points in time order");
+  assert.throws(() => sanitizeDrawing({ kind: "h", price: -1 }));
+  assert.throws(() => sanitizeDrawing({ kind: "trend", t1: 5, p1: 1, t2: 5, p2: 2 }));
+  st = applyDrawingOp(st, "TCS", "delete", { id: st.TCS[0].id }); assert.equal(st.TCS.length, 1);
+  st = applyDrawingOp(st, "TCS", "clear"); assert.equal(st.TCS, undefined);
+});
 
 const freePort = () => new Promise(r => { const s = net.createServer().listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => r(p)); }); });
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -45,7 +68,7 @@ test("chart: candles from Angel One with the right interval per period, your lev
   });
   const fport = await freePort(); await new Promise(r => fake.listen(fport, "127.0.0.1", r));
   const F = `http://127.0.0.1:${fport}`;
-  const s = await start({ YAHOO_CHART_BASE: "http://127.0.0.1:9", ANGEL_API_ROOT: F, ANGEL_SCRIP_URL: `${F}/scrip`, ANGEL_API_KEY: "key", ANGEL_CLIENT_CODE: "A1", ANGEL_PIN: "1234", ANGEL_TOTP_SECRET: "JBSWY3DPEHPK3PXP" });
+  const s = await start({ YAHOO_CHART_BASE: "http://127.0.0.1:9", ANGEL_API_ROOT: F, ANGEL_SCRIP_URL: `${F}/scrip`, ANGEL_API_KEY: "key", ANGEL_CLIENT_CODE: "A1", ANGEL_PIN: "1234", ANGEL_TOTP_SECRET: "JBSWY3DPEHPK3PXP", ANGEL_STREAM: "0" });
   try {
     const sp = await s.call("/api/swing/position", { cookie: s.owner, body: { symbol: "TCS", name: "TCS", qty: 10, avgPrice: 1100, stopLoss: 1000 } }); assert.equal(sp.status, 200, sp.text);
     const d = await s.call("/api/chart?symbol=TCS&tf=1Y", { cookie: s.owner });
@@ -61,6 +84,18 @@ test("chart: candles from Angel One with the right interval per period, your lev
     assert.equal(i.json.bars.length, 3, "1D keeps only the last trading day");
     assert.equal(new Date((i.json.bars[0].t + 19800) * 1000).toISOString().slice(11, 16), "09:15");
     assert.ok(seen.some(x => /getCandleData .*"interval":"FIFTEEN_MINUTE"|getCandleData .*"interval":"FIVE_MINUTE"/.test(x)));
+    assert.ok(d.json.events.some(e => e.kind === "buy" && /Bought 10/.test(e.label)), "your buy is marked");
+    assert.equal(d.json.position.stopLoss, 1000);
+    // click-to-act: stop-loss, alert, your lines
+    assert.equal((await s.call("/api/swing/stop", { cookie: s.owner, body: { id: d.json.position.id, stopLoss: 1050 } })).status, 200);
+    assert.equal((await s.call("/api/rules/save", { cookie: s.owner, body: { symbol: "TCS", type: "above", value: 1500 } })).status, 200);
+    const ln = await s.call("/api/chart/lines", { cookie: s.owner, body: { symbol: "TCS", op: "add", line: { kind: "h", price: 1234.5 } } });
+    assert.equal(ln.status, 200, ln.text); assert.equal(ln.json.lines[0].price, 1234.5);
+    const d2 = await s.call("/api/chart?symbol=TCS&tf=1Y", { cookie: s.owner });
+    assert.equal(d2.json.position.stopLoss, 1050);
+    assert.ok(d2.json.levels.some(l => l.kind === "alert" && l.price === 1500 && l.id), "your alert shows as a line");
+    assert.equal(d2.json.lines.length, 1);
+    assert.equal((await s.call("/api/chart/lines", { cookie: s.owner, body: { symbol: "TCS", op: "add", line: { kind: "h", price: "x" } } })).status, 400);
     assert.equal((await s.call("/api/chart?symbol=../etc&tf=1D", { cookie: s.owner })).status, 400);
     assert.equal((await s.call("/api/chart?symbol=TCS&tf=1D")).status, 401, "needs a login");
     assert.ok(seen.every(x => !/order|place|modify|cancel/i.test(x.split(" ")[1])), "only read-only endpoints");
