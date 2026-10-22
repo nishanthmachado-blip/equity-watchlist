@@ -707,3 +707,6 @@ tr.fav-row>td{background-color:color-mix(in srgb,#e11d48 4%,var(--card-bg,#fff))
 .ch-foot{margin:0;font-size:.78em}
 body.ch-open{overflow:hidden}
 @media (max-width:640px){.ch-box{width:100vw;height:100dvh;border-radius:0;padding:10px 10px 8px}.ch-tog{font-size:.8em}}
+/* v5.32.1 holdings: only Profit / loss is red / green; current value has its own colour */
+#pfCards strong.pf-cv{color:#1d4ed8}
+[data-theme="dark"] #pfCards strong.pf-cv{color:#93c5fd}

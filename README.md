@@ -1,5 +1,8 @@
 # Equity Watchlist MVP
 
+## v5.32.1: holdings tiles colours
+- My holdings: only **Profit / loss** is red or green now. **Current value** has its own blue colour, so a loss no longer turns it red.
+
 ## v5.32.0: price charts (TradingView Lightweight Charts, data from Angel One)
 - **📈 Chart** on any stock: the Value a stock card, your holdings, swing positions, the swing watchlist and ideas, Favourites and Order wins. Opens a full-screen candlestick chart with volume.
 - **Periods:** 1D (5-minute candles), 1W (15-minute), 1M (1-hour), 6M / 1Y / 5Y (daily). Intraday candles refresh every minute while the chart is open.
