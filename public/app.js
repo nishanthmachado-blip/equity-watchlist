@@ -797,7 +797,17 @@ const THEMES=[
   {id:"glass",group:"redesign",name:"Glass",desc:"Aurora background, frosted translucent cards, floating menu",dark:true,skin:true,sw:["#5b3df5","#00b4d8","#ff4fa3"]},
   {id:"editorial",group:"redesign",name:"Editorial",desc:"Financial-newspaper style: salmon paper, serif headlines, rules",dark:false,skin:true,sw:["#fff1e5","#1a1817","#990f3d"]},
   {id:"vibe",group:"redesign",name:"Vibe",desc:"Gen-Z neo-brutal: chunky outlines, hard shadows, lime + violet",dark:false,skin:true,sw:["#7c5cff","#f5f3ff","#c6f432"]},
-  {id:"vibe-night",group:"redesign",name:"Vibe night",desc:"The Vibe redesign on a dark canvas",dark:true,skin:true,sw:["#0d0b14","#9f86ff","#c6f432"]}
+  {id:"vibe-night",group:"redesign",name:"Vibe night",desc:"The Vibe redesign on a dark canvas",dark:true,skin:true,sw:["#0d0b14","#9f86ff","#c6f432"]},
+  {id:"clean",group:"redesign",name:"Clean",desc:"Calm white dashboard: hairline cards, black pills, menu with labels on the left",dark:false,skin:true,menuLeft:true,sw:["#f4f5f7","#111827","#16a34a"]},
+  {id:"clean-night",group:"redesign",name:"Clean night",desc:"The Clean redesign in dark grey",dark:true,skin:true,menuLeft:true,sw:["#0f1115","#f3f4f6","#22c55e"]},
+  {id:"saffron",group:"redesign",name:"Saffron",desc:"Warm orange and cream, soft glow header, playful rounded cards",dark:false,skin:true,menuLeft:true,sw:["#fff8f2","#f26d0f","#1f1a17"]},
+  {id:"onyx",group:"redesign",name:"Onyx",desc:"Deep black fintech look, white pills, mint-green gains",dark:true,skin:true,menuLeft:true,sw:["#050505","#f5f5f5","#3ee08f"]},
+  {id:"chilli",group:"redesign",name:"Chilli",desc:"Bold red header band over light, airy cards",dark:false,skin:true,menuLeft:true,sw:["#d6223a","#fff6f6","#1c1416"]},
+  {id:"sage",group:"redesign",name:"Sage",desc:"Calm muted green on warm off-white, soft and rounded",dark:false,skin:true,menuLeft:true,sw:["#f5f6f1","#3f7d5a","#c49a45"]},
+  {id:"regal",group:"redesign",name:"Regal",desc:"Deep navy and gold: a private-banking feel",dark:true,skin:true,menuLeft:true,sw:["#0b1326","#d6b25e","#eef1f8"]},
+  {id:"mono",group:"redesign",name:"Mono",desc:"Black and white only, hairlines and big numbers",dark:false,skin:true,menuLeft:true,sw:["#ffffff","#0a0a0a","#0f8a43"]},
+  {id:"breeze",group:"redesign",name:"Breeze",desc:"Broker-terminal style: plain white, soft blue, slim header, tight rows",dark:false,skin:true,menuLeft:true,sw:["#ffffff","#3b7dd8","#e0464a"]},
+  {id:"breeze-night",group:"redesign",name:"Breeze night",desc:"The Breeze terminal look on charcoal",dark:true,skin:true,menuLeft:true,sw:["#191a1d","#5b9cf0","#4cc27e"]}
 ];
 function currentThemeId(){let id=null,chosen=null;try{id=localStorage.getItem("equity-skin");chosen=localStorage.getItem("equity-skin-chosen")}catch{}if(chosen&&THEMES.some(t=>t.id===id))return id;return "indigo"}
 function applyTheme(id){
@@ -805,6 +815,7 @@ function applyTheme(id){
   if(t.dark)root.setAttribute("data-theme","dark");else root.removeAttribute("data-theme");
   if(t.skin)root.setAttribute("data-skin",t.id);else root.removeAttribute("data-skin");
   try{localStorage.setItem("equity-skin",t.id)}catch{}
+  applyLayout(t.id);
   const btn=$("#themeToggle");if(btn)btn.innerHTML=`🎨 <span class="theme-name">${t.name.replace(" (default)","")}</span>`;
   document.querySelectorAll(".theme-menu [data-theme-id]").forEach(b=>b.setAttribute("aria-checked",String(b.dataset.themeId===t.id)));
 }
@@ -813,14 +824,46 @@ function initTheme(){
   const wrap=document.createElement("span");wrap.className="theme-wrap";btn.parentNode.insertBefore(wrap,btn);wrap.appendChild(btn);
   const menu=document.createElement("div");menu.className="theme-menu";menu.setAttribute("role","menu");menu.hidden=true;
   const item=t=>`<button type="button" role="menuitemradio" data-theme-id="${t.id}" aria-checked="false"><span class="swatch">${t.sw.map(c=>`<i style="background:${c}"></i>`).join("")}</span><span class="tm-txt"><b>${t.name}</b>${t.desc?`<small>${t.desc}</small>`:""}</span></button>`;
-  menu.innerHTML=`<p class="tm-h">Text size <small>whole app, this browser</small></p><div class="tm-size" role="group" aria-label="Text size">${TEXT_SIZES.map(([z,l,t])=>`<button type="button" data-zoom="${z}" title="${t}" style="font-size:${Math.round(13*z)}px">${l}</button>`).join("")}</div><p class="tm-h">Colour themes</p>${THEMES.filter(t=>!t.group).map(item).join("")}<p class="tm-h">Full redesigns <small>new layout, type and shapes</small></p>${THEMES.filter(t=>t.group==="redesign").map(item).join("")}`;
+  menu.innerHTML=`<p class="tm-h">Text size <small>whole app, this browser</small></p><div class="tm-size" role="group" aria-label="Text size">${TEXT_SIZES.map(([z,l,t])=>`<button type="button" data-zoom="${z}" title="${t}" style="font-size:${Math.round(13*z)}px">${l}</button>`).join("")}</div><p class="tm-h">Layout <small>this browser</small></p><div class="tm-lay">${LAYOUT_OPTS.map(([k,label,opts])=>`<div class="tm-lay-row"><span>${label}</span><div class="tm-size" role="group" aria-label="${label}">${opts.map(([v,l,t])=>`<button type="button" data-lay="${k}" data-v="${v}" title="${t}">${l}</button>`).join("")}</div></div>`).join("")}<p class="tm-logo-st" id="tmLogoSt"></p></div><p class="tm-h">Favourites look <small>how your ❤ stocks stand out</small></p><div class="tm-size tm-fav" role="group" aria-label="Favourites look">${FAV_STYLES.map(([k,l,t])=>`<button type="button" data-fav-style="${k}" title="${t}">${l}</button>`).join("")}</div><p class="tm-h">Colour themes</p>${THEMES.filter(t=>!t.group).map(item).join("")}<p class="tm-h">Full redesigns <small>new layout, type and shapes</small></p>${THEMES.filter(t=>t.group==="redesign").map(item).join("")}`;
   wrap.appendChild(menu);btn.setAttribute("aria-haspopup","menu");btn.setAttribute("aria-expanded","false");btn.title="Choose a theme";
   const close=()=>{menu.hidden=true;btn.setAttribute("aria-expanded","false")};
-  btn.onclick=e=>{e.stopPropagation();menu.hidden=!menu.hidden;btn.setAttribute("aria-expanded",String(!menu.hidden));if(!menu.hidden)menu.querySelector('[aria-checked="true"]')?.focus()};
-  menu.onclick=e=>{const zb=e.target.closest("[data-zoom]");if(zb){e.stopPropagation();applyZoom(Number(zb.dataset.zoom));return}const b=e.target.closest("[data-theme-id]");if(b){try{localStorage.setItem("equity-skin-chosen","1")}catch{}applyTheme(b.dataset.themeId);close();btn.focus()}};
+  btn.onclick=e=>{e.stopPropagation();menu.hidden=!menu.hidden;btn.setAttribute("aria-expanded",String(!menu.hidden));if(!menu.hidden)logoStatus();if(!menu.hidden)menu.querySelector('[aria-checked="true"]')?.focus()};
+  menu.onclick=e=>{const zb=e.target.closest("[data-zoom]");if(zb){e.stopPropagation();applyZoom(Number(zb.dataset.zoom));return}const fb=e.target.closest("[data-fav-style]");if(fb){e.stopPropagation();applyFavStyle(fb.dataset.favStyle);return}const lb=e.target.closest("[data-lay]");if(lb){e.stopPropagation();setLayout(lb.dataset.lay,lb.dataset.v);return}const b=e.target.closest("[data-theme-id]");if(b){try{localStorage.setItem("equity-skin-chosen","1")}catch{}applyTheme(b.dataset.themeId);close();btn.focus()}};
   document.addEventListener("click",e=>{if(!wrap.contains(e.target))close()});
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!menu.hidden){close();btn.focus()}});
-  applyTheme(currentThemeId());applyZoom(currentZoom());
+  applyTheme(currentThemeId());applyZoom(currentZoom());applyFavStyle(currentFavStyle());
+}
+// Layout (any theme): which side the menu sits on, whether it shows labels, and how dense tables and cards are.
+// Menu side "auto" follows the theme (Clean puts it on the left). Stored per browser.
+const LAYOUT_OPTS=[["menuside","Menu side",[["auto","Auto","The theme decides (Clean: left, others: right)"],["left","⇤ Left","Menu on the left"],["right","Right ⇥","Menu on the right"]]],
+  ["menu","Menu",[["icons","Icons","Folded to icons; opens when you point at it"],["labels","Labels","Always open, with names (same as 📌)"]]],
+  ["density","Density",[["comfortable","Comfortable","Roomy tables and cards"],["compact","Compact","Tighter rows and cards: more on screen"]]],
+  ["logos","Logos",[["logos","Logos","Company logos beside each stock (initials until found)"],["initials","Initials","Coloured initials only"],["off","Off","No badge"]]]];
+function layoutPref(k){const d={menuside:"auto",menu:"icons",density:"comfortable",logos:"logos"}[k];let v=d;try{v=k==="menu"?(localStorage.getItem("equity-menu-pinned")==="1"?"labels":"icons"):localStorage.getItem(`equity-${k}`)||d}catch{}return LAYOUT_OPTS.find(o=>o[0]===k)[2].some(x=>x[0]===v)?v:d}
+function setLayout(k,v){
+  try{if(k==="menu")localStorage.setItem("equity-menu-pinned",v==="labels"?"1":"0");else if(v==="auto"||v==="comfortable"||(k==="logos"&&v==="logos"))localStorage.removeItem(`equity-${k}`);else localStorage.setItem(`equity-${k}`,v)}catch{}
+  if(k==="menu")window.setMenuPinned?.(v==="labels");
+  applyLayout();
+}
+let layoutThemeId=null;
+function applyLayout(id){
+  if(id)layoutThemeId=id;
+  const root=document.documentElement,side=layoutPref("menuside"),t=THEMES.find(x=>x.id===(layoutThemeId||currentThemeId()));
+  root.setAttribute("data-menuside",side==="auto"?(t?.menuLeft?"left":"right"):side);
+  const den=layoutPref("density");if(den==="compact")root.setAttribute("data-density","compact");else root.removeAttribute("data-density");
+  const lg=layoutPref("logos");if(lg==="logos")root.removeAttribute("data-logos");else root.setAttribute("data-logos",lg);
+  document.querySelectorAll(".tm-lay [data-lay]").forEach(b=>b.setAttribute("aria-pressed",String(layoutPref(b.dataset.lay)===b.dataset.v)));
+}
+// Logo lookups so far (shown under Layout → Logos)
+function logoStatus(){const el=document.getElementById("tmLogoSt");if(!el)return;fetch("/api/logos/status").then(r=>r.ok?r.json():null).then(j=>{if(!j){el.textContent="";return}el.textContent=!j.enabled?"Logo lookups are off on this server (LOGOS=0): initials only.":`Logos: ${j.found} found · ${j.none} without one (initials)${j.queued?` · ${j.queued} being looked up`:""}${j.pausedUntil?` · lookups paused until ${new Date(j.pausedUntil).toLocaleTimeString("en-IN",{hour:"numeric",minute:"2-digit"})}`:""}${j.lastError?` · last problem: ${j.lastError}`:""}`}).catch(()=>{el.textContent=""})}
+// How favourite stocks stand out in tables and cards; remembered per browser. "stripe" (a thin red bar) is the default.
+const FAV_STYLES=[["stripe","▍ Stripe","A thin red bar on the left of the row (default)"],["tint","░ Tint","A faint pink background, no border"],["heart","❤ Heart","Only the heart icon"],["box","▢ Box","A red box around the row (the old look)"]];
+function currentFavStyle(){let f="stripe";try{f=localStorage.getItem("equity-fav-style")||"stripe"}catch{}return FAV_STYLES.some(x=>x[0]===f)?f:"stripe"}
+function applyFavStyle(f){
+  if(!FAV_STYLES.some(x=>x[0]===f))f="stripe";
+  document.documentElement.setAttribute("data-favlook",f);
+  try{if(f==="stripe")localStorage.removeItem("equity-fav-style");else localStorage.setItem("equity-fav-style",f)}catch{}
+  document.querySelectorAll(".tm-fav [data-fav-style]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.favStyle===f)));
 }
 // Text size for the whole app (CSS zoom on the page, so every px-sized style scales together); remembered per browser.
 const TEXT_SIZES=[[0.8,"A−−","Smallest (80%)"],[0.9,"A−","Smaller (90%)"],[1,"A","Normal (100%)"],[1.1,"A+","Larger (110%)"]];

@@ -10,21 +10,21 @@ header h1{font-size:clamp(26px,3.2vw,38px)}
 @media (min-width:1100px){
   body{padding-right:84px!important}
   .side-menu{width:84px!important;overflow:hidden;transition:width .18s ease,box-shadow .18s ease!important;z-index:60}
-  .side-menu:hover,.side-menu:focus-within{width:264px!important;box-shadow:-24px 0 48px -24px rgba(10,10,30,.45)}
+  .side-menu:hover,.side-menu:has(:focus-visible){width:264px!important;box-shadow:-24px 0 48px -24px rgba(10,10,30,.45)}
   .side-head{padding:20px 0 6px!important;justify-content:center}
   .side-head strong{display:none}
   .side-nav{padding:4px 12px 24px!important;overflow-x:hidden}
   .side-nav .viewTab,.side-nav #refresh{width:240px;justify-content:flex-start;padding:10px 14px!important;white-space:nowrap}
   .side-nav .ico{width:32px;font-size:18px}
   .side-nav .lbl{opacity:0;transition:opacity .12s}
-  .side-menu:hover .lbl,.side-menu:focus-within .lbl{opacity:1}
+  .side-menu:hover .lbl,.side-menu:has(:focus-visible) .lbl{opacity:1}
   /* section labels collapse to short dividers */
   .side-label{white-space:nowrap;height:18px;margin:12px 6px 4px!important;position:relative}
-  .side-menu:not(:hover):not(:focus-within) p.side-label{font-size:0}
-  .side-menu:not(:hover):not(:focus-within) p.side-label::after{content:"";position:absolute;left:8px;width:28px;top:8px;border-top:2px solid var(--line)}
+  .side-menu:not(:hover):not(:has(:focus-visible)) p.side-label{font-size:0}
+  .side-menu:not(:hover):not(:has(:focus-visible)) p.side-label::after{content:"";position:absolute;left:8px;width:28px;top:8px;border-top:2px solid var(--line)}
   .side-group>summary{list-style:none}.side-group>summary::-webkit-details-marker{display:none}
-  .side-menu:not(:hover):not(:focus-within) .side-group>summary .lbl{opacity:0}
-  .side-menu:not(:hover):not(:focus-within) .side-group>summary::after{content:"⋯";position:absolute;left:14px;top:-2px;font-size:18px;color:var(--muted)}
+  .side-menu:not(:hover):not(:has(:focus-visible)) .side-group>summary .lbl{opacity:0}
+  .side-menu:not(:hover):not(:has(:focus-visible)) .side-group>summary::after{content:"⋯";position:absolute;left:14px;top:-2px;font-size:18px;color:var(--muted)}
   .side-nav #refresh{margin:12px 0 0!important}
   .toasts{right:104px!important}
 }
@@ -112,10 +112,10 @@ header h1{font-size:clamp(26px,3.2vw,38px)}
 .menu-pin{display:none}
 @media (min-width:1100px){
   .menu-pin{display:inline-flex;align-items:center;justify-content:center;margin-left:auto;width:32px;height:32px;padding:0!important;border-radius:9px;font-size:15px;opacity:0;transition:opacity .12s}
-  .side-menu:hover .menu-pin,.side-menu:focus-within .menu-pin,body.menu-pinned .menu-pin{opacity:1}
+  .side-menu:hover .menu-pin,.side-menu:has(:focus-visible) .menu-pin,body.menu-pinned .menu-pin{opacity:1}
   body.menu-pinned .menu-pin{background:var(--ix-soft);border-color:var(--ix)}
-  .side-menu:hover .side-head,.side-menu:focus-within .side-head,body.menu-pinned .side-head{justify-content:flex-start!important;padding:20px 16px 6px 22px!important}
-  .side-menu:hover .side-head strong,.side-menu:focus-within .side-head strong{display:block}
+  .side-menu:hover .side-head,.side-menu:has(:focus-visible) .side-head,body.menu-pinned .side-head{justify-content:flex-start!important;padding:20px 16px 6px 22px!important}
+  .side-menu:hover .side-head strong,.side-menu:has(:focus-visible) .side-head strong{display:block}
   body.menu-pinned{padding-right:260px!important}
   body.menu-pinned .side-menu{width:260px!important;box-shadow:none!important}
   body.menu-pinned .side-nav .lbl{opacity:1!important}

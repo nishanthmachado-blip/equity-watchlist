@@ -131,7 +131,7 @@ export function buildEntry(stock, summary, timeseriesResult) {
   if (want.length && got.size && !want.some(t => got.has(t) || [...got].some(g => g.startsWith(t) || t.startsWith(g)))) warnings.push(`Yahoo lists this symbol as "${pr.longName || pr.shortName}", not "${stock.company}" - wrong ticker mapping?`);
   if (Number.isFinite(stock.price) && stock.price > 0 && Math.abs(price / stock.price - 1) > 0.2) warnings.push(`Yahoo price ${price} differs >20% from watchlist price ${stock.price}`);
   const entry = {
-    sector: ap.sector || undefined, industry: ap.industry || undefined, profile, cfoToProfit3: cfoToProfit3 ?? undefined, fcfNegative: fcfNegative ?? undefined, debtorDays: debtorDays ?? undefined, inventoryDays: inventoryDays ?? undefined, niLatest: niLatest ?? undefined, niAvg4: niAvg4 ?? undefined,
+    sector: ap.sector || undefined, industry: ap.industry || undefined, website: /^https?:\/\//.test(ap.website || "") ? ap.website : undefined, profile, cfoToProfit3: cfoToProfit3 ?? undefined, fcfNegative: fcfNegative ?? undefined, debtorDays: debtorDays ?? undefined, inventoryDays: inventoryDays ?? undefined, niLatest: niLatest ?? undefined, niAvg4: niAvg4 ?? undefined,
     marketCap: fin(pr.marketCap) ? Math.round(fin(pr.marketCap) / 1e7) : undefined,
     // for loss-makers valued on sales: last 12 months' revenue (₹ crore), its growth and the operating margin
     salesTtm: fin(fd.totalRevenue) ? Math.round(fin(fd.totalRevenue) / 1e7) : undefined, salesGrowth: fin(fd.revenueGrowth) ? Math.round(fin(fd.revenueGrowth) * 1000) / 10 : undefined, salesGrowthYears: fin(fd.revenueGrowth) ? 1 : undefined,

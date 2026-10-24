@@ -50,9 +50,9 @@
   }
   function usersHtml(users, meId) {
     return `<div class="acct-users">${users.map(u => `<div class="acct-user${u.disabled ? " off" : ""}">
-      <div><b>${esc(u.name)}</b> <small>@${esc(u.username)}</small> ${u.role === "owner" ? '<span class="acct-tag">owner</span>' : ""}${u.disabled ? '<span class="acct-tag off">disabled</span>' : ""}
+      <div><b>${esc(u.name)}</b> <small>@${esc(u.username)}</small> ${u.role === "owner" ? '<span class="acct-tag">owner</span>' : ""}${u.disabled ? '<span class="acct-tag off">disabled</span>' : ""}${u.twoStep ? '<span class="acct-tag">🔐 2-step</span>' : ""}
       <small class="acct-meta">${u.lastLoginAt ? `Last sign-in ${new Date(u.lastLoginAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}` : "Never signed in"}</small></div>
-      ${u.id === meId || u.role === "owner" ? "" : `<div class="acct-acts"><button type="button" class="ghost" data-act="reset" data-id="${u.id}">Reset password</button><button type="button" class="ghost" data-act="${u.disabled ? "enable" : "disable"}" data-id="${u.id}">${u.disabled ? "Enable" : "Disable"}</button><button type="button" class="ghost danger-text" data-act="remove" data-id="${u.id}" data-name="${esc(u.username)}">Remove</button></div>`}
+      ${u.id === meId || u.role === "owner" ? "" : `<div class="acct-acts"><button type="button" class="ghost" data-act="reset" data-id="${u.id}">Reset password</button><button type="button" class="ghost" data-act="${u.disabled ? "enable" : "disable"}" data-id="${u.id}">${u.disabled ? "Enable" : "Disable"}</button>${u.twoStep ? `<button type="button" class="ghost" data-act="reset-2fa" data-id="${u.id}" title="For someone who lost their phone and recovery codes">Reset 2-step</button>` : ""}<button type="button" class="ghost danger-text" data-act="remove" data-id="${u.id}" data-name="${esc(u.username)}">Remove</button></div>`}
     </div>`).join("")}</div>`;
   }
   async function manageAccounts() {
@@ -93,6 +93,7 @@
               setError(""); list.insertAdjacentHTML("afterbegin", `<p class="acct-pw">New temporary password: <code>${esc(pw)}</code> — share it with them; their other sessions were signed out.</p>`);
               return;
             }
+            if (act === "reset-2fa") { users = (await api(`/api/auth/users/${id}/reset-2fa`, {})).users; draw(); setError(""); list.insertAdjacentHTML("afterbegin", '<p class="acct-pw">Two-step sign-in is off for them now: ask them to turn it on again from 👤 → Two-step sign-in. It shows in their sign-in history.</p>'); return; }
             if (act === "remove" && !b.dataset.armed) {
               // Two-step confirm inside this dialog (a second dialog would close this one).
               b.dataset.armed = "1"; b.textContent = "Delete their data?"; b.classList.add("armed");
@@ -192,6 +193,60 @@
   }
   if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
 
+  // ---- Security check: what protects this account and this server, and what to fix ----
+  async function securityCheck() {
+    let x; try { x = await api("/api/auth/security"); } catch (e) { return window.toast?.(esc(e.message), { kind: "bad" }); }
+    const row = (ok, title, text) => `<div class="sec-row ${ok ? "ok" : "warn"}"><span>${ok ? "✅" : "⚠️"}</span><div><b>${title}</b><small>${text}</small></div></div>`;
+    await window.ui.dialog({
+      title: "Security check", icon: "🔒", okText: "Close", hideCancel: true, wide: true,
+      bodyHtml: `<div class="sec-list">
+        ${row(x.https, "HTTPS", x.https ? "This connection is encrypted and the sign-in cookie is sent over HTTPS only." : "This page was opened over plain HTTP. Fine on this computer; on a network or the internet, put the app behind HTTPS (see DEPLOYMENT.md).")}
+        ${row(x.twoStep.on, "Two-step sign-in", x.twoStep.on ? `On. ${x.twoStep.recoveryLeft} recovery codes left.` : "Off. Turn it on (👤 → Two-step sign-in) so a stolen password alone can't open your account.")}
+        ${row(x.secrets.encrypted, "Broker logins and keys encrypted at rest", x.secrets.encrypted ? "API keys, PINs, TOTP secrets, session tokens and bot tokens are stored encrypted (AES-256-GCM)." : "Not encrypted.")}
+        ${x.owner ? row(x.secrets.strong, "Encryption key kept apart from the data", x.secrets.strong ? `The key comes from ${esc(x.secrets.source)}, outside the data folder / database, so a stolen database copy cannot be decrypted.` : "The key is generated and kept with the data, so a full copy of the data folder / database could be decrypted. Set SECRETS_KEY (a long random string) in .env or the server environment and restart: everything is re-sealed with it automatically (no need to log in to brokers again) and the stored key is removed.") : ""}
+        ${row(true, "Brokers are read-only", "Every broker request is checked against a list of read-only endpoints; anything about orders is refused.")}
+        ${row(true, "Your data is private to your login", "Holdings, watchlists, trades, funds and broker logins are kept per account; nobody else can read them.")}</div>`
+    });
+  }
+  // ---- Two-step sign-in: a 6-digit code from an authenticator app after the password ----
+  let qrLib = null;
+  const loadQr = () => qrLib ||= new Promise((ok, no) => { if (window.qrcode) return ok(window.qrcode); const sc = document.createElement("script"); sc.src = "vendor/qrcode-generator-1.4.4.js"; sc.onload = () => ok(window.qrcode); sc.onerror = () => { qrLib = null; no(new Error("could not load")); }; document.head.append(sc); });
+  const codeField = (label = "6-digit code from the app") => `<label class="ui-field acct-f"><span>${label}</span><input class="ui-input" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="11" spellcheck="false"></label>`;
+  async function twoStep() {
+    let st; try { st = await api("/api/auth/2fa"); } catch (e) { return window.toast?.(esc(e.message), { kind: "bad" }); }
+    if (st.on) {
+      return window.ui.dialog({
+        title: "Two-step sign-in is on", icon: "🔐", okText: "Turn it off", danger: true, cancelText: "Keep it on",
+        message: `Since ${new Date(st.since).toLocaleDateString("en-IN", { dateStyle: "medium" })}. Signing in asks for your password and then the 6-digit code from your authenticator app. ${st.recoveryLeft} of 8 recovery codes left.`,
+        bodyHtml: `<p class="ui-hint">To turn it off, confirm with your password and a current code (or a recovery code).</p>${pwField("Password", "password", "current-password")}${codeField("Code from the app, or a recovery code")}`,
+        collect: async box => { const v = n => box.querySelector(`[name=${n}]`).value; await api("/api/auth/2fa/disable", { password: v("password"), code: v("code") }); window.toast?.("Two-step sign-in turned off.", { kind: "ok" }); if (window.ME?.user) window.ME.user.twoStep = false; return true; }
+      });
+    }
+    let setup; try { setup = await api("/api/auth/2fa/setup", {}); } catch (e) { return window.toast?.(esc(e.message), { kind: "bad" }); }
+    let qrImg = "";
+    try { const q = (await loadQr())(0, "M"); q.addData(setup.uri); q.make(); qrImg = q.createDataURL(5, 8); } catch { /* show the key only */ }
+    const done = await window.ui.dialog({
+      title: "Turn on two-step sign-in", icon: "🔐", okText: "Turn on", wide: true,
+      message: "After your password, the app will ask for a 6-digit code from an authenticator app on your phone (Google Authenticator, Microsoft Authenticator, Authy, 1Password…). Someone who learns your password still can't get in.",
+      bodyHtml: `<div class="mfa-setup">${qrImg ? `<img class="mfa-qr" src="${qrImg}" alt="QR code to scan with your authenticator app" width="200" height="200">` : ""}
+        <div><p class="ui-hint"><b>1.</b> In the app, add an account and scan this code${qrImg ? "" : " (or type the key)"}.<br>Can't scan? Enter this key (time-based):</p><code class="mfa-key">${esc(setup.secret)}</code>
+        <p class="ui-hint"><b>2.</b> Type the 6-digit code the app shows:</p>${codeField()}</div></div>`,
+      collect: async box => { const r = await api("/api/auth/2fa/enable", { code: box.querySelector("[name=code]").value }); return r; }
+    });
+    if (!done?.recoveryCodes) return;
+    if (window.ME?.user) window.ME.user.twoStep = true;
+    const text = `Equity Watchlist recovery codes for @${window.ME?.user?.username || ""}\nEach works once, instead of a code from the app.\n\n${done.recoveryCodes.join("\n")}\n`;
+    await window.ui.dialog({
+      title: "Save your recovery codes", icon: "🧾", okText: "I've saved them", hideCancel: true,
+      message: "If you lose your phone, each of these codes lets you sign in once. Keep them somewhere safe (a password manager, or printed). They are shown only now.",
+      bodyHtml: `<pre class="mfa-codes">${done.recoveryCodes.map(esc).join("\n")}</pre><div class="mfa-acts"><button type="button" class="ghost" data-copy>Copy</button><button type="button" class="ghost" data-dl>Download .txt</button></div>`,
+      onOpen: box => {
+        box.querySelector("[data-copy]").onclick = async e => { try { await navigator.clipboard.writeText(text); e.target.textContent = "Copied"; } catch { e.target.textContent = "Select and copy the codes"; } };
+        box.querySelector("[data-dl]").onclick = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" })); a.download = "equity-watchlist-recovery-codes.txt"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); };
+      }
+    });
+    window.toast?.("Two-step sign-in is on.", { kind: "ok" });
+  }
   async function openMenu() {
     const me = (await window.meReady).user; if (!me) return signOut();
     const owner = me.role === "owner";
@@ -200,14 +255,16 @@
       message: `Signed in as <b>@${esc(me.username)}</b>${owner ? " · owner" : ""}. Your holdings, watchlists and broker logins are visible only to this account.`,
       bodyHtml: `<div class="acct-menu">
         <button type="button" class="ghost" data-a="pw">🔑 Change password</button>
+        <button type="button" class="ghost" data-a="mfa">🔐 Two-step sign-in${me.twoStep ? " · on" : ""}</button>
         <button type="button" class="ghost" data-a="activity">🛡️ Sign-in activity</button>
+        <button type="button" class="ghost" data-a="check">🔒 Security check</button>
         <button type="button" class="ghost" data-a="backup">💾 Backup &amp; restore</button>
         ${standalone() ? "" : '<button type="button" class="ghost" data-a="install">📲 Install as an app</button>'}
         ${owner ? '<button type="button" class="ghost" data-a="users">👥 Manage accounts</button>' : ""}
         <button type="button" class="ghost" data-a="out">↪ Sign out</button></div>`,
       onOpen: box => box.querySelector(".acct-menu").addEventListener("click", e => {
         const a = e.target.closest("[data-a]")?.dataset.a; if (!a) return;
-        const run = { pw: changePassword, users: manageAccounts, out: signOut, backup: backupRestore, install, activity }[a];
+        const run = { pw: changePassword, users: manageAccounts, out: signOut, backup: backupRestore, install, activity, mfa: twoStep, check: securityCheck }[a];
         // Close this menu, then open the next dialog.
         box.closest(".ui-scrim").querySelector('[data-ui="ok"]').click(); setTimeout(run, 180);
       })

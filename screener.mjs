@@ -181,9 +181,15 @@ export function parseScreener(html, stock, today = new Date().toISOString().slic
 
 // Extra facts the valuation model does not need but the stock card shows: Screener's page ids (for the peer table and the
 // price chart), the dividend yield and the yearly dividend per share (EPS × dividend payout %, from the P&L table).
+// The company's own website, from the links under its name ("company-links": website, BSE, NSE)
+export function parseWebsite(html) {
+  const box = String(html || "").match(/class=["'][^"']*company-links[^"']*["'][\s\S]{0,3000}?<\/div>/i)?.[0] || "";
+  for (const [, href] of box.matchAll(/<a[^>]+href=["'](https?:\/\/[^"']+)["']/gi)) if (!/bseindia|nseindia|screener\.in|tradingview|google\./i.test(href)) return href;
+  return null;
+}
 export function parseScreenerExtra(html, top = parseTopRatios(html), pl = parseTable(section(html, "profit-loss"))) {
   const companyId = html.match(/data-company-id=["'](\d+)["']/)?.[1] || null, warehouseId = parseWarehouseId(html);
-  const out = { companyId, warehouseId, dividendYield: top["Dividend Yield"]?.[0] ?? null, divAnnual: [] };
+  const out = { companyId, warehouseId, dividendYield: top["Dividend Yield"]?.[0] ?? null, divAnnual: [], website: parseWebsite(html) };
   if (pl) {
     const idx = annualIdx(pl.headers), eps = pick(pl, ["EPS in Rs", "EPS"]), pay = pick(pl, ["Dividend Payout %", "Dividend Payout"]);
     if (eps && pay) for (const i of idx) {

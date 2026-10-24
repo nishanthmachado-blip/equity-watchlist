@@ -1,16 +1,18 @@
 import { loadedFromEnvFile } from "./env.mjs"; // must stay first: loads .env before other modules read process.env
 import http from "node:http";
+import fsNode from "node:fs";
+import nodeCrypto from "node:crypto";
 import zlib from "node:zlib";
 import { EventEmitter } from "node:events";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createAuth, publicUser } from "./auth.mjs";
-import { dfs as fs, initStorage, flushStorage, closeStorage, pingStorage, info as storageInfo } from "./storage.mjs";
+import { dfs as fs, initStorage, flushStorage, closeStorage, pingStorage, info as storageInfo, secretsInfo } from "./storage.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchFundamentalsForStock, yahooCooldown, yahooQuotes, yahooSummary, resetSession as resetYahooSession } from "./fundamentals-yahoo.mjs";
 import { MODEL, computeAll, computeValuation, sanitizeEntry, parseCsv, FIELDS } from "./valuation.mjs";
 import { fetchScreener, screenerCooldown, screenerConfig, fetchScreenerExtras, searchScreener, resetScreener, fetchScreenerPrice } from "./screener.mjs";
-import { readSheetFile, sheetInfo, parseDelimited, extractHoldings, fundSummary } from "./funds.mjs";
+import { readSheetFile, sheetInfo, parseDelimited, extractHoldings, fundSummary, fundOverlap, indexWeights } from "./funds.mjs";
 import { fetchNseQuote, mergeNse, refreshFromNse, nseCooldown, fetchNseJson, fetchNseHistory, resetNse, lastNseStatus, NSE_ARCHIVE_BASE } from "./nse.mjs";
 import { LADDERS, DEFAULT_SETTINGS, sanitizeBuy, positionRow, stress, exposure } from "./plan.mjs";
 import { addSnapshots, performance, compare } from "./tracker.mjs";
@@ -43,6 +45,7 @@ import { logIdeas, judgeIdea, ideaStats } from "./ideastrack.mjs";
 import { RULE_TYPES, sanitizeRule, describeRule, checkLiveRule, checkEodRule } from "./alertrules.mjs";
 import { chartEvents, applyDrawingOp } from "./chartmarks.mjs";
 import { createAngelStream } from "./angelstream.mjs";
+import { logoQuery, parseLogoResult, domainOf, commonsPng, imageKind, imageSize, WIKIDATA_SPARQL } from "./logos.mjs";
 import { morningDigest, eveningDigest } from "./digest.mjs";
 import { DEFAULT_BASKET, sanitizeBasket, basketView } from "./accumulate.mjs";
 import { backupConfig, gz, gunz, verifyBackup, writeLocal, listLocal, readLocal, pruneLocal, s3Put } from "./backup.mjs";
@@ -578,7 +581,7 @@ async function runFundamentalsFetch(targets, force = false, source = process.env
         if (src === "screener") {
           if (screenerCooldown()) { errors.push("Screener cooling down"); rateLimited = true; continue; }
           usedNetwork = true; const r = await fetchScreener(stock); entry = r.entry; warnings = [...warnings, ...r.warnings]; how = "Screener"; completeness = "Screener";
-          if (r.extra) saveScreenerExtra(symbol, { ids: { companyId: r.extra.companyId, warehouseId: r.extra.warehouseId }, div: { yield: r.extra.dividendYield, annual: r.extra.divAnnual, at: Date.now() }, ...(r.peersTable ? { peers: { table: r.peersTable, at: Date.now() } } : {}) }).catch(() => {});
+          if (r.extra) saveScreenerExtra(symbol, { ...(r.extra.website ? { website: r.extra.website } : {}), ids: { companyId: r.extra.companyId, warehouseId: r.extra.warehouseId }, div: { yield: r.extra.dividendYield, annual: r.extra.divAnnual, at: Date.now() }, ...(r.peersTable ? { peers: { table: r.peersTable, at: Date.now() } } : {}) }).catch(() => {});
         } else if (src === "yahoo") {
           if (yahooCooldown() > Date.now()) { errors.push("Yahoo cooling down"); rateLimited = true; continue; }
           usedNetwork = true; const r = await fetchFundamentalsForStock(stock); entry = r.entry; warnings = [...warnings, ...r.warnings]; completeness = r.completeness; how = "Yahoo";
@@ -778,7 +781,7 @@ async function syncKiteSlot(kc, slotId, slotLabel, label) {
 }
 
 // ---- Backup / restore: one JSON file with every file in your private folder ----
-const BACKUP_SECRET_FILES = /^(kite-session(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp|notify|ai-key)\.json$/;
+const BACKUP_SECRET_FILES = /^(kite-session(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp|notify|ai-key|login-2fa|secrets-key)\.json$/;
 const BACKUP_NAME_RE = /^[a-z0-9][\w-]{0,60}\.json$/i;
 async function makeBackup(includeSecrets) {
   const dir = userDir(), files = {};
@@ -1209,6 +1212,66 @@ async function chartLevels(symbol) {
   } catch { /* levels are optional */ }
   return out.filter(l => Number.isFinite(l.price) && l.price > 0);
 }
+// ---- Company logos (shared cache, public data): Wikidata (by ISIN / ticker) → Commons logo or the website's icon ----
+// The browser only ever asks this app (/api/logo/SYM), so no outside site learns which stocks you look at.
+// LOGOS=0 turns the outside lookups off (rows then show initials). Never on a page's critical path.
+const LOGOS = process.env.LOGOS !== "0";
+const logoFile = path.join(DATA_DIR, "logos.json");
+let logoLastError = null, logoMem = null, logoBusy = false, logoPauseUntil = 0, logoSaveTimer = null, isinRev = null;
+const logoQueue = new Set();
+async function logoStore() { if (!logoMem) logoMem = await readJson(logoFile, {}); return logoMem; }
+const logoFresh = e => !!e && Date.now() - e.at < (e.data ? 90 : e.none ? 21 : 1) * 864e5; // a found logo for 90 days, "none" for 21, an error for 1
+function saveLogosSoon() { if (!logoSaveTimer) logoSaveTimer = setTimeout(async () => { logoSaveTimer = null; try { await writeJson(logoFile, logoMem); } catch (e) { console.warn(`[logos] save: ${e.message}`); } }, 3000); }
+async function queueLogos(symbols) {
+  if (!LOGOS) return; const st = await logoStore();
+  for (const x of symbols) if (!logoFresh(st[x])) logoQueue.add(x);
+  if (logoQueue.size && !logoBusy) runLogos().catch(e => console.warn(`[logos] ${e.message}`));
+}
+async function logoGet(url, ms = 8000) {
+  const r = await fetch(url, { headers: { "User-Agent": "EquityWatchlist/5 (personal portfolio app; logo lookup)", Accept: "image/png,image/*;q=0.8" }, signal: AbortSignal.timeout(ms), redirect: "follow" });
+  if (!r.ok) return null; const buf = Buffer.from(await r.arrayBuffer()), type = imageKind(buf), size = type ? imageSize(buf) : null;
+  if (!type || (size && Math.min(size.w, size.h) < 24)) return null; // a 16 px icon (or the "no icon" globe) looks worse than initials
+  return { type, buf };
+}
+// Company websites the app already learnt from Screener / Yahoo (used when Wikidata has none)
+async function knownWebsites() {
+  const out = new Map();
+  try { for (const [sym, e] of Object.entries(await readFundamentals())) if (e?.website) out.set(String(sym).toUpperCase(), e.website); } catch { /* none */ }
+  try { for (const [sym, e] of Object.entries(await readJson(screenerExtraFile, {}))) if (e?.website) out.set(String(sym).toUpperCase(), e.website); } catch { /* none */ }
+  return out;
+}
+async function runLogos() {
+  logoBusy = true;
+  try {
+    while (logoQueue.size && Date.now() > logoPauseUntil) {
+      const batch = [...logoQueue].slice(0, 40); for (const x of batch) logoQueue.delete(x);
+      if (!isinRev) { const m = await isinMaster(); if (Object.keys(m).length) isinRev = new Map(Object.entries(m).map(([isin, sym]) => [sym, isin])); }
+      const items = batch.map(symbol => ({ symbol, isin: isinRev?.get(symbol) || null }));
+      let found;
+      try {
+        const r = await fetch(process.env.LOGO_SPARQL_URL || WIKIDATA_SPARQL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/sparql-results+json", "User-Agent": "EquityWatchlist/5 (personal portfolio app; logo lookup)" }, body: new URLSearchParams({ query: logoQuery(items), format: "json" }), signal: AbortSignal.timeout(25000) });
+        if (r.status === 429 || r.status >= 500) { logoPauseUntil = Date.now() + 30 * 60e3; for (const x of batch) logoQueue.add(x); logoLastError = `Wikidata HTTP ${r.status} (paused 30 min)`; console.warn(`[logos] Wikidata HTTP ${r.status}: paused 30 min`); break; }
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        found = parseLogoResult(await r.json(), items);
+      } catch (e) { logoPauseUntil = Date.now() + 10 * 60e3; const st = await logoStore(); for (const x of batch) st[x] = { at: Date.now(), error: String(e.message).slice(0, 80) }; saveLogosSoon(); logoLastError = `Wikidata: ${errText(e)}`; console.warn(`[logos] lookup failed: ${errText(e)}`); break; }
+      const st = await logoStore(), known = await knownWebsites();
+      for (const sym of batch) {
+        const f = found.get(sym), domain = (st[sym]?.manual && st[sym].domain) || (f?.web ? domainOf(f.web) : null) || (known.get(sym) ? domainOf(known.get(sym)) : null), tries = [];
+        if (f?.logo) tries.push(["Wikimedia Commons", commonsPng(f.logo)]);
+        if (domain && !process.env.LOGO_FAVICON_BASE) for (const h of [`https://www.${domain}`, `https://${domain}`]) tries.push([`${domain} app icon`, `${h}/apple-touch-icon.png`]);
+        if (domain) tries.push([`${domain} icon`, `${process.env.LOGO_FAVICON_BASE || "https://www.google.com"}/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`]);
+        let got = null, src = null;
+        for (const [label, u] of tries) { if (!u) continue; try { got = await logoGet(u); } catch { got = null; } if (got) { src = label; break; } }
+        const manual = st[sym]?.manual || undefined;
+        st[sym] = got ? { at: Date.now(), domain, src, manual, type: got.type, data: got.buf.toString("base64") } : { at: Date.now(), domain, none: true, manual };
+        await new Promise(r => setTimeout(r, 250));
+      }
+      saveLogosSoon();
+      console.log(`[logos] ${batch.filter(x => st[x]?.data).length}/${batch.length} logos found`);
+    }
+  } finally { logoBusy = false; }
+}
+
 // ---- Live prices pushed by Angel One (SmartAPI WebSocket, market data only) while the market is open ----
 // One connection follows up to 1,000 of the stocks you follow (swing positions and holdings first). Each change lands in
 // the shared price cache within a second; the 3-minute refresh then skips those stocks (their price is fresh), so the
@@ -2422,7 +2485,7 @@ function startXrayAll() {
 // funds with an automatic source are refreshed when their portfolio is over a month old (new month's disclosure)
 function refreshStaleXray(funds) {
   const xrayJob = XJ(); if (xrayJob.running) return;
-  const due = funds.filter(f => f.source && Date.now() - Date.parse(f.updatedAt || 0) > 32 * 864e5 && !(Date.now() - Date.parse(f.source.lastTry || 0) < 24 * 3600e3)).slice(0, 6);
+  const due = funds.filter(f => f.source && f.source.kind !== "index" && Date.now() - Date.parse(f.updatedAt || 0) > 32 * 864e5 && !(Date.now() - Date.parse(f.source.lastTry || 0) < 24 * 3600e3)).slice(0, 6);
   if (!due.length) return;
   Object.assign(xrayJob, { running: true, done: 0, total: due.length, ok: [], failed: [], at: Date.now(), kind: "refresh", endedAt: null });
   (async () => {
@@ -2954,6 +3017,36 @@ async function appHandler(req, res, url) {
       const got = await livePrices(items, 20e3, { budgetMs: 8000 });
       await syncLivePrices();
       return reply(res, 200, { prices: Object.fromEntries([...got].filter(([, v]) => !v.stale).map(([k, v]) => [k, { price: v.price, source: v.source, asOf: v.asOf || null }])), pending: got.pending });
+    }
+    // Logos for the stocks on screen: which ones are ready (with a version for the browser cache); the rest are looked up
+    if (url.pathname === "/api/logos" && req.method === "POST") {
+      const b = await readBody(req), syms = [...new Set((Array.isArray(b.symbols) ? b.symbols : []).map(x => String(x).toUpperCase()).filter(x => /^[A-Z0-9&-]{1,20}$/.test(x)))].slice(0, 400);
+      const st = await logoStore(), have = {}, pending = [];
+      const known = syms.some(x => st[x]?.none && !st[x].domain) ? await knownWebsites() : null;
+      for (const x of syms) { const e = st[x]; if (e?.data) have[x] = e.at.toString(36); else if (LOGOS && (!logoFresh(e) || (e?.none && !e.domain && known?.has(x)))) { if (e?.none && !e.domain && known?.has(x)) delete st[x]; pending.push(x); } }
+      if (pending.length) queueLogos(pending).catch(() => {});
+      return reply(res, 200, { have, pending, enabled: LOGOS });
+    }
+    // You tell the app a company's website (when no logo was found): its icon is fetched from there
+    if (url.pathname === "/api/logos/site" && req.method === "POST") {
+      const b = await readBody(req), sym = String(b.symbol || "").toUpperCase(), web = String(b.website || "").trim(), domain = domainOf(/^https?:\/\//i.test(web) ? web : `https://${web}`);
+      if (!/^[A-Z0-9&-]{1,20}$/.test(sym) || !domain) return reply(res, 400, { message: "Type the company's website, for example lemontreehotels.com" });
+      const st = await logoStore();
+      const tries = [`https://www.${domain}/apple-touch-icon.png`, `https://${domain}/apple-touch-icon.png`, `${process.env.LOGO_FAVICON_BASE || "https://www.google.com"}/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`].filter(u => !process.env.LOGO_FAVICON_BASE || !u.includes(domain + "/apple"));
+      let got = null; for (const u of tries) { try { got = await logoGet(u, 6000); } catch { got = null; } if (got) break; }
+      st[sym] = got ? { at: Date.now(), domain, src: `${domain} (you)`, manual: true, type: got.type, data: got.buf.toString("base64") } : { at: Date.now(), domain, none: true, manual: true }; saveLogosSoon();
+      return reply(res, got ? 200 : 404, got ? { ok: true, version: st[sym].at.toString(36) } : { message: `No usable icon found on ${domain}. Initials stay.` });
+    }
+    if (url.pathname === "/api/logos/status" && req.method === "GET") {
+      const st = await logoStore(), v = Object.values(st);
+      return reply(res, 200, { enabled: LOGOS, found: v.filter(e => e.data).length, none: v.filter(e => e.none).length, failed: v.filter(e => e.error).length, queued: logoQueue.size, running: logoBusy, pausedUntil: logoPauseUntil > Date.now() ? new Date(logoPauseUntil).toISOString() : null, lastError: logoLastError });
+    }
+    if (url.pathname.startsWith("/api/logo/") && req.method === "GET") {
+      const sym = decodeURIComponent(url.pathname.slice(10)).toUpperCase(), e = (await logoStore())[sym];
+      if (!/^[A-Z0-9&-]{1,20}$/.test(sym) || !e?.data) { res.writeHead(404, { "Cache-Control": "no-store" }); return res.end(); }
+      const buf = Buffer.from(e.data, "base64");
+      res.writeHead(200, { "Content-Type": e.type, "Content-Length": buf.length, "Cache-Control": "private, max-age=2592000, immutable", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'" });
+      return res.end(buf);
     }
     if (url.pathname === "/api/chart/lines" && req.method === "POST") {
       const b = await readBody(req), symbol = String(b.symbol || "").trim().toUpperCase();
@@ -3697,8 +3790,35 @@ async function appHandler(req, res, url) {
           const holdings = f.holdings.map(h => { const r = h.symbol ? bySym[h.symbol] : null; return { ...h, held: mine.has(h.symbol), pe: r?.pe ?? null, sectorPe: r?.sectorPe ?? r?.sectorPeEst ?? null, sectorPeEst: !r?.sectorPe && !!r?.sectorPeEst, view: r && Number.isFinite(r.ratio) ? r.view : null, verdict: r?.verdict?.label || null, verdictCls: r?.verdict?.cls || null, verdictKey: r?.verdict?.key || null, growth: r?.growthLens ? { verdict: r.growthLens.verdict, key: r.growthLens.key, growth: r.growthLens.growth, implied: r.growthLens.impliedGrowth } : null, roce: r ? (r.profile === "financial" ? r.roe : r.roce) : null, valued: !!(r && Number.isFinite(r.ratio)) }; });
           return reply(res, 200, { fund: { id: f.id, name: f.name, asOf: f.asOf, updatedAt: f.updatedAt }, holdings, summary: fundSummary(f.holdings, bySym, mine), pending: holdings.filter(h => h.symbol && !h.valued).length, missing, matching: !!fixing || fundFixRunning(f.id) });
         }
+        // Two funds side by side: how much of the money is in the same stocks, what each adds, and how each overlaps your other funds
+        if (req.method === "GET" && op === "compare") {
+          const st = await readJson(U.fundsFile, { funds: [] }), fa = st.funds.find(x => x.id === url.searchParams.get("a")), fb = st.funds.find(x => x.id === url.searchParams.get("b"));
+          if (!fa || !fb) return reply(res, 404, { message: "Pick two saved funds." });
+          if (fa.id === fb.id) return reply(res, 400, { message: "Pick two different funds." });
+          const [{ rows }, view, held] = await Promise.all([computeRows(), kiteHoldingsView(), syncedMutualFunds().catch(() => [])]);
+          const bySym = Object.fromEntries(rows.map(r => [String(r.symbol).toUpperCase(), r])), mine = new Map(view.holdings.map(h => [h.symbol, h.weightPct || 0]));
+          const ov = fundOverlap(fa.holdings, fb.holdings), others = st.funds.filter(f => f.id !== fa.id && f.id !== fb.id);
+          const yours = f => { const hs = held.filter(x => x.fundId === f.id); if (!hs.length) return null; const sum = k => hs.reduce((a, x) => a + (Number.isFinite(x[k]) ? x[k] : 0), 0); return { value: Math.round(sum("value")) || null, invested: Math.round(sum("invested")) || null, accounts: hs.length }; };
+          const side = f => ({ id: f.id, name: f.name, asOf: f.asOf, updatedAt: f.updatedAt, index: f.source?.kind === "index", approx: !!f.source?.approx, summary: fundSummary(f.holdings, bySym, mine), held: yours(f),
+            withOthers: others.map(o => ({ id: o.id, name: o.name, overlapPct: fundOverlap(f.holdings, o.holdings).overlapPct })).sort((x, y) => y.overlapPct - x.overlapPct).slice(0, 6) });
+          const dec = x => ({ ...x, pe: x.symbol ? bySym[x.symbol]?.pe ?? null : null, held: !!(x.symbol && mine.has(x.symbol)) });
+          return reply(res, 200, { a: side(fa), b: side(fb), overlap: { ...ov, common: ov.common.map(dec), onlyA: ov.onlyA.map(dec), onlyB: ov.onlyB.map(dec) } });
+        }
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown fund operation." });
         const b = await readBody(req);
+        // An NSE index as an X-ray "fund" (for index funds / ETFs): its stocks, weighted by free-float size (capped like the index)
+        if (op === "index") {
+          const name = String(b.name || "").trim().toUpperCase().slice(0, 60); if (!name) throw new Error("Pick an index.");
+          let d = await indexData(name);
+          if (!d.cached && d.pending) { const job = idxJobs.get(normIndex(name)); await Promise.race([job?.p, new Promise(r => setTimeout(r, 15000))]); d = await indexData(name); }
+          const list = d.cached?.rows || []; if (!list.length) throw new Error(`Could not load the stocks of ${name}${d.error ? ` (${d.error})` : ""}. Try again in a few minutes, or load your index fund's own portfolio file.`);
+          const { rows } = await computeRows(), bySym = new Map(rows.map(r => [String(r.symbol).toUpperCase(), r]));
+          const w = indexWeights(name, list.map(r => ({ symbol: r.symbol, ffmc: r.ffmc ?? null, weight: r.weight ?? null, marketCap: bySym.get(r.symbol)?.marketCap ?? null })));
+          const holdings = list.map((r, i) => ({ name: r.name || r.symbol, isin: /^INE[A-Z0-9]{9}$/.test(r.isin || "") ? r.isin : null, weight: w.weights[i], sector: r.industry || null, symbol: r.symbol, exchange: "NSE" })).filter(h => h.weight > 0).sort((x, y) => y.weight - x.weight);
+          const st = await readJson(U.fundsFile, { funds: [] }), prev = st.funds.find(f => f.source?.kind === "index" && f.source.index === name);
+          const fund = await saveXrayFund({ id: prev?.id || null, name: `${name} (index)`, asOf: new Date().toISOString().slice(0, 10), holdings, source: { kind: "index", index: name, approx: w.approx, basis: w.basis } });
+          return reply(res, 200, { ok: true, id: fund.id, count: holdings.length, basis: w.basis, approx: w.approx });
+        }
         if (op === "parse") {
           let tables;
           if (b.data) { const buf = Buffer.from(String(b.data), "base64"); if (buf.length > 15e6) throw new Error("File is larger than 15 MB."); tables = readSheetFile(buf, b.filename || ""); }
@@ -3863,7 +3983,7 @@ async function appHandler(req, res, url) {
         try {
           const x = await fetchScreenerExtras(stock, { ids: sx.ids || null, want });
           const patch = { ids: x.ids };
-          if (x.extra) patch.div = { yield: x.extra.dividendYield, annual: x.extra.divAnnual, at: Date.now() };
+          if (x.extra) { patch.div = { yield: x.extra.dividendYield, annual: x.extra.divAnnual, at: Date.now() }; if (x.extra.website) patch.website = x.extra.website; }
           if (x.peersTable) patch.peers = { table: x.peersTable, at: Date.now() };
           if (x.bars) patch.swing = { t: computeTechnicals(x.bars), at: Date.now(), source: "Screener" };
           await saveScreenerExtra(symbol, patch); sx = { ...sx, ...patch };
@@ -4175,8 +4295,20 @@ async function migrateLegacyData(owner) {
   if (moved.length) console.log(`[auth] Moved ${moved.length} existing data file(s) into the owner's private folder.`);
   return moved;
 }
+// Content Security Policy: scripts only from this app (plus the one small inline theme script in the page head, by its
+// hash), no plugins, no framing, data only to this server. A script injected into a page could not run or send data out.
+const INLINE_SCRIPT_HASHES = (() => {
+  const out = new Set();
+  for (const f of ["index.html", "login.html"]) {
+    try { const html = fsNode.readFileSync(path.join(root, "public", f), "utf8"); for (const [, js] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) out.add(`'sha256-${nodeCrypto.createHash("sha256").update(js).digest("base64")}'`); } catch { /* missing page */ }
+  }
+  return [...out];
+})();
+const CSP = ["default-src 'self'", `script-src 'self' ${INLINE_SCRIPT_HASHES.join(" ")}`.trim(), "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com", "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob:", "connect-src 'self'", "worker-src 'self'", "manifest-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'"].join("; ");
 function secHeaders(res, secure) {
   res.setHeader("X-Content-Type-Options", "nosniff"); res.setHeader("X-Frame-Options", "DENY"); res.setHeader("Referrer-Policy", "same-origin");
+  res.setHeader("Content-Security-Policy", CSP); res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()"); res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   if (secure) res.setHeader("Strict-Transport-Security", "max-age=15552000");
 }
 const sameSite = req => {
@@ -4192,7 +4324,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method !== "GET" && req.method !== "HEAD" && !sameSite(req)) return reply(res, 403, { message: "Blocked: requests that change data must come from this app's own page." });
   try {
     const signIn = async ({ user, token }) => { res.setHeader("Set-Cookie", auth.cookie(token, { secure })); return reply(res, 200, { user: publicUser(user) }); };
-    const fail = e => reply(res, e.status || 500, { message: e.message });
+    const fail = e => reply(res, e.status || 500, { message: e.message, ...(e.needCode ? { needCode: true } : {}) });
     // Load-balancer / uptime check: public, reveals nothing.
     if (p === "/healthz") { const db = await pingStorage(); return reply(res, db ? 200 : 503, { ok: db }); }
     if (p === "/api/auth/state" && req.method === "GET") return reply(res, 200, { needsSetup: auth.needsSetup(), user: publicUser(auth.userFor(req.headers.cookie)) });
@@ -4221,15 +4353,22 @@ const server = http.createServer(async (req, res) => {
         if (p === "/api/auth/me" && req.method === "GET") return reply(res, 200, { user: publicUser(user), seedDefault: user.role === "owner" });
         if (p === "/api/auth/password" && req.method === "POST") {
           const b = await readBody(req); await auth.changePassword(user, { current: b.current, next: b.next });
-          return signIn({ user, token: (await auth.login({ username: user.username, password: b.next }, meta)).token });
+          return signIn({ user, token: await auth.newSession(user, meta) });
         }
+        // Two-step sign-in (authenticator app) for this account
+        if (p === "/api/auth/2fa" && req.method === "GET") return reply(res, 200, auth.mfaStatus(user));
+        if (p === "/api/auth/2fa/setup" && req.method === "POST") return reply(res, 200, await auth.mfaSetup(user));
+        if (p === "/api/auth/2fa/enable" && req.method === "POST") { const r = await auth.mfaEnable(user, (await readBody(req)).code, meta); console.log(`[auth] Two-step sign-in turned on for "${user.username}".`); return reply(res, 200, { ...r, ...auth.mfaStatus(user) }); }
+        if (p === "/api/auth/2fa/disable" && req.method === "POST") { const b = await readBody(req); await auth.mfaDisable(user, { password: b.password, code: b.code }, meta); console.log(`[auth] Two-step sign-in turned off for "${user.username}".`); return reply(res, 200, auth.mfaStatus(user)); }
+        if (p === "/api/auth/security" && req.method === "GET") return reply(res, 200, { twoStep: auth.mfaStatus(user), secrets: secretsInfo(), https: secure, cookieSecure: secure, owner: user.role === "owner" });
         if (user.role !== "owner") return reply(res, 403, { message: "Only the app owner can manage accounts." });
         if (p === "/api/auth/users" && req.method === "GET") return reply(res, 200, { users: auth.allUsers() });
         if (p === "/api/auth/users" && req.method === "POST") { const u = await auth.createUser(await readBody(req)); console.log(`[auth] Account "${u.username}" created by ${user.username}.`); return reply(res, 200, { user: publicUser(u), users: auth.allUsers() }); }
-        const m = p.match(/^\/api\/auth\/users\/([a-f0-9]{16})\/(reset|disable|enable|remove)$/);
+        const m = p.match(/^\/api\/auth\/users\/([a-f0-9]{16})\/(reset|disable|enable|remove|reset-2fa)$/);
         if (m && req.method === "POST") {
           const [, id, op] = m;
           if (op === "reset") await auth.resetPassword(id, (await readBody(req)).password);
+          if (op === "reset-2fa") { await auth.mfaReset(id, user.username); console.log(`[auth] Two-step sign-in reset for account ${id} by ${user.username}.`); }
           if (op === "disable" || op === "enable") await auth.setDisabled(id, op === "disable");
           if (op === "remove") {
             const gone = await auth.removeUser(id);

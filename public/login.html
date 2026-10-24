@@ -25,6 +25,7 @@ button:disabled{opacity:.6;cursor:progress}
 .lock{display:flex;gap:10px;align-items:flex-start;margin-top:18px;padding:12px 14px;border-radius:12px;background:var(--good-bg);color:var(--ink);font-size:12.5px}
 .lock b{color:var(--good)}
 [hidden]{display:none!important}
+.login-hint{display:block;margin-top:4px;color:#6b7280;font-size:12px}
 </style></head>
 <body>
   <div class="band"><p>INDIAN EQUITY RESEARCH</p><h1>Equity Watchlist</h1><span>Your holdings and watchlists stay private to your account.</span></div>
@@ -33,6 +34,7 @@ button:disabled{opacity:.6;cursor:progress}
       <h2>Sign in</h2><p class="lead">Use the account the app owner gave you.</p>
       <label for="lu">Username</label><input id="lu" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
       <label for="lp">Password</label><input id="lp" name="password" type="password" autocomplete="current-password" required>
+      <div id="lcodeWrap" hidden><label for="lcode">6-digit code from your authenticator app</label><input id="lcode" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="11" spellcheck="false" placeholder="123 456"><small class="login-hint">Lost your phone? Type one of your recovery codes instead.</small></div>
       <p class="err" id="loginErr" hidden></p>
       <button type="submit">Sign in</button>
       <p class="note">No sign-up here: accounts are created by the owner. Forgot your password? Ask the owner to reset it.</p>

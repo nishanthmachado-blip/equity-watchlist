@@ -286,6 +286,13 @@
     let on = false; try { on = localStorage.getItem("equity-menu-pinned") === "1"; } catch {}
     apply(on);
     pin.onclick = () => { on = !on; apply(on); try { localStorage.setItem("equity-menu-pinned", on ? "1" : "0"); } catch {} if (!on) document.activeElement?.blur(); };
+    window.setMenuPinned = v => { on = !!v; apply(on); };
+    // Folded rail: after choosing a page with the mouse / finger, close the rail (it stays open only while pointed at,
+    // or while you move through it with the keyboard). Leaving the rail with the pointer also folds it.
+    const menu = document.getElementById("sideMenu");
+    const fold = () => { if (!on && menu.contains(document.activeElement) && !menu.querySelector(":focus-visible")) document.activeElement.blur(); };
+    menu?.addEventListener("click", e => { if (e.target.closest(".viewTab, [data-goto], #refresh") && e.detail > 0) setTimeout(fold, 0); });
+    menu?.addEventListener("pointerleave", fold);
   })();
 
   // ---- Stock sheet: open a stock's full valuation over the current page (holdings, focus, market, funds, alerts…)
@@ -1199,7 +1206,84 @@
     $("#fdPreview").innerHTML = ""; $("#fdStatus").textContent = ""; fdData = null; $("#fdFileName").textContent = ""; $("#fdPaste").value = ""; $("#fdAutoQ").value = fund?.name || ""; $("#fdAutoLink").value = fdList.find(f => f.id === fund?.id)?.source?.link || ""; $("#fdAutoSt").innerHTML = ""; fdAutoPick = null;
     $("#fdImport").scrollIntoView({ behavior: "smooth", block: "start" }); $("#fdName").focus();
   }
-  $("#fdAdd").onclick = () => fdShowImport();
+  $("#fdAdd").onclick = () => { $("#fdCompare").hidden = true; fdShowImport(); };
+  // ---- Compare two funds: overlap and what each adds ----
+  const FD_INDICES = ["NIFTY 50", "NIFTY NEXT 50", "NIFTY 100", "NIFTY 200", "NIFTY 500", "NIFTY MIDCAP 150", "NIFTY MIDCAP 100", "NIFTY SMALLCAP 250", "NIFTY200 MOMENTUM 30", "NIFTY500 MOMENTUM 50", "NIFTY MIDCAP150 MOMENTUM 50", "NIFTY200 QUALITY 30", "NIFTY MIDCAP150 QUALITY 50", "NIFTY ALPHA 50", "NIFTY100 LOW VOLATILITY 30", "NIFTY200 VALUE 30", "NIFTY50 EQUAL WEIGHT"];
+  let fdCmp = { a: null, b: null }, fdIdxMsg = "";
+  try { const o = JSON.parse(localStorage.getItem("fd-cmp") || "{}"); fdCmp = { a: o.a || null, b: o.b || null }; } catch { /* private mode */ }
+  const fdPick = (k, def) => { const ids = fdList.map(f => f.id); return ids.includes(fdCmp[k]) ? fdCmp[k] : def; };
+  function fdCmpShell() {
+    const box = $("#fdCompare"), a = fdPick("a", fdList[0]?.id || ""), b0 = fdPick("b", fdList.find(f => f.id !== a)?.id || ""), b = b0 === a ? fdList.find(f => f.id !== a)?.id || "" : b0;
+    const opts = sel => fdList.map(f => `<option value="${esc(f.id)}"${f.id === sel ? " selected" : ""}>${esc(f.name)}</option>`).join("");
+    box.innerHTML = `<div class="fd-cmp-head"><h3>⚖ Compare two funds</h3><button type="button" class="ch-x" id="fdCmpClose" aria-label="Close">✕</button></div>
+      <div class="toolbar fd-cmp-pick">${fdList.length >= 2 ? `<select id="fdCmpA" aria-label="First fund">${opts(a)}</select><span>vs</span><select id="fdCmpB" aria-label="Second fund">${opts(b)}</select>` : `<span class="hint">Load at least two funds to compare them.</span>`}</div>
+      <p class="hint fd-cmp-idx">Index fund or ETF? Add the index itself: <select id="fdIdxSel" aria-label="Index">${FD_INDICES.map(n => `<option>${n}</option>`).join("")}</select> <button type="button" class="ghost" id="fdIdxAdd">Add index</button> <span id="fdIdxSt"></span><br><small>Broad indices are weighted by free-float size as on NSE. Momentum / quality / value indices also tilt by a factor score NSE doesn't publish per stock, so their weights here are approximate: for exact numbers load your index fund's own monthly portfolio with + Add a fund.</small></p>
+      <div id="fdCmpOut"></div>`;
+    $("#fdCmpClose").onclick = () => { box.hidden = true; };
+    const go = () => { fdCmp = { a: $("#fdCmpA").value, b: $("#fdCmpB").value }; try { localStorage.setItem("fd-cmp", JSON.stringify(fdCmp)); } catch { /* private mode */ } fdCmpRun(); };
+    if (fdList.length >= 2) { $("#fdCmpA").onchange = go; $("#fdCmpB").onchange = go; fdCmp = { a, b }; fdCmpRun(); }
+    $("#fdIdxAdd").onclick = async () => {
+      const name = $("#fdIdxSel").value, st = $("#fdIdxSt"), btn = $("#fdIdxAdd"); btn.disabled = true; st.textContent = `Loading the stocks of ${name}…`;
+      try {
+        const r = await post("/api/funds/index", { name }); await fdLoadList(); fdTabs();
+        fdIdxMsg = `Added ${name}: ${r.count} stocks (weights: ${r.basis}).`;
+        if (fdCmp.b !== r.id) fdCmp = { a: fdCmp.b && fdCmp.b !== r.id ? fdCmp.b : fdCmp.a, b: r.id }; // the new index goes on the right, the last pick moves left
+        try { localStorage.setItem("fd-cmp", JSON.stringify(fdCmp)); } catch { /* private mode */ }
+        fdCmpShell();
+      } catch (e) { st.textContent = e.message; } finally { btn.disabled = false; }
+    };
+    if (fdIdxMsg) { $("#fdIdxSt").textContent = fdIdxMsg; fdIdxMsg = ""; }
+  }
+  const pc1 = v => (Number.isFinite(v) ? `${v}%` : "—");
+  const inrC = v => (Number.isFinite(v) && v > 0 ? `₹${Math.round(v).toLocaleString("en-IN")}` : "—");
+  async function fdCmpRun() {
+    const out = $("#fdCmpOut"); if (!fdCmp.a || !fdCmp.b) return;
+    if (fdCmp.a === fdCmp.b) { out.innerHTML = `<p class="hint">Pick two different funds.</p>`; return; }
+    out.innerHTML = `<p class="hint">Comparing…</p>`;
+    let x; try { x = await get(`/api/funds/compare?a=${encodeURIComponent(fdCmp.a)}&b=${encodeURIComponent(fdCmp.b)}`); } catch (e) { out.innerHTML = `<p class="hint">${esc(e.message)}</p>`; return; }
+    const o = x.overlap, A = x.a, B = x.b, sa = A.summary, sb = B.summary;
+    const lvl = o.overlapPct >= 60 ? ["very high", "avoid"] : o.overlapPct >= 40 ? ["high", "avoid"] : o.overlapPct >= 20 ? ["moderate", "wait"] : ["low", "buy"];
+    const nm = f => `${esc(f.name)}${f.approx ? ' <small class="hint" title="Weights approximated from free-float size">≈ weights</small>' : ""}`;
+    const maxOther = f => f.withOthers[0] ? `${f.withOthers[0].overlapPct}% <small>(${esc(f.withOthers[0].name)})</small>` : "—";
+    const row = (label, va, vb, hint = "") => `<tr><th scope="row">${label}${hint ? `<small>${hint}</small>` : ""}</th><td>${va}</td><td>${vb}</td></tr>`;
+    // points to weigh (facts, not a recommendation)
+    const pts = [];
+    const st_ = n => `${n} stock${n === 1 ? "" : "s"}`, are = n => (n === 1 ? "is" : "are");
+    pts.push(`${o.overlapPct}% of the money is in the same ${st_(o.commonCount)} (${lvl[0]} overlap). ${o.commonCount} of ${A.name}'s ${o.countA} stocks (${o.commonOfA}%) ${are(o.commonCount)} also in ${B.name}; ${o.commonCount} of ${B.name}'s ${o.countB} (${o.commonOfB}%) ${are(o.commonCount)} in ${A.name}.`);
+    pts.push(`What each adds that the other doesn't: ${A.name} has ${o.onlyAWeight}% of its money in ${st_(o.countA - o.commonCount)} the other doesn't hold; ${B.name} has ${o.onlyBWeight}% in ${st_(o.countB - o.commonCount)}.`);
+    if (Number.isFinite(sa.weightedPE) && Number.isFinite(sb.weightedPE)) pts.push(`Valuation: weighted P/E ${sa.weightedPE} vs ${sb.weightedPE}${Math.abs(sa.weightedPE - sb.weightedPE) / Math.min(sa.weightedPE, sb.weightedPE) > 0.1 ? ` (${sa.weightedPE < sb.weightedPE ? A.name : B.name} is cheaper)` : " (similar)"}.`);
+    const oa = A.withOthers[0], ob = B.withOthers[0];
+    if (oa || ob) pts.push(`Against your other funds: ${A.name} overlaps up to ${oa ? `${oa.overlapPct}% (${oa.name})` : "—"}; ${B.name} up to ${ob ? `${ob.overlapPct}% (${ob.name})` : "—"}. The one that repeats your other funds more adds less to the whole portfolio.`);
+    if (sa.overlapWithYou || sb.overlapWithYou) pts.push(`Against the stocks you hold directly: ${sa.overlapWithYou}% vs ${sb.overlapWithYou}% overlap.`);
+    pts.push(`Also check what this page can't see: expense ratio and tracking error, how each has done over 3–5 years, exit load, and the tax if you sell units. Stopping the SIP doesn't mean selling: the units you have keep growing.`);
+    out.innerHTML = `
+      <section class="metrics fd-cmp-metrics">
+        <div><span>Overlap (money)</span><strong class="${lvl[1]}">${o.overlapPct}%</strong><small>${lvl[0]}: same stocks, counting the smaller weight</small></div>
+        <div><span>Stocks in both</span><strong>${o.commonCount}</strong><small>${o.commonOfA}% of ${esc(A.name)} · ${o.commonOfB}% of ${esc(B.name)}</small></div>
+        <div><span>Only in ${esc(A.name)}</span><strong>${o.onlyAWeight}%</strong><small>of its money, ${o.countA - o.commonCount} stocks</small></div>
+        <div><span>Only in ${esc(B.name)}</span><strong>${o.onlyBWeight}%</strong><small>of its money, ${o.countB - o.commonCount} stocks</small></div>
+      </section>
+      <div class="table-wrap"><table class="fd-cmp-table"><thead><tr><th></th><th>${nm(A)}</th><th>${nm(B)}</th></tr></thead><tbody>
+        ${row("Stocks", o.countA, o.countB)}${row("Top 10 stocks", pc1(o.top10A), pc1(o.top10B), "of the money")}
+        ${row("Weighted P/E", sa.weightedPE ?? "—", sb.weightedPE ?? "—")}${row("In buy zone", pc1(sa.mix.buy), pc1(sb.mix.buy), "by this app's valuation")}${row("Expensive", pc1(sa.mix.expensive), pc1(sb.mix.expensive))}
+        ${row("Overlap with your stocks", pc1(sa.overlapWithYou), pc1(sb.overlapWithYou))}${row("Most overlap with another fund of yours", maxOther(A), maxOther(B))}
+        ${row("Your money in it", A.held ? inrC(A.held.value) : "not linked", B.held ? inrC(B.held.value) : "not linked")}${row("Portfolio date", esc(A.asOf || "—"), esc(B.asOf || "—"))}
+      </tbody></table></div>
+      <h4>Points to weigh</h4><ul class="fd-cmp-pts">${pts.map(t => `<li>${esc(t)}</li>`).join("")}</ul>
+      <p class="hint">Facts from the two portfolios, not advice.</p>
+      <h4>Stocks in both (${o.commonCount})</h4>
+      ${o.common.length ? `<div class="table-wrap"><table class="fd-cmp-common"><thead><tr><th>Stock</th><th class="num">${esc(A.name)}</th><th class="num">${esc(B.name)}</th><th class="num">Shared</th><th class="num">P/E</th></tr></thead><tbody>${o.common.slice(0, 40).map(h => `<tr${h.symbol ? ` data-sym="${esc(h.symbol)}"` : ""}><td><div class="company">${esc(h.name)}${h.held ? ' <span class="chip v-none">You hold</span>' : ""}</div><div class="ticker">${esc(h.symbol || "")}${h.sector ? ` · ${esc(h.sector)}` : ""}</div></td><td class="num">${h.wA}%</td><td class="num">${h.wB}%</td><td class="num"><b>${h.shared}%</b></td><td class="num">${h.pe ?? "—"}</td></tr>`).join("")}</tbody></table></div>${o.common.length > 40 ? `<p class="hint">and ${o.common.length - 40} more.</p>` : ""}` : `<p class="hint">No stocks in common.</p>`}
+      <div class="fd-cmp-only">
+        ${[[A, o.onlyA, o.onlyAWeight], [B, o.onlyB, o.onlyBWeight]].map(([f, list, w]) => `<div><h4>Only in ${esc(f.name)} <small>${w}%</small></h4>${list.length ? `<ol>${list.slice(0, 15).map(h => `<li${h.symbol ? ` data-sym="${esc(h.symbol)}"` : ""}><span>${esc(h.name)}${h.held ? " ✓" : ""}</span><b>${h.weight}%</b></li>`).join("")}</ol>` : `<p class="hint">Nothing: every stock is also in the other fund.</p>`}</div>`).join("")}
+      </div>
+      <h4>Sectors</h4>
+      <div class="table-wrap"><table class="fd-cmp-sec"><thead><tr><th>Sector</th><th class="num">${esc(A.name)}</th><th class="num">${esc(B.name)}</th></tr></thead><tbody>${o.sectors.map(r => `<tr><td>${esc(r.sector)}</td><td class="num">${r.a}%</td><td class="num">${r.b}%</td></tr>`).join("")}</tbody></table></div>`;
+  }
+  $("#fdCmpBtn").onclick = async () => {
+    const box = $("#fdCompare"); if (!box.hidden) { box.hidden = true; return; }
+    $("#fdImport").hidden = true; box.hidden = false; fdCmpShell(); box.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  $("#fdCompare").addEventListener("click", e => { const t = e.target.closest("[data-sym]"); if (t && !e.target.closest("button, select")) openStockSheet(t.dataset.sym, { back: "Back to Mutual funds" }); });
   // automatic fetch: pick the fund (AMFI list), optionally give the fund house link
   let fdAutoPick = null, fdAutoRes = [], fdAutoT = null;
   const fdAutoDraw = () => { $("#fdAutoDrop").innerHTML = fdAutoRes.map((r, i) => `<button type="button" class="mf-opt" data-i="${i}">${esc(r.name)}<small>${esc(r.isin)}</small></button>`).join(""); };

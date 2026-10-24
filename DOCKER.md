@@ -46,7 +46,7 @@ The same two files work everywhere: `docker-compose.yml` (app + MongoDB) and, fo
 | Logs | `docker compose logs -f app` |
 | Status / health | `docker compose ps` |
 | Back up the database | `sh scripts/backup-mongo.sh` (Windows: `powershell -File scripts\backup-mongo.ps1`) |
-| Forgot the owner password | `docker compose stop app && docker compose run --rm app node scripts/reset-password.mjs <username> && docker compose start app` |
+| Forgot the owner password / username, or lost the authenticator phone | `docker compose stop app`, then `docker compose run --rm app node scripts/reset-password.mjs` (lists the accounts), then `docker compose run --rm app node scripts/reset-password.mjs <username> --reset-2fa` (prints a temporary password; `--reset-2fa` also switches off two-step sign-in), then `docker compose start app` |
 | Restore a backup | `docker compose stop app` then `sh scripts/restore-mongo.sh backups/<file>` then `docker compose start app` |
 
 > **Never run `docker compose down -v`.** The `-v` flag deletes the `mongo-data` volume, which is all your data.

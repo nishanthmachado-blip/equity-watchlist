@@ -3,7 +3,7 @@
   const post = async (url, body) => {
     const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.message || `HTTP ${r.status}`);
+    if (!r.ok) throw Object.assign(new Error(j.message || `HTTP ${r.status}`), { needCode: !!j.needCode });
     return j;
   };
   const show = (el, msg) => { el.textContent = msg; el.hidden = !msg; };
@@ -15,8 +15,12 @@
   form.hidden = false; form.querySelector("input").focus();
   $("#loginForm").onsubmit = async e => {
     e.preventDefault(); const btn = e.target.querySelector("button"); btn.disabled = true; show($("#loginErr"), "");
-    try { await post("/api/auth/login", { username: $("#lu").value, password: $("#lp").value }); go(); }
-    catch (err) { show($("#loginErr"), err.message); $("#lp").select(); }
+    const codeBox = $("#lcodeWrap"), code = $("#lcode");
+    try { await post("/api/auth/login", { username: $("#lu").value, password: $("#lp").value, ...(codeBox.hidden ? {} : { code: code.value }) }); go(); }
+    catch (err) {
+      if (err.needCode) { const first = codeBox.hidden; codeBox.hidden = false; show($("#loginErr"), first ? "" : err.message); code.value = ""; code.focus(); }
+      else { show($("#loginErr"), err.message); $("#lp").select(); }
+    }
     finally { btn.disabled = false; }
   };
   $("#setupForm").onsubmit = async e => {

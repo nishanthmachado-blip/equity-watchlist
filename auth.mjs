@@ -10,6 +10,7 @@ import crypto from "node:crypto";
 import { dfs as fs } from "./storage.mjs";
 import { dfsSync as fsSync } from "./storage.mjs";
 import path from "node:path";
+import { sealText, openText } from "./secrets.mjs";
 
 export const COOKIE = "ew_session";
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 30);
@@ -31,6 +32,20 @@ export function checkPassword(pw) {
   return null;
 }
 const sha = s => crypto.createHash("sha256").update(s).digest("hex");
+// ---- Two-step sign-in (TOTP, RFC 6238: the 6-digit code of Google Authenticator, Microsoft Authenticator, Authy…) ----
+const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+export function base32Encode(buf) { let bits = 0, value = 0, out = ""; for (const b of buf) { value = (value << 8) | b; bits += 8; while (bits >= 5) { out += B32[(value >>> (bits - 5)) & 31]; bits -= 5; } } if (bits) out += B32[(value << (5 - bits)) & 31]; return out; }
+function b32decode(s) { let bits = 0, value = 0; const out = []; for (const ch of String(s).toUpperCase().replace(/[\s=-]/g, "")) { const i = B32.indexOf(ch); if (i < 0) return null; value = (value << 5) | i; bits += 5; if (bits >= 8) { out.push((value >>> (bits - 8)) & 0xff); bits -= 8; } } return Buffer.from(out); }
+export function totpCode(secret, step) { const c = Buffer.alloc(8); c.writeBigUInt64BE(BigInt(step)); const h = crypto.createHmac("sha1", b32decode(secret)).update(c).digest(), o = h[h.length - 1] & 15; return String((h.readUInt32BE(o) & 0x7fffffff) % 1e6).padStart(6, "0"); }
+// The time step a code matches (this one, or one either side for clock drift), or null
+export function totpMatch(secret, code, time = Date.now()) {
+  const c = String(code || "").replace(/\s/g, ""); if (!/^\d{6}$/.test(c)) return null;
+  const now = Math.floor(time / 30000);
+  for (const d of [0, -1, 1]) { const a = Buffer.from(totpCode(secret, now + d)), b = Buffer.from(c); if (crypto.timingSafeEqual(a, b)) return now + d; }
+  return null;
+}
+const recoveryCodes = () => Array.from({ length: 8 }, () => crypto.randomBytes(5).toString("hex").replace(/(.{5})/, "$1-"));
+const normCode = c => String(c || "").toLowerCase().replace(/[^a-f0-9]/g, "");
 export function parseCookies(header = "") {
   const out = {};
   for (const part of String(header).split(";")) { const i = part.indexOf("="); if (i > 0) { const k = part.slice(0, i).trim(); if (!(k in out)) out[k] = decodeURIComponent(part.slice(i + 1).trim()); } }
@@ -43,7 +58,7 @@ export function deviceOf(ua = "") {
   const br = /Edg\//.test(ua) ? "Edge" : /OPR\/|Opera/.test(ua) ? "Opera" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /Firefox\//.test(ua) ? "Firefox" : /CriOS|Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : /curl|wget|python|node|okhttp|Go-http/i.test(ua) ? "Script / tool" : null;
   return br && os ? `${br} on ${os}` : br || os || "Unknown device";
 }
-export const publicUser = u => u && { id: u.id, username: u.username, name: u.name || u.username, role: u.role, createdAt: u.createdAt, disabled: !!u.disabled, lastLoginAt: u.lastLoginAt || null };
+export const publicUser = u => u && { id: u.id, username: u.username, name: u.name || u.username, role: u.role, createdAt: u.createdAt, disabled: !!u.disabled, lastLoginAt: u.lastLoginAt || null, twoStep: !!u.mfa?.on };
 
 // Sliding-window limiter: `limit` failures per `windowMs` per key, then locked until the window passes.
 export function createLimiter({ limit = 5, windowMs = 15 * 60e3, now = () => Date.now() } = {}) {
@@ -100,6 +115,15 @@ export function createAuth({ dir, now = () => Date.now(), log = console.log, set
     list.unshift({ at: now(), kind, ip: meta.addr || null, device: deviceOf(meta.ua), place: meta.place || null });
     events[uid] = list.slice(0, 60);
   }
+  // A current authenticator code (not reused) or an unused recovery code
+  function checkSecondStep(u, code) {
+    let secret; try { secret = openText(u.mfa.sealed); } catch { return false; }
+    const step = totpMatch(secret, code, now());
+    if (step !== null && step > (u.mfa.lastStep ?? -1)) { u.mfa.lastStep = step; return true; }
+    const h = sha(normCode(code)), i = normCode(code).length === 10 ? (u.mfa.recovery || []).indexOf(h) : -1;
+    if (i >= 0) { u.mfa.recovery.splice(i, 1); return true; }
+    return false;
+  }
   async function startSession(u, meta = {}) {
     const token = crypto.randomBytes(32).toString("base64url");
     sessions[sha(token)] = { uid: u.id, pid: crypto.randomBytes(6).toString("hex"), createdAt: now(), lastSeen: now(), expiresAt: now() + SESSION_DAYS * 864e5, ua: String(meta.ua || "").slice(0, 200), ip: meta.addr || null, place: meta.place || null, how: meta.how || "password" };
@@ -121,7 +145,7 @@ export function createAuth({ dir, now = () => Date.now(), log = console.log, set
       fsSync.rmSync(codeFile, { force: true });
       return { user: u, token: await startSession(u, { ...meta, how: "setup" }) };
     },
-    async login({ username, password }, meta = {}) {
+    async login({ username, password, code: secondStep = "" }, meta = {}) {
       load();
       const name = String(username || "").trim().toLowerCase(), uKey = `u:${name}`, aKey = `a:${meta.addr}`;
       const wait = Math.max(byUser.blocked(uKey), byAddr.blocked(aKey));
@@ -130,9 +154,49 @@ export function createAuth({ dir, now = () => Date.now(), log = console.log, set
       // Always run scrypt so a missing username takes as long as a wrong password.
       const ok = await verifyPassword(password, u || { salt: "AAAAAAAAAAAAAAAAAAAAAA==", hash: "A".repeat(88) });
       if (!u || !ok) { byUser.fail(uKey); byAddr.fail(aKey); if (u) { logEvent(u.id, "wrong password", meta); await persist(); } throw Object.assign(new Error("Wrong username or password."), { status: 401 }); }
+      if (u.mfa?.on) {
+        const code = String(secondStep ?? "").trim();
+        if (!code) throw Object.assign(new Error("Enter the 6-digit code from your authenticator app."), { status: 401, needCode: true });
+        if (!checkSecondStep(u, code)) {
+          byUser.fail(uKey); byAddr.fail(aKey); logEvent(u.id, "wrong sign-in code", meta); await persist();
+          throw Object.assign(new Error("That code is not right (or was already used). Use the current code from your authenticator app, or one of your recovery codes."), { status: 401, needCode: true });
+        }
+      }
       byUser.clear(uKey);
       return { user: u, token: await startSession(u, meta) };
     },
+    // Two-step sign-in: setup (returns the secret to add to an authenticator app), enable (with a first code: returns
+    // one-time recovery codes), disable (password + a code). The secret is stored encrypted.
+    mfaStatus(u) { return { on: !!u.mfa?.on, since: u.mfa?.since || null, recoveryLeft: (u.mfa?.recovery || []).length, pending: !!u.mfaPending }; },
+    async mfaSetup(u) {
+      load(); if (u.mfa?.on) throw Object.assign(new Error("Two-step sign-in is already on. Turn it off first to set up a new phone."), { status: 400 });
+      const secret = base32Encode(crypto.randomBytes(20));
+      u.mfaPending = { sealed: sealText(secret), at: now() }; await persist();
+      const label = encodeURIComponent(`Equity Watchlist:${u.username}`);
+      return { secret: secret.replace(/(.{4})/g, "$1 ").trim(), uri: `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent("Equity Watchlist")}&algorithm=SHA1&digits=6&period=30` };
+    },
+    async mfaEnable(u, code, meta = {}) {
+      load(); const p = u.mfaPending; if (!p || now() - p.at > 30 * 60e3) throw Object.assign(new Error("Start the setup again (it expires after 30 minutes)."), { status: 400 });
+      const secret = openText(p.sealed), step = totpMatch(secret, code, now());
+      if (step === null) throw Object.assign(new Error("That code doesn't match. Check the phone's time is automatic and type the current code."), { status: 400 });
+      const codes = recoveryCodes();
+      u.mfa = { on: true, sealed: p.sealed, since: new Date(now()).toISOString(), lastStep: step, recovery: codes.map(c => sha(normCode(c))) };
+      delete u.mfaPending; logEvent(u.id, "two-step sign-in turned on", meta); await persist();
+      return { recoveryCodes: codes };
+    },
+    async mfaDisable(u, { password, code }, meta = {}) {
+      load(); if (!u.mfa?.on) return;
+      if (!(await verifyPassword(password, u))) throw Object.assign(new Error("Password is not right."), { status: 403 });
+      if (!checkSecondStep(u, code)) throw Object.assign(new Error("Code is not right."), { status: 403 });
+      delete u.mfa; delete u.mfaPending; logEvent(u.id, "two-step sign-in turned off", meta); await persist();
+    },
+    // The owner can switch it off for someone who lost their phone and recovery codes (shows in their sign-in history)
+    async mfaReset(id, by) {
+      load(); const u = users.find(x => x.id === id); if (!u) throw Object.assign(new Error("No such user."), { status: 404 });
+      delete u.mfa; delete u.mfaPending; logEvent(u.id, `two-step sign-in reset by ${by}`, {}); await persist();
+    },
+    // A fresh session after a password change (the user has just proved who they are)
+    async newSession(u, meta = {}) { load(); return startSession(u, { ...meta, how: "password-change" }); },
     // Returns the signed-in user for a cookie header, or null. Refreshes nothing on disk (cheap on every request).
     // The session behind a cookie, with its owner; also records "last active" (saved at most every 5 minutes).
     sessionFor(cookieHeader, meta = {}) {

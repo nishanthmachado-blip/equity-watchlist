@@ -1,5 +1,80 @@
 # Equity Watchlist MVP
 
+## v5.40.0: Breeze and Breeze night (broker-terminal style)
+- 🎨 menu → Full redesigns adds **Breeze** (light) and **Breeze night** (charcoal): the calm look of a trading terminal you keep open all day — plain white page, a soft blue for the active tab, buttons and menu item, a slim header, small grey upper-case column names, tight rows and small corner radii; green / red only for gains and losses. Menu on the left with labels (Layout → Menu side changes it). Works with Compact density for even tighter rows.
+- Its own name and colours (no broker names, logos or exact brand colours).
+
+## v5.39.0: more logos, and Sage / Regal / Mono redesigns
+- **Logos for more companies.** Besides Wikidata, the app now uses the company website it already learns while fetching fundamentals (Screener's company links, Yahoo's company profile). Companies that showed initials before are looked up again once their website is known.
+- **Add a missing logo yourself:** click a badge that shows initials, type the company's website (e.g. `lemontreehotels.com`) and its icon becomes the logo (kept for everyone on this server; remembered for later look-ups).
+- 🎨 menu → Full redesigns adds:
+  - **Sage:** calm muted green on warm off-white, soft rounded cards.
+  - **Regal:** deep navy and gold, a private-banking feel (dark).
+  - **Mono:** black and white only, hairlines and big bold numbers; colour only for gains and losses.
+- Checked: logo column, menus and badges in all 19 themes, wide screen and phone.
+
+## v5.38.2: folded menu closes after you pick a page
+- With the menu folded to icons, clicking a page left the menu expanded over the screen (the clicked item kept focus, which counted as "in use"). Now the menu opens while you point at it or move through it with the keyboard, and folds as soon as you pick a page or move the pointer away — in every theme and on either side. "Labels" / 📌 still keeps it open.
+
+## v5.38.1: account recovery from the server
+- `node scripts/reset-password.mjs` with no username lists every account (owner, disabled, two-step on, last sign-in), for when you forgot the username too.
+- `--reset-2fa` also switches off two-step sign-in (lost phone and recovery codes); it is recorded in that account's sign-in history.
+- The script now reads the app's `.env` (MongoDB address, `SECRETS_KEY`), so it works on the same data as the app. Docker: `docker compose stop app`, run it with `docker compose run --rm app node scripts/reset-password.mjs …`, then `docker compose start app` (restarting also clears a wrong-password lock-out).
+
+## v5.38.0: security — encrypted broker secrets, two-step sign-in, content security policy
+- **Broker secrets encrypted at rest.** Broker API keys, PINs, TOTP secrets, broker session tokens, Kite / broker MCP logins, the Telegram bot token and the sign-in authenticator secret are stored encrypted (AES-256-GCM, random IV per write), on disk and in MongoDB. The rest of the app is unchanged: the storage layer seals on write and opens on read. Existing plain files are sealed on the first start.
+  - Key: set **`SECRETS_KEY`** in `.env` (long random string, kept outside the database) — see `.env.example`. Without it the app generates a key and keeps it in the data store (better than nothing, but a full copy of the data includes it). Setting `SECRETS_KEY` later re-seals everything automatically and removes the stored key; no need to log in to brokers again.
+  - A file that can't be decrypted (key changed) reads as "not saved": log in to that broker again; never garbage.
+  - The key file and the 2-step secret are never included in backups.
+- **Two-step sign-in** (👤 → Two-step sign-in): after the password, a 6-digit code from an authenticator app (Google / Microsoft Authenticator, Authy, 1Password…). Scan the QR code (or type the key), confirm with a code, and save the 8 one-time recovery codes. A code can't be reused; wrong codes count towards the 15-minute lock-out and appear in Sign-in activity. Turning it off needs your password and a code. The owner can reset it for someone who lost their phone (it shows in their sign-in history). QR codes: qrcode-generator 1.4.4 (MIT, `public/vendor/`, loaded only when setting up).
+- **Content Security Policy** on every page: scripts only from this app (the one inline theme script in the page head is allowed by its hash), no plugins, no framing, data only to this server, fonts only from Google Fonts. Also `Permissions-Policy` (no camera / mic / location / payment) and `Cross-Origin-Opener-Policy`. The last inline `onclick` / `onload` handlers were removed. Checked: no policy violations on any page.
+- **👤 → Security check**: HTTPS, two-step sign-in, encryption of secrets, whether the key is kept apart from the data, read-only brokers, private data — with what to fix.
+
+## v5.37.1: logo no longer covers the stock name
+- With Layout → Density → Compact, the compact cell padding overrode the space kept for the logo, so the badge sat on top of the first letters of the name and ticker. The logo column now keeps its room in both densities, every theme, and on phones (checked across all 16 themes).
+
+## v5.37.0: Saffron, Onyx and Chilli redesigns; better logos
+- 🎨 menu → Full redesigns adds three looks built on the Clean layout (menu with labels on the left, airy cards):
+  - **Saffron:** warm orange and cream, a soft orange glow behind the header, orange buttons and active tabs, orange top edge on the summary tiles.
+  - **Onyx:** deep black, white pills for the active choice, mint-green gains, black-to-charcoal cards.
+  - **Chilli:** a bold red header band with white text over light, airy cards; red buttons and active tabs.
+  - Original looks with their own names (no brand names, logos or exact brand colours).
+- Fixed: the "Coming up for your stocks" card on Home stayed white in dark themes.
+- Logos: also try each company's own high-resolution app icon (`apple-touch-icon.png`) before the small site icon, and skip icons under 24 px (the "no icon" globe), which look worse than initials.
+- Logos: on phones the logo stays inside its card (it could float to the top of the page).
+- 🎨 menu → Layout → Logos now shows how the lookups are going: how many found, how many show initials, and the last problem (for example Wikidata unreachable). Also `GET /api/logos/status`.
+
+## v5.36.0: company logos beside every stock
+- Every stock row that gets a ♡ (Value a stock, watchlists, holdings, swing, favourites, ideas, order wins…) and the Value a stock card now show the company's logo to the left of its name and ticker.
+- Until a logo is found, or when a company has none, the row shows the company's initials in a coloured badge (each company keeps its own colour).
+- Where logos come from: the server looks each company up on Wikidata (by ISIN from NSE's list, else by its NSE / BSE ticker, Indian companies only), then downloads a small picture: the logo file on Wikimedia Commons, else the icon of the company's own website. Lookups run in the background, 40 companies at a time, and pause if Wikidata asks.
+- Privacy: the browser only loads logos from this app (`/api/logo/SYMBOL`, login required). No outside site sees which stocks you look at; the server's lookups carry no account information.
+- Safety: only PNG / JPEG / GIF / WebP / ICO images up to 80 KB are kept (never SVG or HTML), served with `nosniff` and a no-content CSP.
+- Cache: shared `logos.json` in the data folder; found logos are kept 90 days, "no logo" for 21 days.
+- 🎨 menu → Layout → **Logos**: Logos (default), Initials, Off.
+- `LOGOS=0` turns the outside lookups off (rows then show initials).
+
+## v5.35.0: Clean redesign and layout options
+- 🎨 menu → **Full redesigns** now has **Clean** and **Clean night**, next to Terminal, Glass, Editorial, Vibe and Vibe night. Clean is a calm white dashboard: soft grey page, white cards with hairline borders, near-black type, a black pill for the active choice, green / red only for gains and losses, no dark table headers, quiet grey menu icons with labels, and the menu on the left.
+- 🎨 menu → **Layout** (works with every theme, remembered per browser, applied before the page draws):
+  - **Menu side:** Auto (the theme decides: Clean → left, others → right), Left, Right. Also moves the drawer on tablets.
+  - **Menu:** Icons (folded, opens when you point at it) or Labels (always open, same as 📌).
+  - **Density:** Comfortable or Compact (tighter table rows, cards and header: more on screen).
+- Phones keep the bottom tab bar in every theme.
+
+## v5.34.1: simpler look for favourites (theme menu option)
+- Favourite (❤) stocks no longer get a heavy red box by default: a thin red stripe on the left of the row instead.
+- Theme menu → **Favourites look**: **Stripe** (default), **Tint** (faint pink background), **Heart** (only the ❤ icon), **Box** (the old red box). Remembered per browser and applied before the page draws (no flash).
+- The Favourites page cards and the Value a stock card follow the same choice.
+
+## v5.34.0: compare two funds (overlap) in the mutual fund X-ray
+- **⚖ Compare / overlap** on the Mutual funds X-ray page: pick any two saved funds.
+- **Overlap (money):** each fund's stocks scaled to 100% (cash and debt left out), then the smaller weight of every common stock added up: the share of money in the same stocks. Below 20% low, 20–40% moderate, 40–60% high, above 60% very high.
+- Also shown: stocks in both (and what share of each fund's stock list that is), what each fund holds that the other doesn't (% of its money), top-10 concentration, weighted P/E, % in buy zone / expensive, overlap with the stocks you hold, each fund's biggest overlap with your **other** saved funds, your money in each (when linked to synced holdings), common stocks with both weights, and sectors side by side.
+- **Points to weigh:** a plain summary of those facts, plus what the page can't see (expense ratio, tracking error, long-term returns, exit load, tax on selling). Stopping a SIP doesn't mean selling the units.
+- **Add an index** (for index funds / ETFs): Nifty 50 … Midcap 150, Smallcap 250, Nifty200 Momentum 30, Midcap150 Quality 50 and more. Broad indices are weighted by free-float market cap from NSE. Factor indices (momentum, quality, value, low volatility) also tilt by a score NSE doesn't publish per stock, so their weights are approximate (marked "≈ weights"). For exact numbers load the index fund's own monthly portfolio. Index entries aren't auto-refreshed from fund houses.
+- Matching is by NSE symbol, then ISIN, then company name. Funds stay private to your login.
+
 ## v5.33.0: live prices from Angel One, and events and actions on the chart
 **Live prices pushed by Angel One**
 - While the market is open, the app keeps one connection to Angel One's live market-data feed (SmartAPI WebSocket 2.0) and follows up to 1,000 of your stocks: swing positions and holdings first, then the swing watchlist, your lists and favourites.

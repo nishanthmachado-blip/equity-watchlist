@@ -131,3 +131,52 @@ export function fundSummary(holdings, rowsBySym, mine = new Map()) {
     overlapWithYou: Math.round(overlap * 10) / 10, sharedStocks: rows.filter(h => h.symbol && mine.has(h.symbol)).length
   };
 }
+
+// ---- fund vs fund overlap ------------------------------------------------------------------------------------------------
+// Each fund's equity holdings are scaled to 100% first (cash and debt left out), then overlap = Σ min(weight in A, weight in B):
+// the share of money that sits in the same stocks in both. Stocks match by NSE symbol, else ISIN, else company name.
+const keyOf = h => h.symbol || h.isin || String(h.name || "").toLowerCase().replace(/\b(limited|ltd|the)\b|[^a-z0-9]/g, "");
+const r1f = v => Math.round(v * 10) / 10;
+function scaled(holdings) {
+  const m = new Map(); let tot = 0;
+  for (const h of holdings || []) if (h.weight > 0) { const k = keyOf(h); const cur = m.get(k); if (cur) cur.weight += h.weight; else m.set(k, { ...h, weight: h.weight }); tot += h.weight; }
+  if (tot > 0) for (const h of m.values()) h.weight = h.weight / tot * 100;
+  return m;
+}
+export function fundOverlap(a, b) {
+  const A = scaled(a), B = scaled(b), common = [];
+  let overlap = 0;
+  for (const [k, x] of A) { const y = B.get(k); if (!y) continue; const w = Math.min(x.weight, y.weight); overlap += w; common.push({ key: k, symbol: x.symbol || y.symbol || null, name: x.name || y.name, sector: x.sector || y.sector || null, wA: r1f(x.weight), wB: r1f(y.weight), shared: r1f(w) }); }
+  common.sort((p, q) => q.shared - p.shared);
+  const only = (X, Y) => [...X].filter(([k]) => !Y.has(k)).map(([, h]) => ({ symbol: h.symbol || null, name: h.name, sector: h.sector || null, weight: r1f(h.weight) })).sort((p, q) => q.weight - p.weight);
+  const onlyA = only(A, B), onlyB = only(B, A);
+  const sectors = X => { const s = new Map(); for (const h of X.values()) { const k = h.sector || "Other / not given"; s.set(k, (s.get(k) || 0) + h.weight); } return s; };
+  const sa = sectors(A), sb = sectors(B), secs = [...new Set([...sa.keys(), ...sb.keys()])].map(k => ({ sector: k, a: r1f(sa.get(k) || 0), b: r1f(sb.get(k) || 0) })).sort((p, q) => (q.a + q.b) - (p.a + p.b));
+  return {
+    overlapPct: r1f(overlap), commonCount: common.length, countA: A.size, countB: B.size,
+    // by count: how many of each fund's stocks are also in the other
+    commonOfA: A.size ? r1f(common.length / A.size * 100) : 0, commonOfB: B.size ? r1f(common.length / B.size * 100) : 0,
+    common, onlyA: onlyA.slice(0, 60), onlyB: onlyB.slice(0, 60),
+    onlyAWeight: r1f(onlyA.reduce((s, h) => s + h.weight, 0)), onlyBWeight: r1f(onlyB.reduce((s, h) => s + h.weight, 0)),
+    top10A: r1f([...A.values()].sort((p, q) => q.weight - p.weight).slice(0, 10).reduce((s, h) => s + h.weight, 0)),
+    top10B: r1f([...B.values()].sort((p, q) => q.weight - p.weight).slice(0, 10).reduce((s, h) => s + h.weight, 0)),
+    sectors: secs.slice(0, 14)
+  };
+}
+
+// Weights for an NSE index used as an X-ray "fund". NSE's live list gives each stock's free-float market cap, the basis of
+// broad indices (Nifty 50, Midcap 150…). Without it, full market cap, then equal weights. Factor indices (momentum,
+// quality, low volatility, alpha, value) also tilt by their factor score, which NSE doesn't publish per stock: their
+// weights here are free-float size capped at 5% per stock (as those indices cap them), so they are approximate.
+export function indexWeights(name, rows) {
+  const factor = /MOMENTUM|QUALITY|LOW ?VOL|ALPHA|VALUE|EQUAL/i.test(name), equal = /EQUAL/i.test(name);
+  const pick = (k, lbl) => { const v = rows.map(r => (r[k] > 0 ? r[k] : null)); return v.filter(Boolean).length >= rows.length * 0.8 ? [v, lbl] : null; };
+  let [base, basis] = (!equal && (pick("ffmc", "free-float market cap (NSE)") || pick("marketCap", "market cap"))) || [rows.map(() => 1), "equal weights"];
+  const known = base.filter(Boolean).sort((a, b) => a - b), med = known[Math.floor(known.length / 2)] || 1;
+  let w = base.map(v => v ?? med); const tot = w.reduce((a, v) => a + v, 0); w = w.map(v => v / tot * 100);
+  if (factor && !equal) for (let k = 0; k < 20; k++) { // cap at 5% and share the excess out pro rata, until nothing is over
+    const over = w.reduce((a, v) => a + Math.max(0, v - 5), 0); if (over < 1e-6) break;
+    const under = w.reduce((a, v) => a + (v < 5 ? v : 0), 0); w = w.map(v => (v >= 5 ? 5 : v + over * v / under));
+  }
+  return { weights: w.map(v => Math.round(v * 100) / 100), basis: factor && !equal && basis !== "equal weights" ? `${basis}, capped at 5%` : basis, approx: factor || !basis.startsWith("free-float") };
+}

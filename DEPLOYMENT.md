@@ -252,6 +252,7 @@ Use this option if the team standardises on ALBs.
 | `ANGEL_PRICES` | on | Live prices, daily price history and the 📈 price charts (intraday too) from your Angel One account (SmartAPI, read-only market data) whenever it is connected. `0` turns it off (daily charts then use saved NSE closes / Yahoo; no intraday). |
 | `ANGEL_STREAM` | on | Live prices pushed by Angel One while the market is open (SmartAPI WebSocket, market data only; up to 1,000 of your stocks). `0` turns it off. Needs `ANGEL_PRICES` on and Angel One connected. |
 | `ANGEL_WS_URL` | Angel's feed | Address of the live feed (only for testing). |
+| `LOGOS` | on | Company logos looked up on Wikidata / Wikimedia Commons / the company website icon by the server (the browser only loads them from this app). `0` turns the lookups off; rows show initials. |
 | `ANGEL_SCRIP_URL` | Angel's public instrument list | Where the symbol → instrument-token list is downloaded from (weekly). Only for a mirror or tests. |
 | `ANGEL_API_ROOT` | `https://apiconnect.angelone.in` | Angel One API address. Only for a proxy or tests. |
 | `SWING_SCAN_MARKET` | off | `1` adds ~170 large and mid caps to the daily swing-ideas chart scan (by default it scans only your watchlists, swing stocks and holdings). |
@@ -270,6 +271,8 @@ Use this option if the team standardises on ALBs.
 | `BACKUP_S3_REGION` / `BACKUP_S3_PREFIX` | `ap-south-1` / `equity-watchlist/` | Bucket region and key prefix |
 | `BACKUP_INCLUDE_SECRETS` | off | `1` includes broker logins, API keys and Telegram tokens in the automatic backups (off: they are left out) |
 | `AI_KEY_SECRET` | random, kept in `DATA_DIR/ai-secret.json` | Secret that encrypts each user's Anthropic API key. Set it (long random string) so keys survive a lost data folder secret; changing it means users re-enter their key |
+| `SECRETS_KEY` | generated, kept in the data store | **Set this.** Encrypts every stored secret (broker API keys, PINs, TOTP secrets, broker sessions, MCP logins, Telegram token, the sign-in authenticator secret) with AES-256-GCM. Keep it in `.env` / the server environment only, so a copy of the database or data folder alone cannot be decrypted. Setting it later re-seals everything on the next start (no broker re-login); changing it afterwards means logging in to brokers again. |
+| `SECRETS_KEY_FILE` | — | Alternative to `SECRETS_KEY`: path to a file holding the key (for Docker / Kubernetes secrets). |
 | `ANTHROPIC_API_KEY` | – | Optional: lets the **owner** use Ask AI without entering a key (members always need their own) |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | For a proxy / gateway; the server needs outbound HTTPS to it |
 | `NIFTYINDICES_BASE` | `https://www.niftyindices.com` | Where index constituents files come from when NSE refuses an index list (outbound HTTPS to www.niftyindices.com) |

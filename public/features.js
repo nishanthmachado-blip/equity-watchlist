@@ -66,7 +66,8 @@
     const T = rt.total, tb = T.bench?.[rtBench], bl = B[rtBench]?.label || "the index";
     const vs = (mine, idx) => fin(mine) && fin(idx?.xirr) ? `<small class="${mine >= idx.xirr ? "buy" : "avoid"}">${mine >= idx.xirr ? "beat" : "behind"} ${bl} by ${Math.abs(Math.round((mine - idx.xirr) * 10) / 10)} pts a year</small>` : idx?.tooShort ? `<small>${bl} history starts ${esc(idx.from)}</small>` : "";
     if (!rt.tradeCount) {
-      body.innerHTML = `<div class="fd-empty"><div class="fd-empty-ico">📈</div><h2>Import your tradebook for dated returns</h2><p>XIRR needs the date of every buy and sell. Tax view → <b>Import tradebook</b> (Zerodha Console → Reports → Tradebook, one year at a time). Then this page shows your yearly return next to the index.</p><button type="button" class="primary" onclick="setView('tax')">Go to Tax view</button></div>${undatedHtml(rt.undated)}${swingHtml(rt.swing, bl)}`;
+      body.innerHTML = `<div class="fd-empty"><div class="fd-empty-ico">📈</div><h2>Import your tradebook for dated returns</h2><p>XIRR needs the date of every buy and sell. Tax view → <b>Import tradebook</b> (Zerodha Console → Reports → Tradebook, one year at a time). Then this page shows your yearly return next to the index.</p><button type="button" class="primary" data-go-tax>Go to Tax view</button></div>${undatedHtml(rt.undated)}${swingHtml(rt.swing, bl)}`;
+      body.querySelector("[data-go-tax]")?.addEventListener("click", () => setView("tax"));
       return;
     }
     $("#rtCards").innerHTML = `

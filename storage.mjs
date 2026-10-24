@@ -12,6 +12,7 @@
 import realFs from "node:fs/promises";
 import realFsSync from "node:fs";
 import path from "node:path";
+import { initSecrets, isSecretPath, isSealed, sealText, openText, sealedWithOldKey, hasOldKey, status as secretsStatus } from "./secrets.mjs";
 
 let mode = "file", root = null, coll = null, client = null, log = console.log;
 const cache = new Map();          // key -> text
@@ -60,7 +61,7 @@ const childrenOf = prefix => [...cache.keys()].filter(k => k.startsWith(prefix ?
 // ---- setup ----
 export async function initStorage({ dataDir, mongoUrl = process.env.MONGO_URL, dbName = process.env.MONGO_DB || "equity_watchlist", collection = process.env.MONGO_COLLECTION || "app_data", importFiles = process.env.MONGO_IMPORT_FILES !== "0", logger = console.log, collectionImpl = null } = {}) {
   root = path.resolve(dataDir); log = logger;
-  if (!mongoUrl && !collectionImpl) { mode = "file"; return info(); }
+  if (!mongoUrl && !collectionImpl) { mode = "file"; await startSecrets(); return info(); }
   if (collectionImpl) coll = collectionImpl; // tests
   else {
     const { MongoClient } = await import("mongodb");
@@ -84,8 +85,27 @@ export async function initStorage({ dataDir, mongoUrl = process.env.MONGO_URL, d
     for (const f of files) { const key = path.relative(root, f).split(path.sep).join("/"); if (/\.tmp$|(^|\/)\./.test(key) && !/\.before-restore\.json$/.test(key)) continue; try { await put(key, await realFs.readFile(f, "utf8")); n++; } catch (e) { log(`[storage] Skipped ${key}: ${e.message}`); } }
     if (n) log(`[storage] Imported ${n} file(s) from ${root} into MongoDB.`);
   }
+  await startSecrets();
   return info();
 }
+// Secrets at rest: pick the key, then seal any secret file still stored in plain text (installs from before v5.38)
+async function startSecrets() {
+  const keyPath = path.join(root, "secrets-key.json");
+  const st = initSecrets({ readStored: () => { try { return dfsSync.readFileSync(keyPath, "utf8"); } catch { return null; } }, writeStored: t => { try { realFsSync.mkdirSync(root, { recursive: true }); } catch { /* exists */ } dfsSync.writeFileSync(keyPath, t, { mode: 0o600 }); } });
+  let sealed = 0, failedOld = 0;
+  const reseal = t => { if (!isSealed(t)) return sealText(t); if (sealedWithOldKey(t)) { try { return sealText(openText(t)); } catch { failedOld++; return null; } } return null; };
+  if (mode === "mongo") for (const k of [...cache.keys()].filter(isSecretPath)) { const n = reseal(cache.get(k)); if (n) { await put(k, n); sealed++; } }
+  if (mode === "file") for (const f of await walk(root).catch(() => [])) {
+    if (!isSecretPath(f)) continue;
+    try { const n = reseal(await realFs.readFile(f, "utf8")); if (n) { await atomicWrite(f, n, { mode: 0o600 }); sealed++; } } catch { /* unreadable: leave it */ }
+  }
+  // moved to SECRETS_KEY: everything is re-sealed with it, so the old generated key is no longer needed in the data
+  if (hasOldKey() && st.strong && !failedOld) { await dfs.rm(keyPath, { force: true }).catch(() => {}); log("[secrets] Re-sealed with SECRETS_KEY; the old generated key was removed from the data store."); }
+  log(`[secrets] Broker logins and keys are encrypted at rest (key: ${st.source === "generated" ? "generated, kept in the data store — set SECRETS_KEY for stronger protection" : st.source})${sealed ? `; sealed ${sealed} older file(s)` : ""}.`);
+}
+export const secretsInfo = () => secretsStatus();
+// secret files: sealed on write, opened on read; a file that cannot be opened (key changed) reads as missing
+const openOr404 = (p, t) => { try { return openText(t, path.basename(String(p))); } catch { throw enoent(p); } };
 async function walk(dir) { const out = []; for (const e of await realFs.readdir(dir, { withFileTypes: true })) { const p = path.join(dir, e.name); if (e.isDirectory()) out.push(...await walk(p)); else if (e.isFile()) out.push(p); } return out; }
 async function retryDirty() {
   for (const key of [...dirty]) {
@@ -111,8 +131,15 @@ async function atomicWrite(p, data, opts) {
 }
 // ---- fs-like API ----
 export const dfs = {
-  async readFile(p, enc) { const k = keyOf(p); if (!k) return realFs.readFile(p, enc); if (!cache.has(k)) throw enoent(p); const t = cache.get(k); return enc ? t : Buffer.from(t); },
-  async writeFile(p, data, opts) { const k = keyOf(p); if (!k) return atomicWrite(p, data, opts); await put(k, Buffer.isBuffer(data) ? data.toString("utf8") : data); },
+  async readFile(p, enc) {
+    const k = keyOf(p);
+    if (isSecretPath(p)) { const t = k ? (cache.has(k) ? cache.get(k) : (() => { throw enoent(p); })()) : await realFs.readFile(p, "utf8"); const o = openOr404(p, t); return enc ? o : Buffer.from(o); }
+    if (!k) return realFs.readFile(p, enc); if (!cache.has(k)) throw enoent(p); const t = cache.get(k); return enc ? t : Buffer.from(t);
+  },
+  async writeFile(p, data, opts) {
+    if (isSecretPath(p)) data = sealText(Buffer.isBuffer(data) ? data.toString("utf8") : String(data));
+    const k = keyOf(p); if (!k) return atomicWrite(p, data, opts); await put(k, Buffer.isBuffer(data) ? data.toString("utf8") : data);
+  },
   async mkdir(p, opts) { if (!keyOf(p) && !(mode === "mongo" && path.resolve(p) === root)) return realFs.mkdir(p, opts); },
   async chmod(p, m) { if (!keyOf(p)) return realFs.chmod(p, m); },
   async access(p, m) { const k = keyOf(p); if (!k) return realFs.access(p, m); if (!cache.has(k) && !childrenOf(k).length) throw enoent(p); },
@@ -131,6 +158,7 @@ export const dfs = {
     return [...names].sort();
   },
   async rename(a, b) {
+    if (isSecretPath(b) && !isSecretPath(a)) { const t = await dfs.readFile(a, "utf8"); await dfs.writeFile(b, t, { mode: 0o600 }); await dfs.rm(a, { force: true }); return; } // never land a secret in plain text
     const ka = keyOf(a), kb = keyOf(b);
     if (!ka && !kb) return realFs.rename(a, b);
     if (!ka || !kb) throw new Error("Cannot move data between the database and the file system.");
@@ -140,8 +168,12 @@ export const dfs = {
   }
 };
 export const dfsSync = {
-  readFileSync(p, enc) { const k = keyOf(p); if (!k) return realFsSync.readFileSync(p, enc); if (!cache.has(k)) throw enoent(p); const t = cache.get(k); return enc ? t : Buffer.from(t); },
-  writeFileSync(p, data, opts) { const k = keyOf(p); if (!k) return realFsSync.writeFileSync(p, data, opts); put(k, String(data)).catch(() => {}); },
+  readFileSync(p, enc) {
+    const k = keyOf(p);
+    if (isSecretPath(p)) { const t = k ? (cache.has(k) ? cache.get(k) : (() => { throw enoent(p); })()) : realFsSync.readFileSync(p, "utf8"); const o = openOr404(p, t); return enc ? o : Buffer.from(o); }
+    if (!k) return realFsSync.readFileSync(p, enc); if (!cache.has(k)) throw enoent(p); const t = cache.get(k); return enc ? t : Buffer.from(t);
+  },
+  writeFileSync(p, data, opts) { if (isSecretPath(p)) data = sealText(String(data)); const k = keyOf(p); if (!k) return realFsSync.writeFileSync(p, data, opts); put(k, String(data)).catch(() => {}); },
   mkdirSync(p, opts) { if (!keyOf(p) && !(mode === "mongo" && path.resolve(p) === root)) return realFsSync.mkdirSync(p, opts); },
   rmSync(p, opts = {}) { const k = keyOf(p); if (!k) { if (mode === "mongo" && path.resolve(p) === root) return; return realFsSync.rmSync(p, opts); } const keys = [...(cache.has(k) ? [k] : []), ...(opts.recursive ? childrenOf(k) : [])]; if (!keys.length && !opts.force) throw enoent(p); drop(keys).catch(() => {}); },
   existsSync(p) { const k = keyOf(p); return k ? cache.has(k) || childrenOf(k).length > 0 : realFsSync.existsSync(p); }
