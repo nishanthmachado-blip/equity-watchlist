@@ -1,5 +1,10 @@
 # Equity Watchlist MVP
 
+## v5.44.1: standard monthly budget
+- Monthly expenses: tick **"Make this my standard monthly budget"** when you edit or paste a budget, and every new month starts with those fixed lines (rent, maintenance, maid, SIPs, PPF…) with their amounts and banks, nothing ticked as done. One-off costs go in Daily spends as they happen.
+- "Reset this month to it" puts a month's budget back to the standard lines; ⚙ settings can remove the standard budget.
+- Pasted lines named Additional / Credit card stay in the Unplanned group even when marked WANTS.
+
 ## v5.44.0: bucket strategy for your net worth, and a monthly expense tracker
 - **Bucket strategy** (Your portfolio → 🪣): your net worth split into four buckets.
   - **Safety:** bank, FDs, liquid / arbitrage / overnight funds. Sized in months of expenses (default ₹1 L a month, at least 12 and at most 36 months = ₹36 L): it says when to top up and how much above the cap could move to growth.

@@ -26,7 +26,7 @@
   function render() {
     const m = d.data, s = d.summary;
     if (!m) {
-      $("#exBody").innerHTML = `<div class="report-card ex-empty"><h3>${esc(monName(month))} isn't started yet</h3><p>Start it to copy your income and budget from ${d.months.length ? "your last month" : "scratch"}, then log what you spend day by day. Or paste straight from your spreadsheet: the budget block (Rent 47500 HDFC Expense NEEDS DONE…) and / or the daily list (date, item, amount, with Pluxee / GPay / Credit card columns).</p>
+      $("#exBody").innerHTML = `<div class="report-card ex-empty"><h3>${esc(monName(month))} isn't started yet</h3><p>Start it to copy your income and budget from ${d.template ? `your standard monthly budget (${d.template.lines} lines)` : d.months.length ? "your last month" : "scratch"}, then log what you spend day by day. Or paste straight from your spreadsheet: the budget block (Rent 47500 HDFC Expense NEEDS DONE…) and / or the daily list (date, item, amount, with Pluxee / GPay / Credit card columns).</p>
         <div class="toolbar"><button type="button" data-ex="start">▶ Start ${esc(monName(month))}</button><button type="button" class="ghost" data-ex="paste">📋 Paste from my sheet</button></div></div>`; return;
     }
     const cats = d.categories, catOpt = cur => `<option value="">Auto</option>${cats.map(c => `<option value="${esc(c.key)}"${c.key === cur ? " selected" : ""}>${c.icon} ${esc(c.key)}</option>`).join("")}`;
@@ -44,6 +44,7 @@
           <div class="ex-days">${log || '<p class="hint">Nothing logged yet. Add a spend above, or paste your list.</p>'}</div></section>
         <aside>
           <section class="report-card"><div class="nw-head"><h3>📋 Budget</h3><button type="button" class="ghost" data-ex="plan">Edit</button></div>
+            <p class="hint ex-std">${d.template ? `⭐ Standard monthly budget: ${d.template.lines} lines, used for every new month · <button type="button" class="linklike" data-ex="apply-std">reset this month to it</button>` : 'Tip: in Edit, tick "standard monthly budget" and every new month starts with these lines.'}</p>
             <p class="hint">Income: ${m.income.map(i => `${esc(i.name)} ${inr(i.amount)}`).join(" · ") || "—"}</p>${plan}${s.pending.length ? `<p class="hint">Still to pay: ${s.pending.map(p => `${esc(p.name)} ${inr(p.amount)}`).join(", ")}</p>` : ""}${vb}</section>
           ${s.byCategory.length ? `<section class="report-card"><h3>Where it went</h3>${bars(s.byCategory, s.spent, x => `${x.icon} ${esc(x.key)}`)}<h4>Paid by</h4>${bars(s.byMode, s.spent, x => esc(x.key))}</section>` : ""}
         </aside></div>`;
@@ -64,17 +65,19 @@
     const inc = i => `<tr data-id="${esc(i.id || "")}"><td><input class="ui-input" data-f="name" value="${esc(i.name || "")}" placeholder="e.g. Salary in hand"></td><td><input class="ui-input" data-f="amount" inputmode="numeric" value="${i.amount ?? ""}"></td><td><button type="button" class="ghost" data-rm>✕</button></td></tr>`;
     const out = await window.ui.dialog({ title: `Budget: ${monName(month)}`, icon: "📋", okText: "Save", wide: true,
       bodyHtml: `<h4>Income</h4><table class="ex-edit ex-inc"><tbody>${m.income.map(inc).join("")}</tbody></table><button type="button" class="ghost" data-add-inc>+ Income</button>
-        <h4>Budget lines</h4><div class="table-wrap"><table class="ex-edit ex-pl"><thead><tr><th>Line</th><th>Amount</th><th>Bank</th><th>Type</th><th>Done</th><th></th></tr></thead><tbody>${m.plan.map(row).join("")}</tbody></table></div><button type="button" class="ghost" data-add-pl>+ Budget line</button>`,
+        <h4>Budget lines</h4><div class="table-wrap"><table class="ex-edit ex-pl"><thead><tr><th>Line</th><th>Amount</th><th>Bank</th><th>Type</th><th>Done</th><th></th></tr></thead><tbody>${m.plan.map(row).join("")}</tbody></table></div><button type="button" class="ghost" data-add-pl>+ Budget line</button>
+        <label class="ui-opt"><input type="checkbox" name="standard"${d.template ? "" : " checked"}><span><b>${d.template ? "Also update my standard monthly budget" : "Make this my standard monthly budget"}</b><small>Every new month starts with these lines and amounts (nothing ticked as done). One-off spends go in Daily spends as they happen.</small></span></label>`,
       onOpen: box => box.addEventListener("click", e => { if (e.target.closest("[data-add-pl]")) box.querySelector(".ex-pl tbody").insertAdjacentHTML("beforeend", row({})); if (e.target.closest("[data-add-inc]")) box.querySelector(".ex-inc tbody").insertAdjacentHTML("beforeend", inc({})); const rm = e.target.closest("[data-rm]"); if (rm) rm.closest("tr").remove(); }),
-      collect: box => { const f = (tr, k) => tr.querySelector(`[data-f=${k}]`); return { plan: [...box.querySelectorAll(".ex-pl tbody tr")].map(tr => ({ id: tr.dataset.id || undefined, name: f(tr, "name").value, amount: f(tr, "amount").value, bank: f(tr, "bank").value, type: f(tr, "type").value, done: f(tr, "done").checked })).filter(p => p.name.trim()), income: [...box.querySelectorAll(".ex-inc tbody tr")].map(tr => ({ id: tr.dataset.id || undefined, name: f(tr, "name").value, amount: f(tr, "amount").value || 0 })).filter(i => i.name.trim()) }; } });
-    if (out) post("plan", out, "Budget saved.");
+      collect: box => { const f = (tr, k) => tr.querySelector(`[data-f=${k}]`); return { plan: [...box.querySelectorAll(".ex-pl tbody tr")].map(tr => ({ id: tr.dataset.id || undefined, name: f(tr, "name").value, amount: f(tr, "amount").value, bank: f(tr, "bank").value, type: f(tr, "type").value, done: f(tr, "done").checked })).filter(p => p.name.trim()), income: [...box.querySelectorAll(".ex-inc tbody tr")].map(tr => ({ id: tr.dataset.id || undefined, name: f(tr, "name").value, amount: f(tr, "amount").value || 0 })).filter(i => i.name.trim()), standard: box.querySelector("[name=standard]").checked }; } });
+    if (out) post("plan", out, out.standard ? null : "Budget saved.");
   }
   async function paste() {
     const out = await window.ui.dialog({ title: `Paste into ${monName(month)}`, icon: "📋", okText: "Add", wide: true,
       message: "Copy cells from your spreadsheet. Fill either box, or both.",
       bodyHtml: `<label class="ui-field"><span>Budget block (Salary in Hand 198000, Rent 47500 HDFC Expense NEEDS DONE…): replaces this month's budget</span><textarea class="ui-input" name="plan" rows="6"></textarea></label>
+        <label class="ui-opt"><input type="checkbox" name="standard" checked><span><b>Make the pasted budget my standard monthly budget</b><small>Every new month starts with it.</small></span></label>
         <label class="ui-field"><span>Daily list (date, item, amount; include the header row with Pluxee / Gpay / Credit Card so each amount gets its payment method): added to this month</span><textarea class="ui-input" name="log" rows="8"></textarea></label>`,
-      collect: box => { const p = box.querySelector("[name=plan]").value, l = box.querySelector("[name=log]").value; if (!p.trim() && !l.trim()) throw new Error("Paste something first."); return { plan: p.trim() ? p : undefined, log: l.trim() ? l : undefined }; } });
+      collect: box => { const p = box.querySelector("[name=plan]").value, l = box.querySelector("[name=log]").value; if (!p.trim() && !l.trim()) throw new Error("Paste something first."); return { plan: p.trim() ? p : undefined, log: l.trim() ? l : undefined, standard: !!p.trim() && box.querySelector("[name=standard]").checked }; } });
     if (out) post("paste", out);
   }
   async function editEntry(e) {
@@ -89,7 +92,8 @@
   async function settings() {
     const out = await window.ui.dialog({ title: "Expense settings", icon: "⚙️", okText: "Save", wide: true,
       bodyHtml: `<label class="ui-field"><span>Payment methods (one per line; e.g. Pluxee, GPay, Credit card, a family member who pays)</span><textarea class="ui-input" name="modes" rows="6">${esc(d.modes.join("\n"))}</textarea></label>
-        <h4>Which budget line each category counts against</h4><div class="lt-form">${d.categories.map(c => `<label class="ui-field"><span>${c.icon} ${esc(c.key)}</span><input class="ui-input" data-bud="${esc(c.key)}" value="${esc(c.budget || "")}" placeholder="budget line name"></label>`).join("")}</div>`,
+        ${d.template ? `<p class="hint">⭐ Standard monthly budget: ${d.template.lines} lines (saved ${new Date(d.template.savedAt).toLocaleDateString("en-IN")}). <button type="button" class="linklike" data-clear-std>Remove it</button></p>` : ""}<h4>Which budget line each category counts against</h4><div class="lt-form">${d.categories.map(c => `<label class="ui-field"><span>${c.icon} ${esc(c.key)}</span><input class="ui-input" data-bud="${esc(c.key)}" value="${esc(c.budget || "")}" placeholder="budget line name"></label>`).join("")}</div>`,
+      onOpen: box => box.querySelector("[data-clear-std]")?.addEventListener("click", async () => { box.closest(".ui-scrim")?.querySelector('[data-ui="cancel"]')?.click(); post("standard-clear", {}); }),
       collect: box => ({ modes: box.querySelector("[name=modes]").value.split("\n").map(x => x.trim()).filter(Boolean), budgets: Object.fromEntries([...box.querySelectorAll("[data-bud]")].map(i => [i.dataset.bud, i.value])) }) });
     if (out) post("settings", out, "Settings saved.");
   }
@@ -99,7 +103,7 @@
       const nav = e.target.closest("[data-mnav]"); if (nav) { month = shiftM(month, Number(nav.dataset.mnav)); remember(); load(); return; }
       const t = e.target.closest("[data-tab]"); if (t) { tab = t.dataset.tab; load(); return; }
       const b = e.target.closest("[data-ex]");
-      if (b) { const k = b.dataset.ex; if (k === "start") post("start", {}); else if (k === "paste") paste(); else if (k === "plan") editPlan(); else if (k === "settings") settings(); else if (k === "today") { month = ist().slice(0, 7); remember(); load(); } return; }
+      if (b) { const k = b.dataset.ex; if (k === "start") post("start", {}); else if (k === "apply-std") { if (await window.ui.confirm({ title: `Reset ${monName(month)} to your standard budget?`, message: "This month's budget lines and income are replaced by the standard ones (nothing ticked as done). Daily spends are not touched.", okText: "Reset" })) post("start", { applyStandard: true }); } else if (k === "paste") paste(); else if (k === "plan") editPlan(); else if (k === "settings") settings(); else if (k === "today") { month = ist().slice(0, 7); remember(); load(); } return; }
       const ed = e.target.closest("[data-edit]"); if (ed) { editEntry(d.data.entries.find(x => x.id === ed.dataset.edit)); return; }
       const del = e.target.closest("[data-del]"); if (del) { const x = d.data.entries.find(z => z.id === del.dataset.del); if (x && await window.ui.confirm({ title: `Delete ${x.item} ${inr(x.amount)}?`, okText: "Delete", danger: true })) post("entry-delete", { id: x.id }, "Deleted."); }
     });

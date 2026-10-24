@@ -71,10 +71,14 @@ export function sanitizePlanLine(b = {}) {
 }
 export function sanitizeIncome(b = {}) { const amount = money(b.amount); if (!(amount >= 0)) throw new Error("Enter the amount."); return { id: /^x[\w]{4,20}$/.test(b.id || "") ? b.id : id(), name: txt(b.name, 50) || "Income", amount }; }
 
-// A new month starts from the previous one's plan and income (nothing marked done, no log)
-export function newMonth(prev = null) {
-  return { income: (prev?.income || []).map(x => ({ ...x, id: id() })), plan: (prev?.plan || []).map(x => ({ ...x, id: id(), done: false })), entries: [] };
+// A new month starts from your standard monthly budget (the fixed lines: rent, maid, SIPs…) when you saved one, else
+// from the previous month's plan and income. Nothing marked done, no spends: one-off costs are added as they come.
+export function newMonth(prev = null, template = null) {
+  const src = template?.plan?.length || template?.income?.length ? template : prev;
+  return { income: (src?.income || []).map(x => ({ ...x, id: id() })), plan: (src?.plan || []).map(x => ({ ...x, id: id(), done: false })), entries: [] };
 }
+// The standard budget kept from a month's plan (amounts and banks; never the done ticks)
+export const toTemplate = m => ({ income: (m.income || []).map(({ name, amount }) => ({ name, amount })), plan: (m.plan || []).map(({ name, amount, bank, type }) => ({ name, amount, bank, type })), savedAt: new Date().toISOString() });
 
 // Pasted plan rows from a sheet: "Rent  47500  HDFC  Expense  NEEDS  DONE" (tabs or 2+ spaces). Income rows: "Salary in Hand 198000".
 export function parsePlanPaste(text) {
@@ -86,7 +90,7 @@ export function parsePlanPaste(text) {
     const amt = cells.slice(1).map(money).find(v => v !== null);
     if (/salary|income|contribution|bonus|rent received|interest/i.test(name) && !cells.some(c => /^(needs|wants|invest|expense)$/i.test(c))) { if (amt !== null) income.push({ name, amount: amt }); continue; }
     const up = cells.map(c => c.toUpperCase());
-    const type = up.includes("INVEST") || up.includes("INVESTMENT") ? "invest" : up.includes("WANTS") ? "wants" : up.includes("NEEDS") ? "needs" : /additional|credit card|unplanned/i.test(name) ? "unplanned" : "needs";
+    const type = up.includes("INVEST") || up.includes("INVESTMENT") ? "invest" : /^(additional|credit card|unplanned|misc(ellaneous)? unplanned)\b/i.test(name) ? "unplanned" : up.includes("WANTS") ? "wants" : up.includes("NEEDS") ? "needs" : "needs";
     const bank = cells.slice(1).find(c => /^[A-Z]{2,8}$/.test(c) && !/^(NEEDS|WANTS|INVEST|DONE|EXPENSE)$/i.test(c)) || null;
     plan.push({ name, amount: amt, bank, type, done: up.includes("DONE") });
   }

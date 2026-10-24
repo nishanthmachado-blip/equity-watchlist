@@ -7,7 +7,7 @@ import net from "node:net";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { defaultBucket, sanitizeBucketPlan, bucketView } from "../buckets.mjs";
-import { parseLogPaste, parsePlanPaste, monthSummary, yearReport, fyMonths, guessCategory, sanitizeEntry, newMonth, toCsv } from "../expenses.mjs";
+import { parseLogPaste, parsePlanPaste, monthSummary, yearReport, fyMonths, guessCategory, sanitizeEntry, newMonth, toCsv, toTemplate } from "../expenses.mjs";
 
 test("buckets: lines placed by type and fund category; safety sized in months; moves and goals", () => {
   assert.equal(defaultBucket({ category: "mf", name: "Tata Arbitrage Fund" }), "safety");
@@ -46,6 +46,15 @@ test("expenses: your sheet's daily list and budget block paste; categories guess
   assert.throws(() => sanitizeEntry({ date: "2026-11-01", item: "x", amount: 5 }, { month: "2026-10" }), /Pick a date in 2026-10/);
 });
 
+test("expenses: standard monthly budget: every new month starts from it, nothing done; unplanned lines stay unplanned", () => {
+  const p = parsePlanPaste("Salary in Hand  198000\nRent  47500  HDFC  Expense  NEEDS  DONE\nAdditional  AXIS  Expense  WANTS\nCredit Card  8000  Expense  DONE\nMF  10500  AXIS  Invest  INVEST  DONE");
+  assert.deepEqual(p.plan.map(x => x.type), ["needs", "unplanned", "unplanned", "invest"]);
+  const t = toTemplate({ income: p.income, plan: p.plan.map(x => ({ ...x, id: "x1" })) });
+  assert.equal(t.plan[0].done, undefined, "the template keeps no ticks");
+  const prev = { income: [{ name: "Old", amount: 1 }], plan: [{ name: "Old line", amount: 5, type: "needs", done: true }], entries: [{}] };
+  const n = newMonth(prev, t); assert.deepEqual(n.plan.map(x => x.name), ["Rent", "Additional", "Credit Card", "MF"]); assert.ok(n.plan.every(x => !x.done)); assert.equal(n.income[0].amount, 198000); assert.equal(n.entries.length, 0);
+  assert.deepEqual(newMonth(prev, null).plan.map(x => x.name), ["Old line"], "no template: the previous month");
+});
 test("expenses: month summary (budget vs spent, saved) and the April–March year report", () => {
   const m = { income: [{ name: "Salary", amount: 198000 }, { name: "SOFi", amount: 55000 }], plan: [{ name: "Rent", amount: 47500, type: "needs", done: true }, { name: "Grocery", amount: 15000, type: "needs" }, { name: "Milk", amount: 2000, type: "needs" }, { name: "Car Cleaning", amount: 1500, type: "wants" }, { name: "MF", amount: 10500, type: "invest", done: true }],
     entries: [{ date: "2026-10-02", item: "Grocery", amount: 6810, mode: "Pluxee", category: "Groceries" }, { date: "2026-10-03", item: "Chicken", amount: 910, mode: "GPay", category: "Meat & fish" }, { date: "2026-10-02", item: "Milk", amount: 2100, mode: "Cash", category: "Milk & dairy" }, { date: "2026-10-09", item: "Swiggy", amount: 371, mode: "Pluxee", category: "Food delivery & eating out" }] };
@@ -83,7 +92,11 @@ test("server: expenses and buckets are private to each login", async () => {
     assert.equal(v.json.data.entries.filter(e => /mango mist/i.test(e.item)).every(e => e.category === "Shopping"), true, "learned from the correction");
     assert.equal((await call("/api/expenses/entry", { cookie: owner, body: { month: "2026-10", date: "2026-11-01", item: "x", amount: 1 } })).status, 400);
     v = await call("/api/expenses/start", { cookie: owner, body: { month: "2026-11" } }); assert.equal(v.json.data.plan.length, 2, "November starts from October's budget"); assert.equal(v.json.data.entries.length, 0);
-    const yr = await call("/api/expenses/year?month=2026-10", { cookie: owner }); assert.equal(yr.json.totals.months, 2); assert.equal(yr.json.fy, "FY 2026-27");
+    v = await call("/api/expenses/plan", { cookie: owner, body: { month: "2026-11", standard: true, income: [{ name: "Salary", amount: 198000 }], plan: [{ name: "Rent", amount: 47500, type: "needs", done: true }, { name: "Maid Salary", amount: 25000, type: "needs" }, { name: "MF", amount: 10500, type: "invest" }] } });
+    assert.match(v.json.notice, /standard monthly budget/); assert.equal(v.json.template.lines, 3);
+    v = await call("/api/expenses/start", { cookie: owner, body: { month: "2027-01" } }); assert.deepEqual(v.json.data.plan.map(p => [p.name, p.done]), [["Rent", false], ["Maid Salary", false], ["MF", false]], "a new month starts from the standard budget");
+    assert.equal((await call("/api/expenses?month=2027-01", { cookie: friend })).json.template, null, "the standard budget is per login");
+    const yr = await call("/api/expenses/year?month=2026-10", { cookie: owner }); assert.equal(yr.json.totals.months, 3); assert.equal(yr.json.fy, "FY 2026-27");
     const csv = await call("/api/expenses/export.csv", { cookie: owner }); assert.match(csv.text, /Mango Mist/);
     // the other login sees nothing of it
     assert.equal((await call("/api/expenses?month=2026-10", { cookie: friend })).json.exists, false);
@@ -93,7 +106,7 @@ test("server: expenses and buckets are private to each login", async () => {
     const b = await call("/api/buckets/save", { cookie: owner, body: { monthly: 100000, maxMonths: 36, goals: [{ name: "House" }, { name: "Kids education", target: 2500000, year: 2035 }] } });
     assert.equal(b.status, 200, b.text); assert.equal(b.json.goalsList.length, 2); assert.equal(b.json.plan.maxMonths, 36);
     assert.equal((await call("/api/buckets", { cookie: friend })).json.goalsList.find(g => g.target === 2500000), undefined, "goals are per login");
-    assert.equal((await call("/api/buckets", { cookie: owner })).json.spend.months, 2, "safety sizing sees your tracked spending");
+    assert.equal((await call("/api/buckets", { cookie: owner })).json.spend.months, 3, "safety sizing sees your tracked spending");
     // not sent to Ask AI
     const pv = await call("/api/ai/preview", { cookie: owner }); assert.doesNotMatch(pv.text, /Mango Mist|Grocery 6810/);
   } finally { child.kill("SIGTERM"); await new Promise(r => child.once("exit", r)); await fs.rm(dataDir, { recursive: true, force: true }); }

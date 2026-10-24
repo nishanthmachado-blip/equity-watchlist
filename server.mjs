@@ -36,7 +36,7 @@ import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, ad
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { reviewHoldings } from "./cleanup.mjs";
 import { BUCKETS, sanitizeBucketPlan, bucketView } from "./buckets.mjs";
-import { DEFAULT_MODES, CATEGORIES as EXP_CATEGORIES, PLAN_TYPES, MONTH_RE, sanitizeEntry as sanitizeSpend, sanitizePlanLine, sanitizeIncome, newMonth, parsePlanPaste, parseLogPaste, monthSummary, yearReport, toCsv as expensesCsv, guessCategory } from "./expenses.mjs";
+import { DEFAULT_MODES, CATEGORIES as EXP_CATEGORIES, PLAN_TYPES, MONTH_RE, sanitizeEntry as sanitizeSpend, sanitizePlanLine, sanitizeIncome, newMonth, toTemplate, parsePlanPaste, parseLogPaste, monthSummary, yearReport, toCsv as expensesCsv, guessCategory } from "./expenses.mjs";
 import { parseMfapi, seriesStats, barsToSeries, reviewFunds, fundIdeas, diffFundAlerts, portfolioChurn } from "./mfreview.mjs";
 import { sanitizeThemePlan, parseThemePaste, themePlanView, diffThemeAlerts, themeDefaults, THEME_ICONS } from "./themeplan.mjs";
 import { backtestBars, summarize, perStock, sanitizeBacktest, BACKTEST_SETUPS, BACKTEST_EXITS } from "./backtest.mjs";
@@ -906,7 +906,7 @@ setInterval(() => forEachUser(() => checkFundAlerts()).catch(() => {}), 3 * 3600
 if (!process.env.NODE_TEST_CONTEXT) setTimeout(() => forEachUser(() => checkFundAlerts()).catch(() => {}), 120e3).unref();
 // ---- Bucket strategy (buckets.mjs) and monthly expenses (expenses.mjs): private to each login (userFile only) ----
 const bucketsFile = () => userFile("buckets.json"), expensesFile = () => userFile("expenses.json");
-async function expenseStore() { const st = await readJson(expensesFile(), {}); return { months: st.months || {}, modes: Array.isArray(st.modes) && st.modes.length ? st.modes : DEFAULT_MODES, learned: st.learned || {}, budgets: st.budgets || {} }; }
+async function expenseStore() { const st = await readJson(expensesFile(), {}); return { months: st.months || {}, modes: Array.isArray(st.modes) && st.modes.length ? st.modes : DEFAULT_MODES, learned: st.learned || {}, budgets: st.budgets || {}, template: st.template || null }; }
 async function spendAverage() { // last 6 months with a log, for sizing the safety bucket
   const st = await expenseStore(), ks = Object.keys(st.months).filter(k => (st.months[k].entries || []).length || (st.months[k].plan || []).length).sort().slice(-6);
   if (!ks.length) return null;
@@ -4023,7 +4023,7 @@ async function appHandler(req, res, url) {
         const view = async (month, notice = null) => {
           const st = await expenseStore(), m = st.months[month] || null;
           return { month, data: m, exists: !!m, summary: m ? monthSummary(m, { budgets: st.budgets }) : null, modes: st.modes, categories: Object.entries(EXP_CATEGORIES).map(([k, v]) => ({ key: k, ...v, budget: st.budgets[k] ?? v.budget ?? null })), planTypes: PLAN_TYPES,
-            months: Object.keys(st.months).sort(), items: [...new Set(Object.values(st.months).flatMap(x => (x.entries || []).map(e => e.item)))].slice(-300), notice };
+            months: Object.keys(st.months).sort(), template: st.template ? { lines: st.template.plan.length, income: st.template.income.length, savedAt: st.template.savedAt } : null, items: [...new Set(Object.values(st.months).flatMap(x => (x.entries || []).map(e => e.item)))].slice(-300), notice };
         };
         const monthOf = v => { const m = String(v || "").slice(0, 7); if (!MONTH_RE.test(m)) throw new Error("Pick a month."); return m; };
         if (req.method === "GET" && op === "") return reply(res, 200, await view(monthOf(url.searchParams.get("month") || istDay().slice(0, 7))));
@@ -4032,9 +4032,10 @@ async function appHandler(req, res, url) {
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown expense operation." });
         const b = await readBody(req), month = monthOf(b.month); let notice = null;
         await withUserLock(async () => {
-          const raw = await readJson(expensesFile(), {}), st = { months: raw.months || {}, modes: Array.isArray(raw.modes) && raw.modes.length ? raw.modes : [...DEFAULT_MODES], learned: raw.learned || {}, budgets: raw.budgets || {} };
-          const M = () => (st.months[month] ||= newMonth(st.months[Object.keys(st.months).filter(k => k < month).sort().at(-1)] || null));
-          if (op === "start") { const m = M(); notice = m.plan.length ? `Started ${month} from your last month's plan.` : `Started ${month}.`; }
+          const raw = await readJson(expensesFile(), {}), st = { months: raw.months || {}, modes: Array.isArray(raw.modes) && raw.modes.length ? raw.modes : [...DEFAULT_MODES], learned: raw.learned || {}, budgets: raw.budgets || {}, template: raw.template || null };
+          const M = () => (st.months[month] ||= newMonth(st.months[Object.keys(st.months).filter(k => k < month).sort().at(-1)] || null, st.template));
+          const keepStandard = () => { if (b.standard) { st.template = toTemplate(st.months[month]); notice = `${notice ? `${notice} ` : ""}Saved as your standard monthly budget: every new month starts with these ${st.template.plan.length} lines.`; } };
+          if (op === "start") { const had = !!st.months[month], m = M(); notice = had ? null : m.plan.length ? `Started ${month} from your ${st.template ? "standard monthly budget" : "last month's plan"}.` : `Started ${month}.`; if (b.applyStandard && st.template) { const t = newMonth(null, st.template); m.plan = t.plan; m.income = t.income; notice = `${month}: budget reset to your standard ${t.plan.length} lines.`; } }
           else if (op === "entry") { // add / edit one spend
             const m = M(), e = sanitizeSpend(b, { month, modes: st.modes, learned: st.learned });
             if (b.category && EXP_CATEGORIES[b.category] && guessCategory(e.item, {}) !== b.category) st.learned[e.item.toLowerCase()] = b.category; // learn your correction
@@ -4043,7 +4044,8 @@ async function appHandler(req, res, url) {
             m.entries.sort((a, z) => a.date.localeCompare(z.date));
           }
           else if (op === "entry-delete") { const m = M(); m.entries = m.entries.filter(x => x.id !== b.id); }
-          else if (op === "plan") { const m = M(); m.plan = (Array.isArray(b.plan) ? b.plan : []).slice(0, 80).map(sanitizePlanLine); m.income = (Array.isArray(b.income) ? b.income : m.income).slice(0, 20).map(sanitizeIncome); }
+          else if (op === "plan") { const m = M(); m.plan = (Array.isArray(b.plan) ? b.plan : []).slice(0, 80).map(sanitizePlanLine); m.income = (Array.isArray(b.income) ? b.income : m.income).slice(0, 20).map(sanitizeIncome); keepStandard(); }
+          else if (op === "standard-clear") { st.template = null; notice = "Standard monthly budget removed: new months start from the previous month."; }
           else if (op === "plan-done") { const m = M(), p = m.plan.find(x => x.id === b.id); if (!p) throw new Error("That line no longer exists."); p.done = !!b.done; }
           else if (op === "paste") { // from your spreadsheet: the budget block, the daily log, or both
             const m = M(), out = [];
@@ -4054,7 +4056,7 @@ async function appHandler(req, res, url) {
               m.entries.sort((a, z) => a.date.localeCompare(z.date)); out.push(`${added} spends${skipped ? ` (${skipped} outside ${month} skipped)` : ""}`);
             }
             if (!out.length) throw new Error("Nothing recognised in what you pasted.");
-            notice = `Added ${out.join(", ")}.`;
+            notice = `Added ${out.join(", ")}.`; if (b.plan) keepStandard();
           }
           else if (op === "settings") {
             if (Array.isArray(b.modes)) { const ms = [...new Set(b.modes.map(x => String(x).replace(/[<>]/g, "").trim().slice(0, 30)).filter(Boolean))].slice(0, 15); if (!ms.length) throw new Error("Keep at least one payment method."); st.modes = ms; }
