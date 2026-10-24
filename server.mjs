@@ -35,6 +35,9 @@ import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { reviewHoldings } from "./cleanup.mjs";
+import { BUCKETS, sanitizeBucketPlan, bucketView } from "./buckets.mjs";
+import { DEFAULT_MODES, CATEGORIES as EXP_CATEGORIES, PLAN_TYPES, MONTH_RE, sanitizeEntry as sanitizeSpend, sanitizePlanLine, sanitizeIncome, newMonth, parsePlanPaste, parseLogPaste, monthSummary, yearReport, toCsv as expensesCsv, guessCategory } from "./expenses.mjs";
+import { parseMfapi, seriesStats, barsToSeries, reviewFunds, fundIdeas, diffFundAlerts, portfolioChurn } from "./mfreview.mjs";
 import { sanitizeThemePlan, parseThemePaste, themePlanView, diffThemeAlerts, themeDefaults, THEME_ICONS } from "./themeplan.mjs";
 import { backtestBars, summarize, perStock, sanitizeBacktest, BACKTEST_SETUPS, BACKTEST_EXITS } from "./backtest.mjs";
 import { sanitizeTrail, applyTrail, trailChanges, TRAIL_RULES } from "./trailstop.mjs";
@@ -64,7 +67,7 @@ import { LISTS as MARKET_LISTS, parseNseList, rankFromQuotes } from "./market.mj
 import { parseOrderAnnouncements, mergeOrders, rankOrderWinners } from "./orders.mjs";
 import { ensureLists, createList, renameList, deleteList, setMembers, prune, DEFAULT_ID } from "./lists.mjs";
 import { METRICS, OPS, PRESETS, sanitizeThesis, evaluateThesis, trackBreaks } from "./thesis.mjs";
-import { AI_MODELS, AI_DEFAULTS, PRIVACY as AI_PRIVACY, sealKey, openKey, looksLikeKey, buildContext, SYSTEM as AI_SYSTEM, TOOLS as AI_TOOLS, sseParser, messageCollector, monthKey, friendlyApiError } from "./ai.mjs";
+import { AI_MODELS, AI_DEFAULTS, PRIVACY as AI_PRIVACY, sealKey, openKey, looksLikeKey, buildContext, SYSTEM as AI_SYSTEM, TOOLS as AI_TOOLS, sseParser, messageCollector, monthKey, friendlyApiError, AI_PROVIDERS, pickModel, chatModelIds, toOpenAiTools, openAiCollector, friendlyProviderError, looksLikeAnyKey } from "./ai.mjs";
 import { addMarketDay, movers as marketMovers, indexChanges } from "./movers.mjs";
 import { fetchFromApi, fetchFromLink } from "./fundsource.mjs";
 import { SMART_INDICES, normIndex, parseAllIndices as parseIndexList, parseIndexStocks, parseIndexCsv, fillFromBars, smartRows, indexSummary } from "./indices.mjs";
@@ -811,7 +814,12 @@ async function themesView() {
     themeTrackAt.set(uid, Date.now());
     (async () => { for (const s of missing) await ensureInPool(s.symbol, s.exchange, s.name, "Added from Long-term themes."); queueFill(missing.map(s => s.symbol)).catch(() => {}); syncLivePrices().catch(() => {}); })().catch(e => console.error(`[themes] ${e.message}`));
   }
-  return { ...themePlanView(plan, { rows: bySym, held, hiLo }), icons: THEME_ICONS, fetching: missing.length, marketOpen: marketIsOpen() };
+  const out = themePlanView(plan, { rows: bySym, held, hiLo });
+  // a symbol typed by hand that is not a listed company (e.g. WAREEENERGIES): flagged so it can be replaced
+  const master = await scripMaster().catch(() => null), listed = master?.list?.length > 1000 ? new Set(master.list.map(m => `${m.exchange}:${m.symbol}`)) : null;
+  let unknown = 0;
+  for (const t of out.themes) for (const r of t.rows) { r.known = !listed || bySym.get(r.symbol)?.price > 0 || listed.has(`${r.exchange}:${r.symbol}`); if (!r.known) unknown++; }
+  return { ...out, unknown, icons: THEME_ICONS, fetching: missing.filter(s => !listed || listed.has(`${s.exchange}:${s.symbol}`)).length, marketOpen: marketIsOpen() };
 }
 async function checkThemeAlerts() {
   const raw = await readJson(themePlanFile(), null); if (!raw?.themes?.length || raw.alerts === false) return;
@@ -821,6 +829,99 @@ async function checkThemeAlerts() {
 }
 setInterval(() => { if (marketIsOpen()) forEachUser(() => checkThemeAlerts()).catch(() => {}); }, 10 * 60e3).unref();
 if (!process.env.NODE_TEST_CONTEXT) setTimeout(() => forEachUser(() => checkThemeAlerts()).catch(() => {}), 90e3).unref();
+// ---- Mutual fund review (mfreview.mjs): Build / Keep / Hold / Exit per fund, bulk-buy zones, funds to review ----
+// NAV history per scheme from mfapi.in (public data, shared cache in DATA_DIR/mf-nav, refreshed daily in the background;
+// a page never waits for it). Your funds, values and review state stay in your own files.
+const MFAPI_BASE = () => (process.env.MFAPI_BASE || "https://api.mfapi.in").replace(/\/+$/, "");
+const mfNavFile = code => path.join(DATA_DIR, "mf-nav", `${code}.json`);
+const mfNavTried = new Map(), mfNavQueue = new Set(); let mfNavRunning = false;
+function queueMfNav(codes) {
+  for (const c of codes) if (c && !(Date.now() - (mfNavTried.get(c) || 0) < 2 * 3600e3)) mfNavQueue.add(c);
+  if (mfNavRunning || !mfNavQueue.size) return; mfNavRunning = true;
+  (async () => {
+    while (mfNavQueue.size) {
+      const code = mfNavQueue.values().next().value; mfNavQueue.delete(code); mfNavTried.set(code, Date.now());
+      try {
+        const r = await fetch(`${MFAPI_BASE()}/mf/${code}`, { signal: AbortSignal.timeout(20000), headers: { "User-Agent": "Mozilla/5.0" } });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const p = parseMfapi(await r.json()); if (!p.navs.length) throw new Error("no NAVs");
+        const since = shiftDay(istDay(), -Math.round(365.25 * 6)); // 6 years is enough for 5-year returns
+        await writeJson(mfNavFile(code), { at: Date.now(), name: p.name, house: p.house, category: p.category, navs: p.navs.filter(x => x.d >= since).map(x => [x.d, x.v]) });
+      } catch (e) { console.warn(`[mf-nav] ${code}: ${e.message}`); }
+      await new Promise(r => setTimeout(r, 300));
+    }
+  })().finally(() => { mfNavRunning = false; });
+}
+async function mfNavStats(code) {
+  if (!code) return { pending: false };
+  const c = await readJson(mfNavFile(code), null);
+  if (!c || Date.now() - c.at > 20 * 3600e3) queueMfNav([code]);
+  if (!c) return { pending: Date.now() - (mfNavTried.get(code) || 0) < 2 * 3600e3 || mfNavQueue.has(code) || mfNavRunning };
+  return { stats: seriesStats(c.navs.map(([d, v]) => ({ d, v }))), category: c.category, house: c.house };
+}
+const mfReviewFile = () => userFile("mf-review.json");
+async function mfReview() {
+  const [held, xrFile, { rows }, hv, amfi, st] = await Promise.all([syncedMutualFunds().catch(() => []), readJson(U.fundsFile, { funds: [] }), computeRows(), kiteHoldingsView().catch(() => ({ holdings: [] })), amfiNav(), readJson(mfReviewFile(), {})]);
+  // one row per scheme (the same fund in two accounts or folios is one decision)
+  const groups = new Map();
+  for (const f of held) {
+    const k = f.isin || `name:${normName(f.name)}`, g = groups.get(k) || { key: k, name: f.name, isin: f.isin || null, value: 0, invested: 0, fundId: f.fundId || null, xrayName: f.xrayName || null, hasCost: true };
+    g.value += f.value > 0 ? f.value : 0; if (Number.isFinite(f.invested)) g.invested += f.invested; else g.hasCost = false; g.fundId ||= f.fundId || null; g.xrayName ||= f.xrayName || null; groups.set(k, g);
+  }
+  const today = istDay(), firstSeen = { ...(st.firstSeen || {}) }; let seenChanged = false;
+  const funds = [...groups.values()].map(g => { if (!firstSeen[g.key]) { firstSeen[g.key] = Object.keys(st.firstSeen || {}).length ? today : "2000-01-01"; seenChanged = true; } return { ...g, invested: g.hasCost ? g.invested : null, firstSeen: firstSeen[g.key] }; });
+  if (seenChanged) await withUserLock(async () => { const cur = await readJson(mfReviewFile(), {}); await writeJson(mfReviewFile(), { ...cur, firstSeen: { ...firstSeen, ...(cur.firstSeen || {}) } }); });
+  const codeOf = f => (f.isin && amfi[f.isin]?.[2]) || null;
+  const nav = new Map(); for (const f of funds) nav.set(f.key, await mfNavStats(codeOf(f)));
+  const bench = new Map(), BK = ["NIFTY50", "NIFTY500", "MIDCAP150", "SMALLCAP250"], bb = await Promise.all(BK.map(k => indexBars(k).catch(() => [])));
+  BK.forEach((k, i) => { const x = seriesStats(barsToSeries(bb[i])); if (x && !x.young) bench.set(k, x); });
+  const xById = new Map(xrFile.funds.map(f => [f.id, f])), bySym = Object.fromEntries(rows.map(r => [String(r.symbol).toUpperCase(), r]));
+  const mine = new Map(hv.holdings.map(h => [h.symbol, h.weightPct || 0])), summary = new Map(), directPct = new Map(), xray = new Map();
+  for (const f of funds) if (f.fundId && xById.has(f.fundId)) {
+    const x = xById.get(f.fundId), tot = x.holdings.reduce((a, h) => a + (h.weight > 0 ? h.weight : 0), 0);
+    xray.set(f.fundId, { asOf: x.asOf, updatedAt: x.updatedAt, churn: x.churn || null, count: x.holdings.length });
+    summary.set(f.fundId, fundSummary(x.holdings, bySym, mine));
+    directPct.set(f.fundId, tot > 0 ? Math.round(x.holdings.filter(h => h.symbol && mine.has(h.symbol)).reduce((a, h) => a + h.weight, 0) / tot * 1000) / 10 : 0);
+  }
+  const ovMemo = new Map(), overlap = (a, b) => { const k = [a, b].sort().join("|"); if (!ovMemo.has(k)) { const A = xById.get(a), B = xById.get(b); ovMemo.set(k, A && B ? fundOverlap(A.holdings, B.holdings).overlapPct : null); } return ovMemo.get(k); };
+  const out = reviewFunds({ funds, nav, bench, xray, summary, overlap, directPct, today });
+  // ideas: funds in the shared X-ray library you don't hold, least like what you hold (value-weighted mix of your funds)
+  const heldIds = new Set(funds.map(f => f.fundId).filter(Boolean)), mixW = new Map(); let mixT = 0;
+  for (const f of funds) { const x = f.fundId && xById.get(f.fundId); if (!x || !(f.value > 0)) continue; const t = x.holdings.reduce((a, h) => a + (h.weight > 0 ? h.weight : 0), 0) || 1; for (const h of x.holdings) if (h.weight > 0) { const k = h.symbol || h.isin || h.name; const cur = mixW.get(k) || { ...h, weight: 0 }; cur.weight += f.value * h.weight / t; mixW.set(k, cur); } mixT += f.value; }
+  const mix = [...mixW.values()].map(h => ({ ...h, weight: h.weight / (mixT || 1) * 100 }));
+  const ideaStats = new Map();
+  for (const x of xrFile.funds.filter(f => !heldIds.has(f.id)).slice(0, 30)) { const code = x.source?.code || (x.source?.isin && amfi[x.source.isin]?.[2]) || null; const s = await mfNavStats(code); if (s.stats) ideaStats.set(x.id, { ...s.stats, category: s.category }); }
+  const ideas = mix.length ? fundIdeas({ library: xrFile.funds, heldIds, overlapWithMine: id => fundOverlap(mix, xById.get(id).holdings).overlapPct, stats: ideaStats }) : [];
+  for (const r of out.rows) { delete r.summary?.mix?.unvalued; r.benchStats = r.benchStats ? { ret1y: r.benchStats.ret1y, ret3y: r.benchStats.ret3y, ret5y: r.benchStats.ret5y } : null; }
+  return { ...out, ideas, navPending: out.rows.filter(r => r.navPending).length, noCode: funds.filter(f => !codeOf(f)).length, alerts: st.alerts !== false, at: new Date().toISOString() };
+}
+async function checkFundAlerts() {
+  const st = await readJson(mfReviewFile(), {}); if (st.alerts === false) return;
+  if (!(await syncedMutualFunds().catch(() => [])).length) return;
+  const v = await mfReview(), { next, fresh } = diffFundAlerts(st.state || {}, v);
+  if (fresh.length) await fireEvents(fresh);
+  if (JSON.stringify(next) !== JSON.stringify(st.state || {})) await withUserLock(async () => { const cur = await readJson(mfReviewFile(), {}); await writeJson(mfReviewFile(), { ...cur, state: next }); });
+}
+setInterval(() => forEachUser(() => checkFundAlerts()).catch(() => {}), 3 * 3600e3).unref();
+if (!process.env.NODE_TEST_CONTEXT) setTimeout(() => forEachUser(() => checkFundAlerts()).catch(() => {}), 120e3).unref();
+// ---- Bucket strategy (buckets.mjs) and monthly expenses (expenses.mjs): private to each login (userFile only) ----
+const bucketsFile = () => userFile("buckets.json"), expensesFile = () => userFile("expenses.json");
+async function expenseStore() { const st = await readJson(expensesFile(), {}); return { months: st.months || {}, modes: Array.isArray(st.modes) && st.modes.length ? st.modes : DEFAULT_MODES, learned: st.learned || {}, budgets: st.budgets || {} }; }
+async function spendAverage() { // last 6 months with a log, for sizing the safety bucket
+  const st = await expenseStore(), ks = Object.keys(st.months).filter(k => (st.months[k].entries || []).length || (st.months[k].plan || []).length).sort().slice(-6);
+  if (!ks.length) return null;
+  const tot = ks.reduce((a, k) => { const s = monthSummary(st.months[k], { budgets: st.budgets }); return a + (s.plannedTotal - s.planned.invest || s.spent); }, 0);
+  return { avgMonthly: Math.round(tot / ks.length), months: ks.length };
+}
+async function bucketsPage() {
+  const [nw, raw, spend, held] = await Promise.all([networthView(), readJson(bucketsFile(), {}), spendAverage().catch(() => null), syncedMutualFunds().catch(() => [])]);
+  const plan = sanitizeBucketPlan(raw, raw), amfi = await amfiNav();
+  // a fund's category (from its NAV history file when there is one) helps place it: liquid / arbitrage → safety, hybrid / flexi → short term
+  const catOf = new Map();
+  for (const f of held) { const code = f.isin && amfi[f.isin]?.[2]; if (code) { const c = await readJson(mfNavFile(code), null); if (c?.category) catOf.set(`mf:${f.key}`, c.category); else queueMfNav([code]); } }
+  const lines = (nw.lines || []).map(l => ({ ...l, fundCategory: catOf.get(l.id) || null }));
+  return { ...bucketView(lines, plan, { spend, liabilities: nw.totals?.liabilities || 0 }), goalsList: plan.goals, spend, net: nw.totals?.net ?? null, BUCKETS };
+}
 // ---- Holdings clean-up review (cleanup.mjs): Keep / Add / Trim / Exit for every stock you hold, with the reasons ----
 // Uses saved data only (the swing scan's daily-bar snapshots, saved NSE closes, the tax page, the fund X-ray): no outside site.
 async function holdingsReview() {
@@ -883,7 +984,7 @@ async function syncKiteSlot(kc, slotId, slotLabel, label) {
 }
 
 // ---- Backup / restore: one JSON file with every file in your private folder ----
-const BACKUP_SECRET_FILES = /^(kite-session(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp|notify|ai-key|login-2fa|secrets-key)\.json$/;
+const BACKUP_SECRET_FILES = /^(kite-session(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp|notify|ai-keys?|login-2fa|secrets-key)\.json$/;
 const BACKUP_NAME_RE = /^[a-z0-9][\w-]{0,60}\.json$/i;
 async function makeBackup(includeSecrets) {
   const dir = userDir(), files = {};
@@ -998,7 +1099,7 @@ async function taxPage(account = "all") {
 // ---- Returns (XIRR) vs the index, dividends received, forward dividend calendar ----
 // Index history: our NSE end-of-day files, topped up for older years from Yahoo (shared cache, weekly).
 const indexHistFile = path.join(DATA_DIR, "index-history.json");
-const BENCH = { NIFTY50: { label: "Nifty 50", yahoo: "^NSEI" }, NIFTY500: { label: "Nifty 500", yahoo: "^CRSLDX" }, SMALLCAP250: { label: "Nifty Smallcap 250", yahoo: "^CNXSC", yahooLabel: "Nifty Smallcap 100 (older years)" } };
+const BENCH = { NIFTY50: { label: "Nifty 50", yahoo: "^NSEI" }, NIFTY500: { label: "Nifty 500", yahoo: "^CRSLDX" }, SMALLCAP250: { label: "Nifty Smallcap 250", yahoo: "^CNXSC", yahooLabel: "Nifty Smallcap 100 (older years)" } , MIDCAP150: { label: "Nifty Midcap 150", yahoo: "NIFTYMIDCAP150.NS" } };
 const indexFetch = new Map(); // index key -> { at: last try, p: running fetch }
 async function indexBars(key) {
   const own = await eodBars(`_index-${key}`), cache = await readJson(indexHistFile, {}), c = cache[key];
@@ -1692,7 +1793,8 @@ async function briefData() {
   const trails = trailChanges(st.positions || [], new Date(Date.now() - 24 * 3600e3).toISOString());
   const themes = (await readJson(themePlanFile(), null))?.themes?.length ? (await themesView().catch(() => null))?.bulkNow || [] : [];
   const inPlan = new Set(themes.map(x => x.symbol));
-  return { zones: zones.filter(z => !inPlan.has(z.symbol)), moves, orders, trails, themes };
+  const funds = (await syncedMutualFunds().catch(() => [])).length ? (await mfReview().catch(() => null))?.bulkNow || [] : [];
+  return { zones: zones.filter(z => !inPlan.has(z.symbol)), moves, orders, trails, themes, funds };
 }
 async function briefView() {
   const [swing, up, rulesSt, extra] = await Promise.all([swingView({ alerts: false }).catch(() => null), upcomingEvents({ pastDays: 0, aheadDays: 7 }).catch(() => ({ events: [] })), readJson(rulesFile(), { rules: [] }), briefData()]);
@@ -2634,7 +2736,8 @@ async function saveXrayFund({ id = null, name, asOf = null, holdings, source = n
     const same = !(id && st.funds.some(f => f.id === id)) ? st.funds.find(f => sameFund(f, { name, source })) : null;
     const fid = id && st.funds.some(f => f.id === id) ? id : same ? same.id : `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
     const prev = st.funds.find(f => f.id === fid);
-    const fund = { id: fid, name: String(prev && same ? prev.name : name).slice(0, 80), asOf: asOf ? String(asOf).slice(0, 30) : null, updatedAt: new Date().toISOString(), holdings, source: source || prev?.source || null, addedBy: prev?.addedBy || currentUser().id };
+    const churn = prev?.holdings?.length && prev.asOf !== asOf ? portfolioChurn(prev.holdings, holdings) : null; // what changed since the last month's portfolio
+    const fund = { id: fid, name: String(prev && same ? prev.name : name).slice(0, 80), asOf: asOf ? String(asOf).slice(0, 30) : null, updatedAt: new Date().toISOString(), holdings, source: source || prev?.source || null, addedBy: prev?.addedBy || currentUser().id, churn: churn ? { ...churn, from: prev.asOf || null, at: new Date().toISOString() } : prev?.churn || null };
     st.funds = [...st.funds.filter(f => f.id !== fid), fund]; await writeJson(U.fundsFile, st);
     return fund;
   });
@@ -2750,7 +2853,10 @@ async function aiKey() {
 }
 async function aiStatus() {
   const [st, k, sealed] = await Promise.all([aiSettings(), aiKey(), readJson(aiKeyFile(), null)]);
-  return { configured: !!k.key, keySource: k.source, keyHint: sealed?.hint || null, model: st.model, models: AI_MODELS, privacy: st.privacy, privacyOptions: AI_PRIVACY, monthlyTokens: st.monthlyTokens, usage: st.usage };
+  const provider = AI_PROVIDERS[st.provider] ? st.provider : "anthropic", keys = await readJson(aiKeysFile(), {}), owner = currentUser().role === "owner";
+  const providers = Object.entries(AI_PROVIDERS).filter(([, p]) => !p.ownerOnly || owner).map(([id, p]) => ({ id, label: p.label, free: p.free, keyless: !!p.keyless, keyHint: p.keyHint, where: p.where, privacy: p.privacy, baseEditable: !!p.ownerBase && owner, base: p.ownerBase ? providerBase(id, st) : null, hasKey: id === "anthropic" ? !!k.key : !!keys[id], savedHint: id === "anthropic" ? sealed?.hint || null : keys[id]?.hint || null, ready: id === "anthropic" ? !!k.key : !!st.providerModels?.[id]?.length && (!!p.keyless || !!keys[id] || id === "custom") }));
+  const cur = providers.find(p => p.id === provider), model = provider === "anthropic" ? st.model : st.providerModel?.[provider] || null;
+  return { configured: !!cur?.ready, provider, providers, keySource: provider === "anthropic" ? k.source : "yours", keyHint: cur?.savedHint || null, model, models: provider === "anthropic" ? AI_MODELS : (st.providerModels?.[provider] || []).map(id => ({ id, label: id })), privacy: st.privacy, privacyOptions: AI_PRIVACY, monthlyTokens: st.monthlyTokens, usage: st.usage };
 }
 // Everything the AI sees, gathered from the same views the pages use (no outside calls beyond what pages make)
 async function aiSnapshot() {
@@ -2790,11 +2896,46 @@ async function aiTool(name, input = {}) {
     const rows = v.rows.filter(r => f === "all" || (f === "top" ? r.score >= 65 : f === "not-watching" ? !r.watching : r.tags.includes(f))).sort((a, b) => (b.score ?? -1) - (a.score ?? -1)).slice(0, 40);
     return { index: v.name, about: v.meta?.blurb || null, summary: v.summary, stocks: rows.map(r => ({ symbol: r.symbol, industry: r.industry, price: r.price, ch1m: r.ch30d, ch1y: r.ch365d, fromHigh: r.fromHigh, weight: r.weight, valuation: r.valuation ? `${r.valuation.view}${r.valuation.upside != null ? ` (${r.valuation.upside}% to fair)` : ""}${r.valuation.pe ? `, P/E ${r.valuation.pe}` : ""}` : "not valued", score: r.score, partial: r.partial, tags: r.tags, held: r.held, watching: r.watching })) };
   }
+  if (name === "fund_review") {
+    const v = await mfReview();
+    return { funds: v.rows.map(r => ({ name: r.name, category: r.category, call: r.verdict, lean: r.lean, sharePct: r.share, returns: r.stats ? { y1: r.stats.ret1y, y3: r.stats.ret3y, y5: r.stats.ret5y, fromHigh: r.stats.fromHigh } : null, index: r.benchLabel, indexReturns: r.benchStats, reasons: r.reasons.map(x => x.text) })), overlapPairs: v.pairs, bulkNow: v.bulkNow.map(b => b.name), notes: v.notes };
+  }
   if (name === "swing_ideas") {
     const x = await swingIdeas(), want = input.setup && input.setup !== "any" ? input.setup : null;
     return { ideas: x.ideas.filter(i => !want || i.setup === want).slice(0, 12).map(i => ({ symbol: i.symbol, setup: i.label || i.setup, entry: `${i.entryLow ?? i.entry}-${i.entryHigh ?? i.entry}`, stop: i.stop, t1: i.t1, t2: i.t2, score: i.score, verdict: i.verdict, rsi: i.snap?.rsi, rs3m: i.snap?.rs3m, watching: i.watching })), trackRecord: x.track?.summary || null, scannedAt: x.scan?.lastRun || null };
   }
   return { error: `unknown tool ${name}` };
+}
+// ---- Other AI providers (OpenAI-compatible): keys per provider, sealed like the Anthropic key ----
+const aiKeysFile = () => userFile("ai-keys.json"); // { provider: sealed key } (a secret file: encrypted at rest, never in backups)
+const providerBase = (provider, st) => {
+  const p = AI_PROVIDERS[provider]; if (!p) return null;
+  const env = process.env[`AI_BASE_${provider.toUpperCase()}`]; if (env) return env.replace(/\/+$/, "");
+  return String((p.ownerBase && st?.bases?.[provider]) || p.base || "").replace(/\/+$/, "") || null;
+};
+async function providerKey(provider) {
+  if (provider === "anthropic") return (await aiKey()).key;
+  const sealed = (await readJson(aiKeysFile(), {}))[provider];
+  return sealed ? openKey(sealed, await aiSecret()) : null;
+}
+async function providerModels(provider, base, key) {
+  const r = await fetch(`${base}/models`, { signal: AbortSignal.timeout(15000), headers: key ? { Authorization: `Bearer ${key}` } : {} }).catch(e => { throw new Error(`Could not reach ${AI_PROVIDERS[provider].label} at ${base} (${e.cause?.code || e.message}).`); });
+  if (!r.ok) throw new Error(friendlyProviderError(provider, r.status, await r.json().catch(() => ({}))));
+  const ids = chatModelIds(await r.json().catch(() => ({})));
+  if (!ids.length) throw new Error(`${AI_PROVIDERS[provider].label} answered but lists no chat models${provider === "ollama" ? ": run `ollama pull llama3.1` first" : ""}.`);
+  return ids;
+}
+// One streamed chat completion
+async function openAiStream({ provider, base, key, model, messages, tools, maxTokens, signal, onText }) {
+  const body = { model, messages, tools, stream: true, max_tokens: maxTokens, stream_options: { include_usage: true } };
+  const call = b => fetch(`${base}/chat/completions`, { method: "POST", signal, headers: { "content-type": "application/json", ...(key ? { Authorization: `Bearer ${key}` } : {}), ...(provider === "openrouter" ? { "HTTP-Referer": "https://github.com/equity-watchlist", "X-Title": "Equity Watchlist" } : {}) }, body: JSON.stringify(b) });
+  let r = await call(body);
+  if (r.status === 400) { const t = await r.text(); if (/stream_options|include_usage/i.test(t)) { delete body.stream_options; r = await call(body); } else throw new Error(friendlyProviderError(provider, 400, (() => { try { return JSON.parse(t); } catch { return {}; } })())); }
+  if (!r.ok) throw Object.assign(new Error(friendlyProviderError(provider, r.status, await r.json().catch(() => ({})))), { status: r.status });
+  const col = openAiCollector(onText), feed = sseParser(col.on), dec = new TextDecoder();
+  for await (const chunk of r.body) feed(dec.decode(chunk, { stream: true }));
+  const out = col.result(); if (out.error) throw new Error(`${AI_PROVIDERS[provider].label}: ${out.error}`);
+  return out;
 }
 // One call to the Messages API, streamed. onText gets text as it arrives.
 async function anthropicStream({ key, model, system, messages, tools, maxTokens, signal, onText }) {
@@ -2812,7 +2953,10 @@ async function aiChat(req, res, b) {
   const ac = new AbortController(); res.on("close", () => ac.abort());
   try {
     const [st, k] = await Promise.all([aiSettings(), aiKey()]);
-    if (!k.key) throw new Error("Add your Anthropic API key first (Ask AI → Settings).");
+    const provider = AI_PROVIDERS[st.provider] ? st.provider : "anthropic", other = provider !== "anthropic";
+    const pKey = other ? await providerKey(provider) : k.key, pBase = other ? providerBase(provider, st) : null, pModel = other ? st.providerModel?.[provider] : st.model;
+    if (!other && !k.key) throw new Error("Add your Anthropic API key first (Ask AI → Settings).");
+    if (other && (!pModel || !pBase || (!pKey && !AI_PROVIDERS[provider].keyless && provider !== "custom"))) throw new Error(`Finish setting up ${AI_PROVIDERS[provider].label} in Ask AI → Settings.`);
     if (st.usage.input + st.usage.output >= st.monthlyTokens) throw new Error(`This month's AI limit (${st.monthlyTokens.toLocaleString("en-IN")} tokens) is used up. Raise it in Ask AI → Settings.`);
     const question = String(b.message || "").trim().slice(0, 4000); if (!question) throw new Error("Type a question.");
     const chats = await readJson(aiChatsFile(), { chats: [] });
@@ -2826,7 +2970,23 @@ async function aiChat(req, res, b) {
     const messages = [...chat.messages.slice(-16).map(m => ({ role: m.role, content: m.text })), { role: "user", content: question + focus }];
     const usage = { input: 0, output: 0, cacheRead: 0 }, tools = [];
     let answer = "";
-    for (let round = 0; round < 6; round++) {
+    if (other) { // OpenAI-compatible provider: same snapshot, same tools, in that API's shape
+      const msgs = [{ role: "system", content: `${AI_SYSTEM}\n\n# The user's portfolio now\n${context}` }, ...messages.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : JSON.stringify(m.content) }))], oaTools = toOpenAiTools(AI_TOOLS);
+      for (let round = 0; round < 6; round++) {
+        send("status", { text: round ? "Thinking it through…" : `Asking ${AI_PROVIDERS[provider].label.split(" (")[0]}…` });
+        const out = await openAiStream({ provider, base: pBase, key: pKey, model: pModel, messages: msgs, tools: oaTools, maxTokens: st.maxAnswerTokens, signal: ac.signal, onText: t => { answer += t; send("delta", { text: t }); } });
+        usage.input += out.usage.input || Math.round(JSON.stringify(msgs).length / 4); usage.output += out.usage.output || Math.round(out.text.length / 4);
+        if (!out.toolCalls.length) break;
+        msgs.push({ role: "assistant", content: out.text || null, tool_calls: out.toolCalls.map(c => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.input || {}) } })) });
+        for (const c of out.toolCalls) {
+          send("tool", { name: c.name, symbol: c.input?.symbol || null }); tools.push(`${c.name}${c.input?.symbol ? ` ${c.input.symbol}` : ""}`);
+          const r = await aiTool(c.name, c.input).catch(e => ({ error: e.message }));
+          msgs.push({ role: "tool", tool_call_id: c.id, content: JSON.stringify(r).slice(0, 12000) });
+        }
+        if (answer && !answer.endsWith("\n")) { answer += "\n\n"; send("delta", { text: "\n\n" }); }
+      }
+    }
+    for (let round = 0; round < 6 && !other; round++) {
       send("status", { text: round ? "Thinking it through…" : "Asking Claude…" });
       const out = await anthropicStream({ key: k.key, model: st.model, system, messages, tools: AI_TOOLS, maxTokens: st.maxAnswerTokens, signal: ac.signal, onText: t => { answer += t; send("delta", { text: t }); } });
       usage.input += out.usage.input + out.usage.cacheWrite; usage.cacheRead += out.usage.cacheRead; usage.output += out.usage.output;
@@ -2842,13 +3002,13 @@ async function aiChat(req, res, b) {
       messages.push({ role: "user", content: results });
       if (answer && !answer.endsWith("\n")) { answer += "\n\n"; send("delta", { text: "\n\n" }); }
     }
-    chat.messages.push({ role: "user", text: question, at: new Date().toISOString() }, { role: "assistant", text: answer || "(no answer)", at: new Date().toISOString(), model: st.model, tools });
+    chat.messages.push({ role: "user", text: question, at: new Date().toISOString() }, { role: "assistant", text: answer || "(no answer)", at: new Date().toISOString(), model: pModel, provider, tools });
     chat.messages = chat.messages.slice(-40); chat.at = new Date().toISOString();
     chats.chats = chats.chats.slice(0, 30); await writeJson(aiChatsFile(), chats);
     const cur = await readJson(aiFile(), {}), u = cur.usage?.month === monthKey() ? cur.usage : { month: monthKey(), input: 0, output: 0, questions: 0 };
     await writeJson(aiFile(), { ...cur, usage: { ...u, input: u.input + usage.input + usage.cacheRead, output: u.output + usage.output, questions: (u.questions || 0) + 1 } });
-    send("done", { usage, tools, model: st.model });
-  } catch (e) { if (!ac.signal.aborted) send("error", { message: e.name === "TimeoutError" ? "Claude took too long to answer." : e.message }); }
+    send("done", { usage, tools, model: pModel, provider });
+  } catch (e) { if (!ac.signal.aborted) send("error", { message: e.name === "TimeoutError" ? "The AI took too long to answer." : e.message }); }
   res.end();
 }
 
@@ -3805,8 +3965,33 @@ async function appHandler(req, res, url) {
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown AI operation." });
         const b = await readBody(req);
         if (op === "chat") return aiChat(req, res, b);
+        if (op === "provider") { // switch provider (and save its key / address): checks the key by listing the provider's models
+          const id = String(b.provider || ""), p = AI_PROVIDERS[id], owner = currentUser().role === "owner";
+          if (!p || (p.ownerOnly && !owner)) throw new Error("Unknown AI provider.");
+          const cur = await readJson(aiFile(), {}), next = { ...cur, provider: id };
+          if (id === "anthropic") { await writeJson(aiFile(), next); return reply(res, 200, await aiStatus()); }
+          if (b.base !== undefined && p.ownerBase) {
+            if (!owner) throw new Error("Only the owner can change the server address.");
+            const u = String(b.base || "").trim().replace(/\/+$/, ""); if (u && !/^https?:\/\/[^\s/]+(\/[^\s]*)?$/i.test(u)) throw new Error("The address must start with http:// or https://");
+            next.bases = { ...(cur.bases || {}), [id]: u || null };
+          }
+          const base = providerBase(id, next); if (!base) throw new Error("Enter the server address (e.g. http://127.0.0.1:1234/v1).");
+          const keys = await readJson(aiKeysFile(), {}), typed = String(b.key || "").trim();
+          if (typed && !looksLikeAnyKey(typed)) throw new Error("That does not look like an API key.");
+          const key = typed || (keys[id] ? openKey(keys[id], await aiSecret()) : null);
+          if (!key && !p.keyless && id !== "custom") throw new Error(`Paste your ${p.label} API key (${p.where}).`);
+          const ids = await providerModels(id, base, key);
+          if (typed) { keys[id] = sealKey(typed, await aiSecret()); await writeJson(aiKeysFile(), keys); }
+          const prevModel = cur.providerModel?.[id];
+          next.providerModels = { ...(cur.providerModels || {}), [id]: ids };
+          next.providerModel = { ...(cur.providerModel || {}), [id]: ids.includes(prevModel) ? prevModel : pickModel(id, ids) };
+          await writeJson(aiFile(), next);
+          return reply(res, 200, { ...(await aiStatus()), notice: `${p.label} connected: ${ids.length} model${ids.length === 1 ? "" : "s"}${typed ? ", key saved (encrypted on this server)" : ""}.` });
+        }
+        if (op === "provider-key-remove") { const keys = await readJson(aiKeysFile(), {}); delete keys[String(b.provider)]; await writeJson(aiKeysFile(), keys); return reply(res, 200, await aiStatus()); }
         if (op === "settings") {
-          const cur = await readJson(aiFile(), {}), next = { ...cur };
+          const cur = await readJson(aiFile(), {}), next = { ...cur }, prov = AI_PROVIDERS[cur.provider] ? cur.provider : "anthropic";
+          if (b.model !== undefined && prov !== "anthropic") { const m = String(b.model).trim(); if (!(cur.providerModels?.[prov] || []).includes(m)) throw new Error("Pick one of the provider's models."); next.providerModel = { ...(cur.providerModel || {}), [prov]: m }; delete b.model; }
           if (b.model !== undefined) { const m = String(b.model).trim(); if (!/^claude-[a-z0-9.-]{3,60}$/.test(m)) throw new Error("Pick a Claude model."); next.model = m; }
           if (b.privacy !== undefined) { if (!AI_PRIVACY[b.privacy]) throw new Error("Unknown privacy setting."); next.privacy = b.privacy; }
           if (b.monthlyTokens !== undefined) { const n = Math.round(Number(String(b.monthlyTokens).replace(/[,\s]/g, ""))); if (!(n >= 10000 && n <= 1e9)) throw new Error("Monthly limit: between 10,000 and 1,000,000,000 tokens."); next.monthlyTokens = n; }
@@ -3826,6 +4011,64 @@ async function appHandler(req, res, url) {
         return reply(res, 404, { message: "Unknown AI operation." });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
+    if (url.pathname === "/api/buckets" && req.method === "GET") return reply(res, 200, await bucketsPage());
+    if (url.pathname === "/api/buckets/save" && req.method === "POST") {
+      const b = await readBody(req);
+      try { await withUserLock(async () => { const prev = await readJson(bucketsFile(), {}); await writeJson(bucketsFile(), sanitizeBucketPlan(b, prev)); }); return reply(res, 200, await bucketsPage()); }
+      catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/expenses" || url.pathname.startsWith("/api/expenses/")) {
+      const op = url.pathname.slice("/api/expenses".length).replace(/^\//, "");
+      try {
+        const view = async (month, notice = null) => {
+          const st = await expenseStore(), m = st.months[month] || null;
+          return { month, data: m, exists: !!m, summary: m ? monthSummary(m, { budgets: st.budgets }) : null, modes: st.modes, categories: Object.entries(EXP_CATEGORIES).map(([k, v]) => ({ key: k, ...v, budget: st.budgets[k] ?? v.budget ?? null })), planTypes: PLAN_TYPES,
+            months: Object.keys(st.months).sort(), items: [...new Set(Object.values(st.months).flatMap(x => (x.entries || []).map(e => e.item)))].slice(-300), notice };
+        };
+        const monthOf = v => { const m = String(v || "").slice(0, 7); if (!MONTH_RE.test(m)) throw new Error("Pick a month."); return m; };
+        if (req.method === "GET" && op === "") return reply(res, 200, await view(monthOf(url.searchParams.get("month") || istDay().slice(0, 7))));
+        if (req.method === "GET" && op === "year") { const st = await expenseStore(); return reply(res, 200, yearReport(st.months, monthOf(url.searchParams.get("month") || istDay().slice(0, 7)), { budgets: st.budgets })); }
+        if (req.method === "GET" && op === "export.csv") { const st = await expenseStore(); res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": "attachment; filename=\"expenses.csv\"", "Cache-Control": "no-store" }); return res.end(expensesCsv(st.months)); }
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown expense operation." });
+        const b = await readBody(req), month = monthOf(b.month); let notice = null;
+        await withUserLock(async () => {
+          const raw = await readJson(expensesFile(), {}), st = { months: raw.months || {}, modes: Array.isArray(raw.modes) && raw.modes.length ? raw.modes : [...DEFAULT_MODES], learned: raw.learned || {}, budgets: raw.budgets || {} };
+          const M = () => (st.months[month] ||= newMonth(st.months[Object.keys(st.months).filter(k => k < month).sort().at(-1)] || null));
+          if (op === "start") { const m = M(); notice = m.plan.length ? `Started ${month} from your last month's plan.` : `Started ${month}.`; }
+          else if (op === "entry") { // add / edit one spend
+            const m = M(), e = sanitizeSpend(b, { month, modes: st.modes, learned: st.learned });
+            if (b.category && EXP_CATEGORIES[b.category] && guessCategory(e.item, {}) !== b.category) st.learned[e.item.toLowerCase()] = b.category; // learn your correction
+            if (e.mode && !st.modes.includes(e.mode)) st.modes.push(e.mode);
+            const i = m.entries.findIndex(x => x.id === e.id); if (i >= 0) m.entries[i] = e; else { if (m.entries.length >= 2000) throw new Error("At most 2,000 entries a month."); m.entries.push(e); }
+            m.entries.sort((a, z) => a.date.localeCompare(z.date));
+          }
+          else if (op === "entry-delete") { const m = M(); m.entries = m.entries.filter(x => x.id !== b.id); }
+          else if (op === "plan") { const m = M(); m.plan = (Array.isArray(b.plan) ? b.plan : []).slice(0, 80).map(sanitizePlanLine); m.income = (Array.isArray(b.income) ? b.income : m.income).slice(0, 20).map(sanitizeIncome); }
+          else if (op === "plan-done") { const m = M(), p = m.plan.find(x => x.id === b.id); if (!p) throw new Error("That line no longer exists."); p.done = !!b.done; }
+          else if (op === "paste") { // from your spreadsheet: the budget block, the daily log, or both
+            const m = M(), out = [];
+            if (b.plan) { const p = parsePlanPaste(b.plan); if (p.plan.length) { m.plan = p.plan.slice(0, 80).map(sanitizePlanLine); out.push(`${p.plan.length} budget lines`); } if (p.income.length) { m.income = p.income.map(sanitizeIncome); out.push(`${p.income.length} income lines`); } }
+            if (b.log) {
+              const rows = parseLogPaste(b.log, { month, modes: st.modes }); let added = 0, skipped = 0;
+              for (const r of rows) { if (r.date.slice(0, 7) !== month) { skipped++; continue; } if (r.mode && !st.modes.includes(r.mode)) st.modes.push(r.mode); m.entries.push(sanitizeSpend({ ...r, mode: r.mode || "Not given" }, { month, modes: st.modes, learned: st.learned })); added++; }
+              m.entries.sort((a, z) => a.date.localeCompare(z.date)); out.push(`${added} spends${skipped ? ` (${skipped} outside ${month} skipped)` : ""}`);
+            }
+            if (!out.length) throw new Error("Nothing recognised in what you pasted.");
+            notice = `Added ${out.join(", ")}.`;
+          }
+          else if (op === "settings") {
+            if (Array.isArray(b.modes)) { const ms = [...new Set(b.modes.map(x => String(x).replace(/[<>]/g, "").trim().slice(0, 30)).filter(Boolean))].slice(0, 15); if (!ms.length) throw new Error("Keep at least one payment method."); st.modes = ms; }
+            if (b.budgets && typeof b.budgets === "object") for (const [k, v] of Object.entries(b.budgets)) if (EXP_CATEGORIES[k]) { const t = String(v || "").replace(/[<>]/g, "").trim().slice(0, 50); if (t) st.budgets[k] = t; else st.budgets[k] = null; }
+          }
+          else if (op === "month-delete") { delete st.months[month]; notice = `${month} deleted.`; }
+          else throw new Error("Unknown expense operation.");
+          await writeJson(expensesFile(), { ...raw, ...st });
+        });
+        return reply(res, 200, await view(month, notice));
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/mf/review" && req.method === "GET") return reply(res, 200, await mfReview());
+    if (url.pathname === "/api/mf/review/settings" && req.method === "POST") { const b = await readBody(req); await withUserLock(async () => { const cur = await readJson(mfReviewFile(), {}); await writeJson(mfReviewFile(), { ...cur, alerts: !!b.alerts }); }); return reply(res, 200, { ok: true, alerts: !!b.alerts }); }
     if (url.pathname === "/api/mf" || url.pathname.startsWith("/api/mf/")) { // mutual funds outside Zerodha Coin: CAS / CSV import, by hand
       const op = url.pathname.slice("/api/mf".length).replace(/^\//, "");
       try {

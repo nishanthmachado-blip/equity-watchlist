@@ -1,5 +1,45 @@
 # Equity Watchlist MVP
 
+## v5.44.0: bucket strategy for your net worth, and a monthly expense tracker
+- **Bucket strategy** (Your portfolio → 🪣): your net worth split into four buckets.
+  - **Safety:** bank, FDs, liquid / arbitrage / overnight funds. Sized in months of expenses (default ₹1 L a month, at least 12 and at most 36 months = ₹36 L): it says when to top up and how much above the cap could move to growth.
+  - **Short term:** balanced advantage / hybrid / flexi-cap and debt funds, PPF: for goals like the house or the kids' education.
+  - **Long-term growth:** stocks, small / mid / large-cap and other equity funds, US stocks, crypto, gold.
+  - **Retirement:** EPF, NPS.
+  - Every line is placed automatically (funds by their category from the NAV data, else by name); move any line with its menu, or leave it out (your home, a car). Tag lines with goals (House, Kids education, your own) with a target and year to see progress. Optional target % per bucket.
+- **Monthly expenses** (Your portfolio → 💸): per month, your income and budget (needs / wants / investments / unplanned, which bank, done ✓) and a daily log of spends (item, amount, how you paid: Pluxee, GPay, credit card, a family member…, and a category guessed from the item that learns from your corrections).
+  - Paste straight from your spreadsheet: the budget block (Rent 47500 HDFC Expense NEEDS DONE…) and the daily list with Pluxee / Gpay / Credit Card columns.
+  - A new month starts from the last month's budget. Budget vs spent for Grocery / Milk / Petrol (which category counts against which line is editable).
+  - **Year (April–March):** income, budget, savings and day-to-day spends by month, every category by month, top categories, payment methods; download every spend as CSV.
+  - The safety bucket shows your tracked monthly spending next to the amount it is sized on.
+- Both are private to your login (other accounts can't see them) and are not sent to Ask AI.
+- The styles of the screens that load on demand (Holdings clean-up, Long-term themes, Fund review, Bucket strategy, Monthly expenses) moved to `screens.css`, loaded with the first of them: the first page load is 17 KB smaller.
+- New APIs: `GET /api/buckets`, `POST /api/buckets/save`, `GET /api/expenses?month=`, `GET /api/expenses/year?month=`, `GET /api/expenses/export.csv`, `POST /api/expenses/{start,entry,entry-delete,plan,plan-done,paste,settings,month-delete}`. Perf: the new GET APIs added; baseline refreshed.
+
+## v5.43.0: Fund review (keep / build / exit), and free AI providers for Ask AI
+- **Fund review** (Your portfolio → 🩺): one call per mutual fund you hold — **Build, Keep, Hold (don't add), Exit / switch** or **Review** — with every reason:
+  - 1, 3 and 5-year returns from the fund's NAV history (mfapi.in, public data, cached for everyone and refreshed daily) against the index its category follows (Nifty 50 / 500 / Midcap 150 / Smallcap 250);
+  - overlap with your other funds (X-ray): a fund that is mostly a copy of a better one you hold is the one to fold; two funds in the same category: keep the stronger;
+  - what it holds through this app's valuation (share in buy zones / expensive, weighted P/E), and how much is in stocks you also own directly;
+  - a fund under 3% of your fund money when you hold many;
+  - a big change in its portfolio since the last month's X-ray.
+  - **Bulk-buy zone:** NAV 10% under its 52-week high (strong at 20%) for funds you keep or build, with alerts (bell, phone, morning brief).
+  - **Needs your review:** funds new in your portfolio, without an X-ray, with an old X-ray, whose portfolio changed a lot, or that the review says to exit.
+  - **Funds to consider:** funds in the shared X-ray library you don't hold, least overlapping with yours.
+  - Exit / switch always reminds you of exit loads and capital-gains tax first.
+- **Ask AI with other providers:** besides Claude, pick Google Gemini (free tier), Groq (free tier), OpenRouter (free models), OpenAI (paid API), Ollama on your own computer (free and private) or, for the owner, any OpenAI-compatible server. The key is checked by listing the provider's models, stored encrypted and left out of backups; the same privacy-limited snapshot and tools are used. ChatGPT's app itself has no API, so it can't be connected directly.
+- Ask AI has a new **fund_review** tool, so questions about your mutual funds use the review above.
+- New APIs: `GET /api/mf/review`, `POST /api/mf/review/settings`, `POST /api/ai/provider`, `POST /api/ai/provider-key-remove`. Env: `MFAPI_BASE` (NAV history source), `AI_BASE_<PROVIDER>` (override a provider's address). Nifty Midcap 150 added as a benchmark (Returns vs index too). Perf: `/api/mf/review` added; baseline refreshed.
+
+## v5.42.2: reorder long-term themes by drag and drop
+- Long-term themes: drag a theme table by its ⠿ handle, or drag the tiles at the top, to change the order (for example Dividends and High growth above Growth). ↑ ↓ buttons beside ⚙ Edit do the same on a phone. The order is saved with your plan.
+- The tiles at the top jump to their table when clicked (they no longer change the page address).
+
+## v5.42.1: theme editor with one row per stock
+- Long-term themes → ⚙ Edit: the stocks are now a list (company name and symbol, ✕ to remove) with a search box that suggests companies as you type. The best match is highlighted: Enter adds it, ↑ ↓ pick another, Esc clears the search (the dialog stays open).
+- Symbols that are not a listed NSE stock (for example a typed `WAREEENERGIES` or `HINDUSTANCOPPER`) are marked ⚠ on the page and in the editor, and the theme can't be saved until they are replaced.
+- Fix: a theme saved without a target share now gets its default (Growth 50%, Dividends 30%, Others 20%) instead of 0%.
+
 ## v5.42.0: long-term themes with bulk-buy alerts; one shared mutual fund X-ray
 - **Long-term themes** (Your portfolio → 🧭): your long-term stocks in themes (Growth, Dividends, Others, or any names). Paste the columns straight from your spreadsheet (theme names on the top row); company names and short names (Sky gold, Maruthi, Kayne, waree energies…) are matched to NSE symbols for you to check.
   - **Bulk-buy signal** per stock: in the app's buy zone, or N% under its 52-week high (Growth 25%, Dividends 15%, Others 20% by default, editable), or (dividend themes) a dividend yield at or above your minimum (3% default). A dip alone does not count while the valuation still says Rich. **Strong** = below the buy zone, or in it after a big dip: the plan puts 1.5× your bulk amount there.

@@ -1375,6 +1375,7 @@
       window.toast(`✓ ${ui.esc(name)} saved. Fetching fundamentals for its holdings in the background.`);
     } catch (e) { $("#fdSaveSt").textContent = e.message; } finally { b.classList.remove("is-loading"); b.disabled = false; }
   }
+  window.openFundXray = async id => { await fdLoadList(); fdOpen(id); }; // from Fund review
   window.openFunds = async () => { await fdLoadList(); fdOpen(fdActive && fdList.some(f => f.id === fdActive) ? fdActive : fdList[0]?.id || null); };
   $("#viewFunds").onclick = () => setView("funds");
 

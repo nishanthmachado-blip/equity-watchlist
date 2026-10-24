@@ -13,9 +13,10 @@ Personal Indian-equity research app: Node ESM server (`server.mjs`, per-user dat
 - A page request never waits on an outside site. Answer from cache / saved data and refresh in the background; wait (with a short budget, ~1.5 s) only the first time something was never fetched, and never repeat a failed fetch on every request (remember the try).
 - Static files are compressed and cached in memory at start (`static.mjs`): restart the server to see CSS/JS edits.
 - Heavy libraries load on demand (e.g. `pdfjs-dist` only when a PDF is imported).
+- New screens load on demand: list them in `LAZY_VIEWS` (app.js), put their script in `public/<name>.js` (not in index.html) and their styles in `public/screens.css`. The first page load (scripts + styles in index.html) must stay under the 900 KB compressed budget.
 
 ## Privacy rules
 - Per-user files only through `userFile()`; shared public caches live in `DATA_DIR` root.
 - The mutual fund X-ray library (`mf-xray.json`, `U.fundsFile`) is shared by every account (fund portfolios are public data); write it only inside `withXrayLock()`. Which funds a user holds, values and links stay in their own files.
 - Secrets (broker sessions, Telegram, the Anthropic key `ai-key.json`) are excluded from backups (`BACKUP_SECRET_FILES`) and never sent to the browser.
-- Ask AI (`ai.mjs`): only `buildContext()` output and tool results go to Anthropic; never account labels / client IDs / PAN / email / folio numbers.
+- Ask AI (`ai.mjs`): only `buildContext()` output and tool results go to the AI provider the user picked (Anthropic or an OpenAI-compatible one); never account labels / client IDs / PAN / email / folio numbers. Provider keys live in `ai-key.json` / `ai-keys.json` (secret files).

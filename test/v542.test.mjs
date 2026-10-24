@@ -18,6 +18,7 @@ test("theme paste: spreadsheet columns with blank columns between, 'Theme: a, b'
   const p = sanitizeThemePlan({ themes: [{ name: "Dividents", symbols: ["itc", "ITC", "bad sym"] }, { name: "Growth" }] });
   assert.equal(p.themes[0].minYield, 3, "dividend theme gets a minimum yield"); assert.equal(p.themes[0].dipPct, 15); assert.deepEqual(p.themes[0].symbols.map(s => s.symbol), ["ITC"]);
   assert.equal(p.themes[1].dipPct, 25); assert.equal(p.themes[1].minYield, null);
+  assert.equal(p.themes[1].targetPct, 50, "a missing target share takes the theme default, not 0"); assert.equal(p.themes[0].bulk, 50000);
 });
 
 test("theme signal: buy zone, dip from the 52-week high, dividend yield; rich stocks wait for the zone", () => {

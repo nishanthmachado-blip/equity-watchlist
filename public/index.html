@@ -17,7 +17,10 @@
       <button id="viewDividends" class="viewTab" title="Dividend income planner"><span class="ico" aria-hidden="true">💰</span><span class="lbl">Dividend income planner</span></button>
       <p class="side-label">Your portfolio</p>
       <button id="viewNetworth" class="viewTab" title="Net worth"><span class="ico" aria-hidden="true">🏦</span><span class="lbl">Net worth</span></button>
+      <button id="viewBuckets" class="viewTab" data-goto="buckets" title="Bucket strategy"><span class="ico" aria-hidden="true">🪣</span><span class="lbl">Bucket strategy</span></button>
+      <button id="viewExpenses" class="viewTab" data-goto="expenses" title="Monthly expenses"><span class="ico" aria-hidden="true">💸</span><span class="lbl">Monthly expenses</span></button>
       <button id="viewMf" class="viewTab" data-goto="mf" title="Mutual funds"><span class="ico" aria-hidden="true">🧺</span><span class="lbl">Mutual funds</span></button>
+      <button id="viewFundReview" class="viewTab" data-goto="fundreview" title="Fund review"><span class="ico" aria-hidden="true">🩺</span><span class="lbl">Fund review</span></button>
       <button id="viewTax" class="viewTab" title="Tax view"><span class="ico" aria-hidden="true">🧾</span><span class="lbl">Tax view</span></button>
       <button id="viewPortfolio" class="viewTab" title="My holdings"><span class="ico" aria-hidden="true">📂</span><span class="lbl">My holdings</span></button>
       <button id="viewLongterm" class="viewTab" data-goto="longterm" title="Long-term themes"><span class="ico" aria-hidden="true">🧭</span><span class="lbl">Long-term themes</span></button>
@@ -229,6 +232,23 @@
         <section class="table-wrap"><table class="md-table"><thead><tr><th class="num">#</th><th>Stock</th><th class="num">Weight</th><th class="num">Amount</th><th class="num">~Shares</th><th>Verdict</th><th>How to buy</th><th>Why it is in</th></tr></thead><tbody id="mdRows"></tbody></table></section>
         <p class="vs-fine" id="mdRules"></p>
       </div>
+    </section>
+    <section id="bkView" data-feature-view="buckets" hidden>
+      <section class="toolbar"><span class="hint">Your net worth in four buckets: safety, short term, long-term growth and retirement. Click a bucket to jump to it.</span><button type="button" class="ghost" data-bk-settings>⚙ Settings</button><button type="button" class="ghost" id="bkReload">⟳ Refresh</button></section>
+      <div id="bkSum"></div><div id="bkBody"><p class="hint">Loading…</p></div><div id="bkNotes"></div>
+    </section>
+    <section id="exView" data-feature-view="expenses" hidden>
+      <section class="toolbar ex-top"><div class="ex-nav"><button type="button" class="ghost" data-mnav="-1" aria-label="Previous month">‹</button><b id="exMonth"></b><button type="button" class="ghost" data-mnav="1" aria-label="Next month">›</button><button type="button" class="ghost" data-ex="today">This month</button></div>
+        <div class="md-seg" id="exTabs" role="group" aria-label="View"><button type="button" data-tab="month" class="active">Month</button><button type="button" data-tab="year">Year (Apr–Mar)</button></div>
+        <span class="ex-acts"><button type="button" class="ghost" data-ex="paste">📋 Paste</button><button type="button" class="ghost" data-ex="settings">⚙</button></span></section>
+      <div id="exBody"><p class="hint">Loading…</p></div>
+      <p class="vs-fine">Private to your login: other accounts on this app can't see your budget or spends, and they are not sent to Ask AI.</p>
+    </section>
+    <section id="frView" data-feature-view="fundreview" hidden>
+      <section class="toolbar"><span class="hint">Keep, build, hold or exit: one call per fund you hold, with the reasons.</span><button type="button" class="ghost" id="frReload">⟳ Review again</button></section>
+      <div id="frSum"></div>
+      <div id="frBody"><p class="hint">Loading…</p></div>
+      <div id="frNotes"></div>
     </section>
     <section id="ltView" data-feature-view="longterm" hidden>
       <section class="toolbar lt-tools" id="ltTools" hidden><button type="button" data-lt="paste">📋 Paste my list</button><button type="button" class="ghost" data-lt="new">+ Theme</button><button type="button" class="ghost" data-lt="settings">⚙ Plan settings</button><button type="button" class="ghost" data-lt="reload">⟳ Refresh</button></section>

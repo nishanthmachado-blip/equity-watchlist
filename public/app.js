@@ -522,6 +522,9 @@ function setReportSub(tab){
 }
 // Page heading for each screen: eyebrow (section), title, one-line description; also the browser tab title
 const VIEW_HEADERS={
+  buckets:["Your portfolio","Bucket strategy","Safety, short term, long-term growth and retirement: what each bucket holds and what to move."],
+  expenses:["Your portfolio","Monthly expenses","Budget and day-to-day spends for each month; the April–March report shows where the money went."],
+  fundreview:["Your portfolio","Fund review","Keep, build, hold or exit each mutual fund: returns vs its index, overlap between your funds, and when to add in bulk."],
   longterm:["Your portfolio","Long-term themes","Your Growth, Dividend and other themes: what to buy in bulk when it gets cheap."],
   review:["Your portfolio","Holdings clean-up","Keep, add, trim or exit: one call per stock you hold, with valuation, trend, fund overlap and tax behind it."],
   orders:["Research","Order wins","Companies winning new orders and contracts (NSE filings), sized against their sales, with valuation alongside."],
@@ -561,11 +564,11 @@ function applyHeader(v){
   document.title=v==="home"?"Equity Watchlist":`${h[1]} · Equity Watchlist`;
 }
 // screens whose script loads the first time they are opened (keeps the first page load small)
-const LAZY_VIEWS={review:"review.js",longterm:"longterm.js"};const lazyLoading={};
-function loadViewScript(v){if(lazyLoading[v])return;lazyLoading[v]=true;const s=document.createElement("script");s.src=LAZY_VIEWS[v];s.onload=()=>{if(currentViewIs(v))window.featureOpen?.[v]?.();};s.onerror=()=>{lazyLoading[v]=false;window.toast?.("Could not load this screen: check the connection and try again.",{kind:"bad"});};document.head.appendChild(s);}
+const LAZY_VIEWS={review:"review.js",longterm:"longterm.js",fundreview:"mfreview.js",buckets:"buckets.js",expenses:"expenses.js"};const lazyLoading={};
+function loadViewScript(v){if(lazyLoading[v])return;lazyLoading[v]=true;if(!document.getElementById("screensCss")){const l=document.createElement("link");l.id="screensCss";l.rel="stylesheet";l.href="screens.css";document.head.appendChild(l);}const s=document.createElement("script");s.src=LAZY_VIEWS[v];s.onload=()=>{if(currentViewIs(v))window.featureOpen?.[v]?.();};s.onerror=()=>{lazyLoading[v]=false;window.toast?.("Could not load this screen: check the connection and try again.",{kind:"bad"});};document.head.appendChild(s);}
 function currentViewIs(v){const sec=document.querySelector(`[data-feature-view="${v}"]`);return !!sec&&!sec.hidden;}
 function setView(view){
-  const v=["watchlist","reports","valuation","plan","picks","growth","integrations","thesis","portfolio","alerts","invest","dividends","focus","market","funds","networth","tax","model","us","lists","swing","returns","events","accumulate","mf","indices","favs","orders","review","longterm"].includes(view)?view:"home";
+  const v=["watchlist","reports","valuation","plan","picks","growth","integrations","thesis","portfolio","alerts","invest","dividends","focus","market","funds","networth","tax","model","us","lists","swing","returns","events","accumulate","mf","indices","favs","orders","review","longterm","fundreview","buckets","expenses"].includes(view)?view:"home";
   // screens added in v5 (features.js): one section each, marked data-feature-view
   applyHeader(v);
   document.querySelectorAll("[data-feature-view]").forEach(sec=>{sec.hidden=sec.dataset.featureView!==v});

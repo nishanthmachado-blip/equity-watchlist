@@ -1,4 +1,5 @@
-// Ask AI: a chat panel on every screen. Claude (your own Anthropic key, kept encrypted on your server) answers with your
+// Ask AI: a chat panel on every screen. Claude (your own Anthropic key) or another provider you pick (Gemini / Groq /
+// OpenRouter free tiers, OpenAI, Ollama on your computer; keys kept encrypted on your server) answers with your
 // holdings, swing positions, dip list and upcoming events in view, and can look up one stock's valuation, technicals or
 // hold-or-sell scenarios through the app. window.askAI(question, focus) opens it from anywhere.
 (() => {
@@ -80,28 +81,42 @@
     const body = panel.querySelector("[data-body]");
     if (!status?.configured) return renderSettings();
     body.innerHTML = messages.length ? messages.map(m => `<div class="ai-msg ${m.role}">${m.role === "user" ? `<p>${esc(m.text)}</p>` : md(m.text) || '<p class="hint">…</p>'}${m.meta ? `<div class="ai-meta">${esc(m.meta)}</div>` : ""}</div>`).join("") + (busy ? `<div class="ai-status" data-status>…</div>` : "")
-      : `<div class="ai-empty"><h3>Your co-pilot for buys and swing trades</h3><p>Claude sees your holdings, swing positions, dip list, US stocks, funds and upcoming results / dividends, and can look up any stock's valuation and chart in this app. Ask anything, or start with one of these:</p></div>`;
+      : `<div class="ai-empty"><h3>Your co-pilot for buys and swing trades</h3><p>The AI sees your holdings, swing positions, dip list, US stocks, funds and upcoming results / dividends, and can look up any stock's valuation and chart in this app. Ask anything, or start with one of these:</p></div>`;
     renderQuick(); renderFine(); body.scrollTop = body.scrollHeight;
   }
-  function renderSettings() {
-    const s = status, body = panel.querySelector("[data-body]");
+  function renderSettings(pick = null) {
+    const s = status, body = panel.querySelector("[data-body]"), provs = s?.providers || [{ id: "anthropic", label: "Claude (Anthropic)" }];
+    const pid = pick || s?.provider || "anthropic", p = provs.find(x => x.id === pid) || provs[0], isCur = pid === (s?.provider || "anthropic"), anth = pid === "anthropic";
     panel.querySelector("[data-quick]").innerHTML = "";
+    const models = isCur ? s?.models || [] : [];
     body.innerHTML = `<div class="ai-settings">
-      <h3>${s?.configured ? "Settings" : "Connect Claude"}</h3>
-      <p class="hint">Use your own key from <b>console.anthropic.com</b> → API keys. It is stored encrypted on your server, used only for your account, never shown in the browser again and left out of backups.${s?.keySource === "server" ? " You are using the server's key (ANTHROPIC_API_KEY); add your own to replace it." : ""}</p>
-      <label class="ui-field"><span>Anthropic API key ${s?.keyHint ? `(saved: ${esc(s.keyHint)})` : ""}</span><input class="ui-input" type="password" data-key placeholder="sk-ant-…" autocomplete="off"></label>
-      <div class="toolbar"><button type="button" class="primary" data-save-key>${s?.keyHint ? "Replace key" : "Save key"}</button>${s?.keyHint ? '<button type="button" class="ghost danger-text" data-remove-key>Remove key</button>' : ""}<span class="hint" data-st></span></div>
-      <label class="ui-field"><span>Model</span><select class="ui-input" data-model-sel>${(s?.models || []).map(m => `<option value="${esc(m.id)}"${m.id === s.model ? " selected" : ""}>${esc(m.label)}</option>`).join("")}${s && !s.models.some(m => m.id === s.model) ? `<option value="${esc(s.model)}" selected>${esc(s.model)}</option>` : ""}</select></label>
-      <label class="ui-field"><span>What Claude sees</span><select class="ui-input" data-privacy>${Object.entries(s?.privacyOptions || {}).map(([k, v]) => `<option value="${k}"${k === s.privacy ? " selected" : ""}>${esc(v)}</option>`).join("")}</select></label>
+      <h3>${s?.configured ? "Settings" : "Connect an AI"}</h3>
+      <label class="ui-field"><span>AI provider</span><select class="ui-input" data-prov>${provs.map(x => `<option value="${esc(x.id)}"${x.id === pid ? " selected" : ""}>${esc(x.label)}${x.ready && x.id !== s?.provider ? " ✓" : ""}${x.id === s?.provider ? " (in use)" : ""}</option>`).join("")}</select></label>
+      <p class="hint">${p.free ? "🆓 " : ""}Get a key: <b>${esc(p.where || "")}</b>. ${esc(p.privacy || "")}</p>
+      ${p.baseEditable ? `<label class="ui-field"><span>Server address</span><input class="ui-input" data-base value="${esc(p.base || "")}" placeholder="http://127.0.0.1:11434/v1"></label>` : ""}
+      ${p.keyless ? "" : `<label class="ui-field"><span>${esc(p.label.split(" (")[0])} API key ${p.savedHint ? `(saved: ${esc(p.savedHint)})` : ""}</span><input class="ui-input" type="password" data-key placeholder="${esc(p.keyHint || "")}" autocomplete="off"></label>`}
+      <div class="toolbar"><button type="button" class="primary" data-save-key>${anth ? (p.savedHint ? "Replace key" : "Save key") : isCur && s?.configured ? (p.keyless ? "Refresh models" : "Save / refresh") : "Connect and use this"}</button>${p.savedHint ? '<button type="button" class="ghost danger-text" data-remove-key>Remove key</button>' : ""}${anth && !isCur && p.hasKey ? '<button type="button" class="ghost" data-use>Use Claude</button>' : ""}<span class="hint" data-st></span></div>
+      ${isCur ? `<label class="ui-field"><span>Model</span><select class="ui-input" data-model-sel>${models.map(m => `<option value="${esc(m.id)}"${m.id === s.model ? " selected" : ""}>${esc(m.label)}</option>`).join("")}${s && s.model && !models.some(m => m.id === s.model) ? `<option value="${esc(s.model)}" selected>${esc(s.model)}</option>` : ""}</select></label>
+      <label class="ui-field"><span>What the AI sees</span><select class="ui-input" data-privacy>${Object.entries(s?.privacyOptions || {}).map(([k, v]) => `<option value="${k}"${k === s.privacy ? " selected" : ""}>${esc(v)}</option>`).join("")}</select></label>
       <label class="ui-field"><span>Monthly limit (tokens; a question is usually 5,000–20,000)</span><input class="ui-input" data-limit inputmode="numeric" value="${s?.monthlyTokens ?? ""}"></label>
-      <div class="toolbar"><button type="button" class="ghost" data-save-set>Save settings</button><button type="button" class="ghost" data-pv>👁 See what gets sent</button>${s?.configured ? '<button type="button" class="ghost" data-back>← Back to chat</button>' : ""}</div>
-      <p class="hint"><b>Privacy:</b> each question sends a summary of your portfolio from this server straight to Anthropic's API (never through the browser): stock symbols, prices and ${s?.privacy === "percent" ? "only percentages" : "quantities and amounts"}; never account names, client IDs, broker logins, PAN, email or folio numbers, and nothing about other users of this app. When Claude asks about one stock, the lookup runs here and only its result is sent. Anthropic's API terms say API inputs are not used to train models by default; check their current data-retention policy at anthropic.com/legal.</p>
-      <p class="hint">Answers are a second opinion built on the app's numbers, not financial advice: you decide.</p></div>`;
+      <div class="toolbar"><button type="button" class="ghost" data-save-set>Save settings</button><button type="button" class="ghost" data-pv>👁 See what gets sent</button>${s?.configured ? '<button type="button" class="ghost" data-back>← Back to chat</button>' : ""}</div>` : ""}
+      <p class="hint"><b>Privacy:</b> each question sends a summary of your portfolio from this server straight to the AI provider you picked (never through the browser): stock symbols, prices and ${s?.privacy === "percent" ? "only percentages" : "quantities and amounts"}; never account names, client IDs, broker logins, PAN, email or folio numbers, and nothing about other users of this app. When the AI asks about one stock, the lookup runs here and only its result is sent. Keys are stored encrypted on your server and left out of backups.</p>
+      <p class="hint">ChatGPT itself can't be plugged in: its app has no free API. OpenAI's API (the same models) is paid. For free answers use Gemini's or Groq's free tier, a free OpenRouter model, or Ollama on your own computer (fully private). Answers are a second opinion built on the app's numbers, not financial advice.</p></div>`;
     const st = body.querySelector("[data-st]");
-    body.querySelector("[data-save-key]").onclick = async () => { st.textContent = "Checking the key with Anthropic…"; try { status = await api("/api/ai/key", { key: body.querySelector("[data-key]").value }); st.textContent = "✓ Saved"; renderFine(); setTimeout(renderChat, 600); } catch (e) { st.textContent = e.message; } };
-    const rm = body.querySelector("[data-remove-key]"); if (rm) rm.onclick = async () => { if (!await window.ui.confirm({ title: "Remove your API key?", message: "Ask AI stops working until you add a key again.", okText: "Remove", danger: true })) return; status = await api("/api/ai/key", { remove: true }); renderSettings(); };
-    body.querySelector("[data-save-set]").onclick = async () => { try { status = await api("/api/ai/settings", { model: body.querySelector("[data-model-sel]").value, privacy: body.querySelector("[data-privacy]").value, monthlyTokens: body.querySelector("[data-limit]").value }); window.toast?.("AI settings saved.", { kind: "ok" }); renderFine(); } catch (e) { window.toast?.(e.message, { kind: "error" }); } };
-    body.querySelector("[data-pv]").onclick = () => preview(body.querySelector("[data-privacy]").value);
+    body.querySelector("[data-prov]").onchange = e => renderSettings(e.target.value);
+    body.querySelector("[data-save-key]").onclick = async () => {
+      const key = body.querySelector("[data-key]")?.value || "";
+      st.textContent = `Checking with ${p.label.split(" (")[0]}…`;
+      try {
+        if (anth) { if (key || !p.hasKey) status = await api("/api/ai/key", { key }); status = await api("/api/ai/provider", { provider: "anthropic" }); }
+        else { const out = await api("/api/ai/provider", { provider: pid, key, ...(p.baseEditable ? { base: body.querySelector("[data-base]").value } : {}) }); status = out; if (out.notice) window.toast?.(out.notice, { kind: "ok", ms: 4000 }); }
+        st.textContent = "✓ Connected"; renderFine(); setTimeout(() => renderSettings(), 500);
+      } catch (e) { st.textContent = e.message; }
+    };
+    const use = body.querySelector("[data-use]"); if (use) use.onclick = async () => { status = await api("/api/ai/provider", { provider: "anthropic" }); renderFine(); renderSettings(); };
+    const rm = body.querySelector("[data-remove-key]"); if (rm) rm.onclick = async () => { if (!await window.ui.confirm({ title: "Remove this API key?", message: "Ask AI stops working with this provider until you add a key again.", okText: "Remove", danger: true })) return; status = anth ? await api("/api/ai/key", { remove: true }) : await api("/api/ai/provider-key-remove", { provider: pid }); renderSettings(pid); };
+    const ss = body.querySelector("[data-save-set]"); if (ss) ss.onclick = async () => { try { status = await api("/api/ai/settings", { model: body.querySelector("[data-model-sel]").value, privacy: body.querySelector("[data-privacy]").value, monthlyTokens: body.querySelector("[data-limit]").value }); window.toast?.("AI settings saved.", { kind: "ok" }); renderFine(); } catch (e) { window.toast?.(e.message, { kind: "error" }); } };
+    const pv = body.querySelector("[data-pv]"); if (pv) pv.onclick = () => preview(body.querySelector("[data-privacy]").value);
     const back = body.querySelector("[data-back]"); if (back) back.onclick = () => renderChat();
   }
   async function renderChats() {
@@ -112,7 +127,7 @@
   }
   async function preview(privacy) {
     const p = await api(`/api/ai/preview${privacy ? `?privacy=${privacy}` : ""}`);
-    window.ui.dialog({ title: "What Claude sees with each question", icon: "👁", okText: "Close", wide: true, message: `About ${p.approxTokens.toLocaleString("en-IN")} tokens. Plus your question and, if Claude asks, the app's data for one stock at a time.`, bodyHtml: `<pre class="ai-preview">${esc(p.text)}</pre>`, collect: () => true });
+    window.ui.dialog({ title: "What the AI sees with each question", icon: "👁", okText: "Close", wide: true, message: `About ${p.approxTokens.toLocaleString("en-IN")} tokens. Plus your question and, if Claude asks, the app's data for one stock at a time.`, bodyHtml: `<pre class="ai-preview">${esc(p.text)}</pre>`, collect: () => true });
   }
   async function open(question, focus) {
     ensurePanel(); panel.hidden = false; document.body.classList.add("ai-open");

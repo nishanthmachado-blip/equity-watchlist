@@ -27,6 +27,7 @@ export function openKey(sealed, secret) {
   } catch { return null; }
 }
 export const looksLikeKey = k => /^sk-ant-[A-Za-z0-9_-]{20,}$/.test(String(k || "").trim());
+export const looksLikeAnyKey = k => /^[\w.:/+=-]{12,300}$/.test(String(k || "").trim());
 
 // ---- what is sent: a compact, redacted snapshot
 const R = v => (Number.isFinite(v) ? Math.round(v) : null), r1 = v => (Number.isFinite(v) ? Math.round(v * 10) / 10 : null), r2 = v => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
@@ -94,6 +95,7 @@ How to answer:
 - This is decision support for the user's own judgement, not a guarantee. Say clearly when the data is thin or the call is close. Do not repeat a disclaimer in every answer; one short line at the end is enough when you recommend a trade.`;
 
 export const TOOLS = [
+  { name: "fund_review", description: "The app's review of the user's mutual funds: per fund the call (Build / Keep / Hold / Exit or switch / Review), 1/3/5-year returns vs the index its category follows, overlap with their other funds, what the fund holds (share in buy zones / expensive), NAV distance from its 52-week high (bulk-buy zone) and the reasons. Use for any question about their mutual funds.", input_schema: { type: "object", properties: {} } },
   { name: "stock_detail", description: "Valuation, fundamentals, technicals (trend, RSI, moving averages, 52-week range) and upcoming results / dividends for one NSE stock, from the app's data. Use before giving a buy/sell view on a stock not fully covered in the snapshot.", input_schema: { type: "object", properties: { symbol: { type: "string", description: "NSE symbol, e.g. INFY" } }, required: ["symbol"] } },
   { name: "hold_or_sell", description: "For one of the user's swing positions: the app's sell-now / hold-to-dividend / book-part-and-trail scenarios with net amounts after tax and charges, the stock's volatility and a rule-based lean.", input_schema: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] } },
   { name: "index_stocks", description: "The stocks inside an NSE index (e.g. 'NIFTY 50', 'NIFTY500 QUALITY 50', 'NIFTY200 MOMENTUM 30', 'NIFTY MIDCAP 150') with price, 1-month and 1-year return, distance from the 52-week high, index weight, this app's valuation where known, a 0-100 smart score and tags (undervalued, momentum, pullback, near-low), and whether the user holds or watches each.", input_schema: { type: "object", properties: { index: { type: "string" }, filter: { type: "string", enum: ["all", "top", "undervalued", "momentum", "pullback", "not-watching"] } }, required: ["index"] } },
@@ -139,4 +141,56 @@ export function friendlyApiError(status, body) {
   if (status === 429) return "Rate limited or out of credits at Anthropic (429). Try again in a minute, or check your plan and billing.";
   if (status === 529 || status === 503) return "Anthropic is overloaded right now. Try again shortly.";
   return `Anthropic error ${status}${msg ? `: ${msg}` : ""}`;
+}
+
+// ---- Other AI providers: any OpenAI-compatible chat API (free tiers included) -------------------------------------------
+// The same snapshot and tools go to whichever provider you pick; the request still goes from this server, never the browser.
+// Free options: Google Gemini (AI Studio key, free tier), Groq (free tier, open models), OpenRouter (models marked :free),
+// Ollama (runs on your own computer: free and fully private). OpenAI (the models behind ChatGPT) is a paid API: a ChatGPT
+// Plus subscription does not include API access.
+export const AI_PROVIDERS = {
+  anthropic: { label: "Claude (Anthropic)", free: false, keyHint: "sk-ant-…", where: "console.anthropic.com → API keys", privacy: "Anthropic's API terms say API inputs are not used to train models by default." },
+  gemini: { label: "Google Gemini (free tier)", base: "https://generativelanguage.googleapis.com/v1beta/openai", free: true, keyHint: "AIza…", where: "aistudio.google.com → Get API key (free, no card)", privacy: "On Gemini's free tier Google may use what you send to improve its products, and people may review it. Its paid tier does not.", prefer: [/gemini-[\d.]+-flash$/, /gemini-.*flash(?!.*(lite|image|tts|audio|live|thinking-exp))/, /gemini-.*pro/] },
+  groq: { label: "Groq (free tier, open models)", base: "https://api.groq.com/openai/v1", free: true, keyHint: "gsk_…", where: "console.groq.com → API keys (free, rate-limited)", privacy: "Groq says it does not train on API data; check its current policy.", prefer: [/llama-3\.3-70b/, /gpt-oss-120b/, /llama.*70b/, /qwen/] },
+  openrouter: { label: "OpenRouter (many models, some free)", base: "https://openrouter.ai/api/v1", free: true, keyHint: "sk-or-…", where: "openrouter.ai → Keys; pick a model ending in :free", privacy: "Free models on OpenRouter may log prompts for the model provider. Paid models follow each provider's policy.", prefer: [/:free$/] },
+  openai: { label: "OpenAI (ChatGPT's models, paid API)", base: "https://api.openai.com/v1", free: false, keyHint: "sk-…", where: "platform.openai.com → API keys (needs API credit: a ChatGPT subscription does not include it)", privacy: "OpenAI says API data is not used for training by default.", prefer: [/^gpt-5(\.\d+)?-mini$/, /^gpt-5/, /^gpt-4\.1-mini$/, /^gpt-4o-mini$/] },
+  ollama: { label: "Ollama on your computer (free, private)", base: "http://127.0.0.1:11434/v1", free: true, keyless: true, ownerBase: true, keyHint: "(no key)", where: "ollama.com: install, then `ollama pull llama3.1` (needs a capable computer)", privacy: "Runs on your own machine: nothing leaves your network.", prefer: [/llama3\.\d/, /qwen/, /mistral/, /gemma/] },
+  custom: { label: "Other OpenAI-compatible server", base: "", free: false, ownerOnly: true, ownerBase: true, keyHint: "optional", where: "LM Studio, vLLM, LiteLLM… (owner only)", privacy: "Goes to the server you enter." }
+};
+export function pickModel(provider, ids = []) {
+  const p = AI_PROVIDERS[provider]; if (!ids.length) return null;
+  for (const re of p?.prefer || []) { const hit = ids.filter(id => re.test(id)).sort((a, b) => a.length - b.length)[0]; if (hit) return hit; } // shortest = the plain model, not a variant
+  return ids[0];
+}
+// OpenAI-style "models" list → ids that can chat (embeddings / audio / image models left out)
+export function chatModelIds(json) {
+  const ids = (Array.isArray(json?.data) ? json.data : Array.isArray(json?.models) ? json.models : []).map(m => String(m.id || m.name || "").replace(/^models\//, "")).filter(Boolean);
+  return [...new Set(ids.filter(id => !/embed|whisper|tts|dall-e|image|audio|moderation|transcribe|realtime|guard|aqa|imagen|veo/i.test(id)))].sort().slice(0, 300);
+}
+export const toOpenAiTools = tools => tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+// Collect one streamed chat completion: text to onText; returns { text, toolCalls: [{ id, name, input }], finish, usage }
+export function openAiCollector(onText) {
+  let text = "", finish = null, error = null; const calls = [], usage = { input: 0, output: 0 };
+  const on = ev => {
+    if (ev.error) { error = ev.error.message || String(ev.error); return; }
+    if (ev.usage) { usage.input = ev.usage.prompt_tokens || usage.input; usage.output = ev.usage.completion_tokens || usage.output; }
+    const c = ev.choices?.[0]; if (!c) return;
+    const d = c.delta || c.message || {};
+    if (d.content) { text += d.content; onText?.(d.content); }
+    for (const tc of d.tool_calls || []) {
+      const i = Number.isInteger(tc.index) ? tc.index : calls.length, cur = calls[i] || (calls[i] = { id: tc.id || `call_${i}_${Date.now().toString(36)}`, name: "", args: "" });
+      if (tc.id) cur.id = tc.id; if (tc.function?.name) cur.name += tc.function.name; if (tc.function?.arguments) cur.args += tc.function.arguments;
+    }
+    if (c.finish_reason) finish = c.finish_reason;
+  };
+  const result = () => ({ text, finish, usage, error, toolCalls: calls.filter(Boolean).map(c => { let input = {}; try { input = c.args ? JSON.parse(c.args) : {}; } catch { input = {}; } return { id: c.id, name: c.name, input }; }) });
+  return { on, result };
+}
+export function friendlyProviderError(provider, status, body) {
+  const p = AI_PROVIDERS[provider]?.label || provider, msg = body?.error?.message || (Array.isArray(body) ? body[0]?.error?.message : "") || "";
+  if (status === 401 || status === 403) return `${p} rejected the API key (${status})${msg ? `: ${msg}` : ""}. Check it in Ask AI → Settings.`;
+  if (status === 404) return `${p}: model not found (404)${msg ? `: ${msg}` : ""}. Pick another model in Ask AI → Settings.`;
+  if (status === 429) return `${p}: rate limit or free-tier quota reached (429). Wait a minute, or pick another model / provider.`;
+  if (status >= 500) return `${p} is having trouble (${status}). Try again shortly.`;
+  return `${p} error ${status}${msg ? `: ${msg.slice(0, 200)}` : ""}`;
 }

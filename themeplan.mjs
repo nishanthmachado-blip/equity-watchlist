@@ -18,7 +18,7 @@ export function themeDefaults(name = "") {
 }
 const SYM = /^[A-Z0-9&-]{1,20}$/;
 export function sanitizeThemePlan(b = {}, prev = null) {
-  const num = (v, lo, hi, d) => { const x = Number(String(v ?? "").replace(/[,₹%\s]/g, "")); return v !== null && v !== "" && fin(x) && x >= lo && x <= hi ? x : d; };
+  const num = (v, lo, hi, d) => { if (v === null || v === undefined || String(v).trim() === "") return d; const x = Number(String(v).replace(/[,₹%\s]/g, "")); return fin(x) && x >= lo && x <= hi ? x : d; };
   const themes = (Array.isArray(b.themes) ? b.themes : prev?.themes || []).slice(0, 8).map((t, i) => {
     const name = txt(t.name, 40) || `Theme ${i + 1}`, d = themeDefaults(name), old = prev?.themes?.find(x => x.id === t.id);
     const seen = new Set(), symbols = (Array.isArray(t.symbols) ? t.symbols : []).map(x => (typeof x === "string" ? { symbol: x } : x)).map(x => ({ symbol: String(x.symbol || "").toUpperCase().trim(), name: txt(x.name, 80) || null, exchange: x.exchange === "BSE" ? "BSE" : "NSE" }))

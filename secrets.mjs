@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import realFs from "node:fs";
 import path from "node:path";
 
-export const SECRET_FILE_RE = /^(kite-session(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp|notify|ai-key|login-2fa)\.json$/;
+export const SECRET_FILE_RE = /^(kite-session(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp|notify|ai-keys?|login-2fa)\.json$/;
 export const isSecretPath = p => SECRET_FILE_RE.test(path.basename(String(p)));
 const PREFIX = "EWSEC1:";
 let key = null, source = "none"; const warned = new Set();

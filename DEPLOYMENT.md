@@ -205,8 +205,10 @@ Use this option if the team standardises on ALBs.
   - synced broker holdings
   - Kite / Angel One / Dhan / Groww / INDmoney sessions and saved API keys
   - alerts, theses, buying plan, dividend plan, long-term themes, valuation log
+  - bucket strategy and monthly expenses (budget, daily spends)
   - which mutual funds you hold, their values, and your links to X-ray portfolios
-- **Shared** (top level of `DATA_DIR`): public market-data caches only (fundamentals, Screener extras, dividend history, technicals, fund name→symbol map), and the **mutual fund X-ray library** (`mf-xray.json`: each fund's stocks and weights, fetched once for every account). These hold no personal data; every account sees the list of X-ray funds, and only the account that added one (or the owner) can delete it.
+  - Ask AI keys for every provider (encrypted, never in backups)
+- **Shared** (top level of `DATA_DIR`): public market-data caches only (fundamentals, Screener extras, dividend history, technicals, fund name→symbol map, mutual fund NAV histories in `mf-nav/`), and the **mutual fund X-ray library** (`mf-xray.json`: each fund's stocks and weights, fetched once for every account). These hold no personal data; every account sees the list of X-ray funds, and only the account that added one (or the owner) can delete it.
 - **Owner only:**
   - broker keys in the env file (other accounts enter their own in the app)
   - manual fundamentals import
@@ -276,6 +278,8 @@ Use this option if the team standardises on ALBs.
 | `SECRETS_KEY_FILE` | — | Alternative to `SECRETS_KEY`: path to a file holding the key (for Docker / Kubernetes secrets). |
 | `ANTHROPIC_API_KEY` | – | Optional: lets the **owner** use Ask AI without entering a key (members always need their own) |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | For a proxy / gateway; the server needs outbound HTTPS to it |
+| `AI_BASE_GEMINI` / `AI_BASE_GROQ` / `AI_BASE_OPENROUTER` / `AI_BASE_OPENAI` / `AI_BASE_OLLAMA` | (each provider's own) | Override where Ask AI sends requests for that provider (OpenAI-compatible `/v1` address). Ollama's address can also be set by the owner in Ask AI → Settings |
+| `MFAPI_BASE` | `https://api.mfapi.in` | Mutual fund NAV history for Fund review (public data; outbound HTTPS needed) |
 | `NIFTYINDICES_BASE` | `https://www.niftyindices.com` | Where index constituents files come from when NSE refuses an index list (outbound HTTPS to www.niftyindices.com) |
 | `MFDATA_BASE` | `https://mfdata.in` | Holdings API tried when a fund's portfolio is fetched automatically (outbound HTTPS to it, and to the fund houses' sites for portfolio links) |
 | `AMFI_NAV_URL` | AMFI NAVAll.txt | Daily mutual fund NAV file (shared by all users, refreshed every 6 h when funds are viewed) |
