@@ -55,7 +55,7 @@ export function parsePrice(v) {
 
 // Buy-the-dip list typed or pasted in one go: "TCS below 2100, infy below 1000, hcl below 1200 2L, VBL < 400 hdfc 680".
 // Returns [{ name, buyBelow, amount }]; names are resolved to NSE symbols by the server (DIP_ALIASES first).
-export const DIP_ALIASES = { HDFC: "HDFCBANK", "HDFC BANK": "HDFCBANK", HCL: "HCLTECH", "HCL TECH": "HCLTECH", SBI: "SBIN", ICICI: "ICICIBANK", "ICICI BANK": "ICICIBANK", AXIS: "AXISBANK", "AXIS BANK": "AXISBANK", KOTAK: "KOTAKBANK", "KOTAK BANK": "KOTAKBANK", AIRTEL: "BHARTIARTL", "BHARTI AIRTEL": "BHARTIARTL", RIL: "RELIANCE", "L&T": "LT", LNT: "LT", HUL: "HINDUNILVR", "BAJAJ FINANCE": "BAJFINANCE", "BAJAJ FINSERV": "BAJAJFINSV", "ASIAN PAINTS": "ASIANPAINT", "SUN PHARMA": "SUNPHARMA", "TATA MOTORS": "TATAMOTORS", "TATA STEEL": "TATASTEEL", "TECH MAHINDRA": "TECHM", INFOSYS: "INFY", "VARUN BEVERAGES": "VBL", MAHINDRA: "M&M", "M AND M": "M&M", "DR REDDY": "DRREDDY", "ADANI PORTS": "ADANIPORTS", "ADANI ENT": "ADANIENT", "POWER GRID": "POWERGRID", "COAL INDIA": "COALINDIA", "HERO": "HEROMOTOCO", "EICHER": "EICHERMOT", "PERSISTENT": "PERSISTENT", "LTIM": "LTIM", "MINDTREE": "LTIM", "ZOMATO": "ETERNAL", "PAYTM": "PAYTM", "NYKAA": "NYKAA", "DMART": "DMART", "PIDILITE": "PIDILITIND", "BRITANNIA": "BRITANNIA", "NESTLE": "NESTLEIND", "TITAN": "TITAN", "ULTRATECH": "ULTRACEMCO" };
+export const DIP_ALIASES = { HDFC: "HDFCBANK", "HDFC BANK": "HDFCBANK", HCL: "HCLTECH", "HCL TECH": "HCLTECH", SBI: "SBIN", ICICI: "ICICIBANK", "ICICI BANK": "ICICIBANK", AXIS: "AXISBANK", "AXIS BANK": "AXISBANK", KOTAK: "KOTAKBANK", "KOTAK BANK": "KOTAKBANK", AIRTEL: "BHARTIARTL", "BHARTI AIRTEL": "BHARTIARTL", RIL: "RELIANCE", "L&T": "LT", LNT: "LT", HUL: "HINDUNILVR", "BAJAJ FINANCE": "BAJFINANCE", "BAJAJ FINSERV": "BAJAJFINSV", "ASIAN PAINTS": "ASIANPAINT", "SUN PHARMA": "SUNPHARMA", "TATA MOTORS": "TATAMOTORS", "TATA STEEL": "TATASTEEL", "TECH MAHINDRA": "TECHM", INFOSYS: "INFY", "VARUN BEVERAGES": "VBL", MAHINDRA: "M&M", "M AND M": "M&M", "DR REDDY": "DRREDDY", "ADANI PORTS": "ADANIPORTS", "ADANI ENT": "ADANIENT", "POWER GRID": "POWERGRID", "COAL INDIA": "COALINDIA", "HERO": "HEROMOTOCO", "EICHER": "EICHERMOT", "PERSISTENT": "PERSISTENT", "LTIM": "LTIM", "MINDTREE": "LTIM", "ZOMATO": "ETERNAL", "PAYTM": "PAYTM", "NYKAA": "NYKAA", "DMART": "DMART", "PIDILITE": "PIDILITIND", "BRITANNIA": "BRITANNIA", "NESTLE": "NESTLEIND", "TITAN": "TITAN", "ULTRATECH": "ULTRACEMCO", "SKY GOLD": "SKYGOLD", "SENORES": "SENORES", "SENORES PHARMA": "SENORES", "SHILPA": "SHILPAMED", "SHILPA MEDICARE": "SHILPAMED", "WAREE": "WAAREEENER", "WAAREE": "WAAREEENER", "WAREE ENERGIES": "WAAREEENER", "WAAREE ENERGIES": "WAAREEENER", "HINDUSTAN COPPER": "HINDCOPPER", "AZAD ENGINEERING": "AZAD", "SYRMA SGS": "SYRMA", "EICHER MOTORS": "EICHERMOT", "MARUTHI": "MARUTI", "MARUTI SUZUKI": "MARUTI", "KAYNE": "KAYNES", "KAYNES TECH": "KAYNES", "KAYNES TECHNOLOGY": "KAYNES", "ATHER": "ATHERENERG", "ATHER ENERGY": "ATHERENERG", "INTERGLOBE": "INDIGO", "INTERGLOBE AVIATION": "INDIGO", "COMPUTER AGE": "CAMS", "NUVAMA WEALTH": "NUVAMA", "HCLTECH": "HCLTECH" };
 export function parseDipText(text) {
   const out = [], seen = new Set();
   const src = String(text || "").replace(/\r/g, "").slice(0, 5000);
@@ -95,7 +95,7 @@ export function sanitizePosition(b = {}, prev = null) {
   // keep the buy lots when nothing that shapes them changed; otherwise one lot at the (new) average and date
   const same = prev && prev.qty === qty && r2(prev.avgPrice) === r2(avgPrice) && prev.openedAt === openedAt;
   const lots = same ? lotsOf(prev) : [{ qty, price: r2(avgPrice), at: openedAt }];
-  return { id: prev?.id || id(), symbol, exchange: b.exchange === "BSE" ? "BSE" : "NSE", name: txt(b.name, 80) || prev?.name || symbol, qty, avgPrice: r2(avgPrice), limit, addAmount, addBelow, targets, bookPlan, stopLoss, soldAtTargets: same ? prev.soldAtTargets || 0 : 0, lots, notes: txt(b.notes, 200) || null, setup: b.setup === undefined ? prev?.setup ?? null : SETUPS[b.setup] ? b.setup : null, reason: b.reason === undefined ? prev?.reason ?? null : txt(b.reason, 300) || null, ...(prev?.adjustments ? { adjustments: prev.adjustments } : {}), openedAt, updatedAt: new Date().toISOString() };
+  return { id: prev?.id || id(), symbol, exchange: b.exchange === "BSE" ? "BSE" : "NSE", name: txt(b.name, 80) || prev?.name || symbol, qty, avgPrice: r2(avgPrice), limit, addAmount, addBelow, targets, bookPlan, stopLoss, soldAtTargets: same ? prev.soldAtTargets || 0 : 0, lots, notes: txt(b.notes, 200) || null, setup: b.setup === undefined ? prev?.setup ?? null : SETUPS[b.setup] ? b.setup : null, reason: b.reason === undefined ? prev?.reason ?? null : txt(b.reason, 300) || null, ...(prev?.adjustments ? { adjustments: prev.adjustments } : {}), ...(prev?.trail ? { trail: prev.trail } : {}), openedAt, updatedAt: new Date().toISOString() };
 }
 export function sanitizeWatch(b = {}, prev = null) {
   const symbol = txt(b.symbol, 20).toUpperCase();
@@ -212,6 +212,7 @@ export function diffSwingAlerts(prev = {}, view, { now = Date.now(), events = []
     const prevLevel = /^(take-profit|riding)(?::(\d))?$/.test(prev[key] || "") ? Number(prev[key].split(":")[1] || 1) : 0;
     if (r.status === "take-profit" && r.hitLevel > prevLevel && !recent(`${key}:tp${r.hitLevel}`)) { const t = r.targets[r.hitLevel - 1]; fresh.push({ type: "swing-profit", swingKey: `${key}:tp${r.hitLevel}`, symbol: r.symbol, company: r.name, price: r.price, at: new Date(now).toISOString(), read: false, title: `🎯 ${r.name} hit T${t.n} (+${t.pct}%, ₹${t.price}): now ₹${r.price}, sell ${r.sellNow}?`, detail: r.note }); }
     if (r.status === "stop-hit" && !recent(`${key}:sl`)) fresh.push({ type: "swing-stop", swingKey: `${key}:sl`, symbol: r.symbol, company: r.name, price: r.price, at: new Date(now).toISOString(), read: false, title: `🛑 ${r.name} hit your stop-loss ₹${r.stopLoss}: now ₹${r.price}`, detail: r.note });
+    if (r.status === "near-stop" && prev[key] !== "stop-hit" && !recent(`${key}:ns`)) fresh.push({ type: "swing-near-stop", swingKey: `${key}:ns`, symbol: r.symbol, company: r.name, price: r.price, at: new Date(now).toISOString(), read: false, title: `⚠️ ${r.name} is near your stop-loss ₹${r.stopLoss}`, detail: `₹${r.price}: ${r.note || "close to the stop"}${r.trail?.on ? " (trailing stop)" : ""}` });
     if (r.status === "deploy" && !recent(`${key}:dp`)) fresh.push({ type: "swing-deploy", swingKey: `${key}:dp`, symbol: r.symbol, company: r.name, price: r.price, at: new Date(now).toISOString(), read: false, title: r.list === "dip" ? `📉 ${r.name} dipped to ₹${r.price}: at your buy-the-dip level ₹${r.buyBelow}` : `💰 ${r.name} at ₹${r.price}: time to deploy`, detail: r.note });
   }
   return { next, fresh };
@@ -393,8 +394,19 @@ export function ltExemptionLeft(closed = [], usedElsewhere = 0, today = new Date
 }
 
 // ---- Trade journal: setup and reason when you buy, a short review when you sell; results by setup and by mistake ----
-export const SETUPS = { dip: "Buy the dip (my price)", pullback: "Pullback to support", breakout: "Breakout", bounce: "Oversold bounce", "value-turn": "Value turn", "golden-cross": "Golden cross + RSI", momentum: "Momentum", "results-play": "Results play", dividend: "Dividend play", other: "Other" };
+export const SETUPS = { dip: "Buy the dip (my price)", pullback: "Pullback to support", breakout: "Breakout", bounce: "Oversold bounce", "value-turn": "Value turn", "golden-cross": "Golden cross + RSI", momentum: "Momentum", "results-play": "Results play", "order-win": "Order win", high52: "52-week high breakout", dividend: "Dividend play", other: "Other" };
 export const MISTAKES = { "sold-early": "Sold too early", "held-long": "Held too long / ignored target", "no-stop": "No stop-loss / ignored it", oversized: "Position too big", chased: "Chased the entry", "off-plan": "Didn't follow my plan", "news-shock": "News / results surprise", none: "No mistake" };
+// The journal setup for a swing idea's setup (Swing ideas → watch → bought), or a watchlist "buy the dip" entry
+export const IDEA_SETUP = { pullback: "pullback", breakout: "breakout", bounce: "bounce", value: "value-turn", high52: "high52" };
+export function setupFromIdea(w = {}) { if (w.idea?.setup && IDEA_SETUP[w.idea.setup]) return IDEA_SETUP[w.idea.setup]; if (w.list === "dip") return "dip"; return null; }
+// Older trades without a setup: guess it from the notes the app wrote when the position came from an idea
+export function guessSetup(t = {}) {
+  if (t.setup) return t.setup;
+  const n = String(t.plan?.notes || t.notes || "");
+  if (/52-week high/i.test(n)) return "high52"; if (/Breakout on volume/i.test(n)) return "breakout"; if (/Pullback in an uptrend/i.test(n)) return "pullback";
+  if (/Oversold bounce/i.test(n)) return "bounce"; if (/Value stock turning up/i.test(n)) return "value-turn"; if (/Bought the dip/i.test(n)) return "dip";
+  return null;
+}
 export function sanitizeReview(b = {}) {
   const mistakes = (Array.isArray(b.mistakes) ? b.mistakes : []).filter(m => MISTAKES[m]).slice(0, 5);
   return { mistakes, note: txt(b.note, 400) || null, rating: [1, 2, 3, 4, 5].includes(Number(b.rating)) ? Number(b.rating) : null, at: new Date().toISOString() };
@@ -402,10 +414,19 @@ export function sanitizeReview(b = {}) {
 export function journalStats(closed = []) {
   const t = closed.filter(x => fin(x.pnl)), group = (keyOf, labels) => {
     const m = new Map();
-    for (const x of t) for (const k of keyOf(x)) { const g = m.get(k) || { key: k, label: labels[k] || k, trades: 0, wins: 0, pnl: 0, pct: 0 }; g.trades++; if (x.pnl > 0) g.wins++; g.pnl += x.pnl; g.pct += x.pnlPct || 0; m.set(k, g); }
-    return [...m.values()].map(g => ({ ...g, pnl: Math.round(g.pnl), winRate: r2(g.wins / g.trades * 100), avgPct: r2(g.pct / g.trades) })).sort((a, b) => b.pnl - a.pnl);
+    for (const x of t) for (const k of keyOf(x)) {
+      const g = m.get(k) || { key: k, label: labels[k] || k, trades: 0, wins: 0, pnl: 0, pct: 0, winPct: 0, lossPct: 0, losses: 0, days: 0, dayN: 0, gross: 0, grossLoss: 0, best: null, worst: null };
+      g.trades++; if (x.pnl > 0) { g.wins++; g.winPct += x.pnlPct || 0; g.gross += x.pnl; } else if (x.pnl < 0) { g.losses++; g.lossPct += x.pnlPct || 0; g.grossLoss -= x.pnl; }
+      g.pnl += x.pnl; g.pct += x.pnlPct || 0;
+      const d = x.openedAt && x.closedAt ? (Date.parse(x.closedAt) - Date.parse(x.openedAt)) / 864e5 : NaN; if (fin(d) && d >= 0) { g.days += d; g.dayN++; }
+      if (fin(x.pnlPct)) { if (g.best === null || x.pnlPct > g.best) g.best = x.pnlPct; if (g.worst === null || x.pnlPct < g.worst) g.worst = x.pnlPct; }
+      m.set(k, g);
+    }
+    return [...m.values()].map(g => ({ key: g.key, label: g.label, trades: g.trades, wins: g.wins, pnl: Math.round(g.pnl), winRate: r2(g.wins / g.trades * 100), avgPct: r2(g.pct / g.trades),
+      avgWinPct: g.wins ? r2(g.winPct / g.wins) : null, avgLossPct: g.losses ? r2(g.lossPct / g.losses) : null, avgDays: g.dayN ? Math.round(g.days / g.dayN) : null,
+      profitFactor: g.grossLoss > 0 ? r2(g.gross / g.grossLoss) : g.gross > 0 ? null : 0, best: r2(g.best), worst: r2(g.worst) })).sort((a, b) => b.pnl - a.pnl);
   };
-  const bySetup = group(x => [x.setup || "untagged"], { ...SETUPS, untagged: "Not tagged" });
+  const bySetup = group(x => [guessSetup(x) || "untagged"], { ...SETUPS, untagged: "Not tagged" });
   // "sold before target 1 while in profit" is detected from the numbers, even without a review
   const auto = x => { const m = [...(x.review?.mistakes || [])]; if (!x.atTarget && x.pnl > 0 && !m.includes("sold-early") && !m.includes("none")) m.push("auto-early"); return m.length ? m : ["unreviewed"]; };
   const byMistake = group(auto, { ...MISTAKES, "auto-early": "Sold in profit before target 1 (detected)", unreviewed: "Not reviewed" }).sort((a, b) => a.pnl - b.pnl);

@@ -522,6 +522,8 @@ function setReportSub(tab){
 }
 // Page heading for each screen: eyebrow (section), title, one-line description; also the browser tab title
 const VIEW_HEADERS={
+  longterm:["Your portfolio","Long-term themes","Your Growth, Dividend and other themes: what to buy in bulk when it gets cheap."],
+  review:["Your portfolio","Holdings clean-up","Keep, add, trim or exit: one call per stock you hold, with valuation, trend, fund overlap and tax behind it."],
   orders:["Research","Order wins","Companies winning new orders and contracts (NSE filings), sized against their sales, with valuation alongside."],
   favs:["Research","Favourites","The stocks you have hearted, with price, valuation, what you hold and what is coming up."],
   home:["Indian equity research","Is this stock worth buying?","Enter any NSE stock and get a fair-value estimate, buy zone and a Value / Growth verdict."],
@@ -558,13 +560,18 @@ function applyHeader(v){
   if(e)e.textContent=h[0].toUpperCase(); if(t)t.textContent=h[1]; if(s)s.textContent=h[2];
   document.title=v==="home"?"Equity Watchlist":`${h[1]} · Equity Watchlist`;
 }
+// screens whose script loads the first time they are opened (keeps the first page load small)
+const LAZY_VIEWS={review:"review.js",longterm:"longterm.js"};const lazyLoading={};
+function loadViewScript(v){if(lazyLoading[v])return;lazyLoading[v]=true;const s=document.createElement("script");s.src=LAZY_VIEWS[v];s.onload=()=>{if(currentViewIs(v))window.featureOpen?.[v]?.();};s.onerror=()=>{lazyLoading[v]=false;window.toast?.("Could not load this screen: check the connection and try again.",{kind:"bad"});};document.head.appendChild(s);}
+function currentViewIs(v){const sec=document.querySelector(`[data-feature-view="${v}"]`);return !!sec&&!sec.hidden;}
 function setView(view){
-  const v=["watchlist","reports","valuation","plan","picks","growth","integrations","thesis","portfolio","alerts","invest","dividends","focus","market","funds","networth","tax","model","us","lists","swing","returns","events","accumulate","mf","indices","favs","orders"].includes(view)?view:"home";
+  const v=["watchlist","reports","valuation","plan","picks","growth","integrations","thesis","portfolio","alerts","invest","dividends","focus","market","funds","networth","tax","model","us","lists","swing","returns","events","accumulate","mf","indices","favs","orders","review","longterm"].includes(view)?view:"home";
   // screens added in v5 (features.js): one section each, marked data-feature-view
   applyHeader(v);
   document.querySelectorAll("[data-feature-view]").forEach(sec=>{sec.hidden=sec.dataset.featureView!==v});
   document.querySelectorAll("[data-goto]").forEach(b=>b.classList.toggle("active",b.dataset.goto===v));
   if(window.featureOpen?.[v])window.featureOpen[v]();
+  else if(LAZY_VIEWS[v])loadViewScript(v);
   $("#homeView").hidden=v!=="home";
   $("#portfolioView").hidden=v!=="portfolio";
   $("#alertsView").hidden=v!=="alerts";

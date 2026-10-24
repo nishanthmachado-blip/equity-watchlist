@@ -20,6 +20,8 @@
       <button id="viewMf" class="viewTab" data-goto="mf" title="Mutual funds"><span class="ico" aria-hidden="true">🧺</span><span class="lbl">Mutual funds</span></button>
       <button id="viewTax" class="viewTab" title="Tax view"><span class="ico" aria-hidden="true">🧾</span><span class="lbl">Tax view</span></button>
       <button id="viewPortfolio" class="viewTab" title="My holdings"><span class="ico" aria-hidden="true">📂</span><span class="lbl">My holdings</span></button>
+      <button id="viewLongterm" class="viewTab" data-goto="longterm" title="Long-term themes"><span class="ico" aria-hidden="true">🧭</span><span class="lbl">Long-term themes</span></button>
+      <button id="viewReview" class="viewTab" data-goto="review" title="Holdings clean-up"><span class="ico" aria-hidden="true">🧹</span><span class="lbl">Holdings clean-up</span></button>
       <button id="viewSwing" class="viewTab" title="Swing trading"><span class="ico" aria-hidden="true">⚡</span><span class="lbl">Swing trading</span></button>
       <button id="viewReturns" class="viewTab" data-goto="returns" title="Returns vs index"><span class="ico" aria-hidden="true">📈</span><span class="lbl">Returns vs index</span></button>
       <button id="viewEvents" class="viewTab" data-goto="events" title="Results &amp; dividends calendar"><span class="ico" aria-hidden="true">📅</span><span class="lbl">Results &amp; dividends</span></button>
@@ -51,6 +53,7 @@
     <p id="backHome" class="back-home" hidden><button type="button" class="ghost" id="backHomeBtn">← Value a stock</button></p>
 
     <section id="homeView">
+      <div id="homeBrief" class="home-brief" hidden></div>
       <div id="homeSwing" class="home-swing" role="button" tabindex="0" hidden aria-label="Open Swing trading"></div>
       <div id="homeEvents" class="home-events" hidden></div>
       <form id="vsForm" class="vs-box" autocomplete="off">
@@ -195,6 +198,7 @@
           <button type="button" class="ghost" id="swIdeasScan">⟳ Scan now</button></div>
         <div id="swIdeas" class="sw-ideas-grid"></div>
         <details class="sw-track" id="swTrack" hidden><summary>📈 <b>Scanner track record</b> <span class="hint" id="swTrackSum"></span></summary><div id="swTrackBody"></div></details>
+        <details class="sw-track sw-bt" id="swBt"><summary>🧪 <b>Backtest a setup</b> <span class="hint" id="swBtSum">how would it have done on your stocks over 5 years?</span></summary><div id="swBtBody"><p class="hint">Loading…</p></div></details>
         <p class="vs-fine">Rule-based setups from daily prices: <b>pullback</b> (uptrend that dipped to its 20/50-day average, RSI 38–55), <b>breakout</b> (close above the 55-day high on 1.5× volume, not stretched), <b>oversold bounce</b> (above the 200-day average, RSI ≤ 35) and <b>value turning up</b> (the app's buy zone + price back above its 20-day average). Score adds trend, strength vs Nifty, risk:reward, valuation and liquidity. Size = no more than your max per trade, and a stop-out costs at most your risk % of swing cash. A screen to find candidates, not advice: check the chart and news before you buy, and always use the stop.</p>
       </section>
       <section class="report-card sw-scorecard" id="swScore" hidden><div class="nw-head"><h3>Swing scorecard</h3><span class="hint">from your closed trades</span></div><div id="swScoreBody"></div></section>
@@ -225,6 +229,19 @@
         <section class="table-wrap"><table class="md-table"><thead><tr><th class="num">#</th><th>Stock</th><th class="num">Weight</th><th class="num">Amount</th><th class="num">~Shares</th><th>Verdict</th><th>How to buy</th><th>Why it is in</th></tr></thead><tbody id="mdRows"></tbody></table></section>
         <p class="vs-fine" id="mdRules"></p>
       </div>
+    </section>
+    <section id="ltView" data-feature-view="longterm" hidden>
+      <section class="toolbar lt-tools" id="ltTools" hidden><button type="button" data-lt="paste">📋 Paste my list</button><button type="button" class="ghost" data-lt="new">+ Theme</button><button type="button" class="ghost" data-lt="settings">⚙ Plan settings</button><button type="button" class="ghost" data-lt="reload">⟳ Refresh</button></section>
+      <div id="ltSum"></div>
+      <div id="ltBody"><p class="hint">Loading…</p></div>
+      <div id="ltNotes"></div>
+    </section>
+    <section id="rvView" data-feature-view="review" hidden>
+      <section class="toolbar rv-tools"><span class="hint">One call per stock you hold, with the reasons. Click a tile to filter.</span><button type="button" class="ghost" id="rvReload">⟳ Review again</button></section>
+      <div class="rv-sum" id="rvSum"></div>
+      <section class="toolbar" id="rvFilters" aria-label="Filter"></section>
+      <div id="rvBody"><p class="hint">Loading…</p></div>
+      <div id="rvNotes"></div>
     </section>
     <section id="ordView" data-feature-view="orders" hidden>
       <section class="toolbar ord-tools"><div class="md-seg ord-days" id="ordDays" role="group" aria-label="Period"><button type="button" data-days="30">30 days</button><button type="button" data-days="90" class="active">90 days</button><button type="button" data-days="180">6 months</button><button type="button" data-days="365">1 year</button></div>

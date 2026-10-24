@@ -34,8 +34,12 @@ import { sanitizePlan, buildPlan, sanitizeGoal, goalPlan } from "./divplan.mjs";
 import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
+import { reviewHoldings } from "./cleanup.mjs";
+import { sanitizeThemePlan, parseThemePaste, themePlanView, diffThemeAlerts, themeDefaults, THEME_ICONS } from "./themeplan.mjs";
+import { backtestBars, summarize, perStock, sanitizeBacktest, BACKTEST_SETUPS, BACKTEST_EXITS } from "./backtest.mjs";
+import { sanitizeTrail, applyTrail, trailChanges, TRAIL_RULES } from "./trailstop.mjs";
 import { PROFILES, STYLES, buildModel, assetMix } from "./model.mjs";
-import { SWING_DEFAULTS, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, parseDipText, DIP_ALIASES, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, bookedSummary, sanitizeTaxPayment, editHeldBuy, editSale, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, SETUPS, MISTAKES, sanitizeReview, journalStats, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
+import { SWING_DEFAULTS, setupFromIdea, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, parseDipText, DIP_ALIASES, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, bookedSummary, sanitizeTaxPayment, editHeldBuy, editSale, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, SETUPS, MISTAKES, sanitizeReview, journalStats, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
 import { buildXlsx } from "./xlsx.mjs";
 import { isEtf, indexFor, parseAllIndices, etfLens, etfType } from "./etf.mjs";
 import { parseNseActions, parseYahooEvents, mergeActions, adjustPosition, adjustWatch } from "./corpactions.mjs";
@@ -46,7 +50,7 @@ import { RULE_TYPES, sanitizeRule, describeRule, checkLiveRule, checkEodRule } f
 import { chartEvents, applyDrawingOp } from "./chartmarks.mjs";
 import { createAngelStream } from "./angelstream.mjs";
 import { logoQuery, parseLogoResult, domainOf, commonsPng, imageKind, imageSize, WIKIDATA_SPARQL } from "./logos.mjs";
-import { morningDigest, eveningDigest } from "./digest.mjs";
+import { morningDigest, eveningDigest, briefSections } from "./digest.mjs";
 import { DEFAULT_BASKET, sanitizeBasket, basketView } from "./accumulate.mjs";
 import { backupConfig, gz, gunz, verifyBackup, writeLocal, listLocal, readLocal, pruneLocal, s3Put } from "./backup.mjs";
 import { staticAsset, sendStatic } from "./static.mjs";
@@ -134,7 +138,7 @@ const U = Object.freeze({
   get listsFile() { return userFile("lists.json"); },
   get divPlanFile() { return userFile("dividend-plan.json"); },
   get growthOverridesFile() { return userFile("growth-overrides.json"); },
-  get fundsFile() { return userFile("funds.json"); },
+  get fundsFile() { return xrayFile; }, // shared by every account: see "Mutual fund X-ray library"
   get alertsFile() { return userFile("alerts.json"); },
   get kiteSlotsFile() { return userFile("kite-slots.json"); },
 });
@@ -454,9 +458,9 @@ async function resolveHoldingSymbols(items, { searchBudget = 15, wait = 6000 } =
 // Saved X-ray funds with holdings that still have no symbol (an earlier upload when Screener was rate-limiting, or
 // before the ISIN list): match them again in the background, at most once an hour per fund, and value the new ones.
 const fundFixAt = new Map(), fundFixRun = new Set();
-const fundFixRunning = id => fundFixRun.has(`${currentUser().id}:${id}`);
+const fundFixRunning = id => fundFixRun.has(id); // shared library: one matching run per fund for everyone
 function fixFundSymbols(fundId) {
-  const key = `${currentUser().id}:${fundId}`;
+  const key = fundId;
   if (Date.now() - (fundFixAt.get(key) || 0) < 3600e3) return false;
   fundFixAt.set(key, Date.now()); fundFixRun.add(key);
   (async () => {
@@ -468,10 +472,12 @@ function fixFundSymbols(fundId) {
       res.forEach((x, k) => { if (x?.symbol) found.set(chunk[k].isin || chunk[k].name, x); });
     }
     if (!found.size) return;
-    const st = await readJson(U.fundsFile, { funds: [] }), f = st.funds.find(x => x.id === fundId); if (!f) return;
-    const added = [];
-    f.holdings = f.holdings.map(h => { const x = !h.symbol && found.get(h.isin || h.name); if (!x) return h; added.push({ ...h, symbol: x.symbol, exchange: x.exchange || "NSE" }); return added.at(-1); });
-    await writeJson(U.fundsFile, st);
+    const added = [], f = await withXrayLock(async () => {
+      const st = await readJson(U.fundsFile, { funds: [] }), f = st.funds.find(x => x.id === fundId); if (!f) return null;
+      f.holdings = f.holdings.map(h => { const x = !h.symbol && found.get(h.isin || h.name); if (!x) return h; added.push({ ...h, symbol: x.symbol, exchange: x.exchange || "NSE" }); return added.at(-1); });
+      await writeJson(U.fundsFile, st); return f;
+    });
+    if (!f) return;
     for (const h of added) await ensureInPool(h.symbol, h.exchange, h.name, `Added from fund X-ray (${f.name}).`);
     queueFill(added.map(h => h.symbol), 150).catch(() => {});
     console.log(`[x-ray] ${f.name}: matched ${added.length} more holding(s)`);
@@ -742,6 +748,102 @@ async function kiteHoldingsView() {
   const hiddenAccounts = (store.hiddenEq || []).map(id => { const a = raw?.accounts?.[id] || {}; return { userId: id, broker: brokerOf(a), brokerName: BROKER_LABELS[brokerOf(a)] || brokerOf(a), label: a.label || id, count: (a.holdings || []).length, syncedAt: a.syncedAt || null }; });
   return { accounts: kiteAccountsSummary(store).map(a => ({ ...a, imported: isImportedAcct(store.accounts[a.userId]), invested: r2(accTot.get(a.userId)?.invested || 0), value: r2(accTot.get(a.userId)?.value || 0) })), hiddenAccounts, brokers: brokersHeld, holdings, totals: { invested: sum("invested"), value: sum("value"), pnl: sum("pnl"), count: holdings.length, notInWatchlist: holdings.filter(h => !h.inWatchlist).length, watchlistNotHeld: stocks.filter(s => symOf(s) && !merged.has(symOf(s))).length, stance: { accumulate: count("Accumulate"), hold: count("Hold"), dontAdd: count("Hold (don't add)"), review: count("Review"), trim: count("Trim"), noView: count("No view") } } };
 }
+// ---- Backtest a swing setup (backtest.mjs) on ~5 years of daily bars of your own stocks: a background job per user ----
+const backtestFile = () => userFile("backtest.json");
+const btJobs = new Map(); // userId -> { running, done, total, startedAt, params }
+const btBars = new Map(); // "EX:SYM" -> { day, bars } (public prices, shared; at most 150 kept)
+async function backtestUniverse() {
+  const [stocks, st, hold] = await Promise.all([readWatchlist(), readJson(swingFile(), {}), readHoldStore()]), m = new Map();
+  for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol && !isEtf(h.symbol, h.name || "")) m.set(h.symbol, { symbol: h.symbol, name: h.name || h.symbol, exchange: "NSE" });
+  for (const x of [...(st.positions || []), ...(st.watch || [])]) if (!m.has(x.symbol)) m.set(x.symbol, { symbol: x.symbol, name: x.name, exchange: x.exchange || "NSE" });
+  for (const x of stocks) { const sym = symOf(x); if (sym && !m.has(sym) && !isEtf(sym, x.company || "")) m.set(sym, { symbol: sym, name: x.company || sym, exchange: x.exchange || "NSE" }); }
+  return [...m.values()].slice(0, 80);
+}
+async function backtestBarsFor(x) {
+  const key = `${x.exchange}:${x.symbol}`, day = istDay(), hit = btBars.get(key); if (hit?.day === day) return hit;
+  const r = await chartBars(x.symbol, x.exchange, "5Y");
+  const v = { day, bars: r.bars || [], source: r.source || null };
+  if (v.bars.length) { btBars.set(key, v); if (btBars.size > 150) btBars.delete(btBars.keys().next().value); }
+  return v;
+}
+function startBacktest(params) {
+  const uid = currentUser().id, job = btJobs.get(uid);
+  if (job?.running) return job;
+  const p = sanitizeBacktest(params), j = { running: true, done: 0, total: 0, startedAt: Date.now(), params: p };
+  btJobs.set(uid, j);
+  (async () => {
+    const list = await backtestUniverse(); j.total = list.length;
+    const results = [], skipped = [], sources = {};
+    for (const x of list) {
+      try {
+        const v = await backtestBarsFor(x);
+        if (v.bars.length < 300) skipped.push({ symbol: x.symbol, why: v.bars.length ? `only ${v.bars.length} days of prices` : "no price history" });
+        else { const r = backtestBars(v.bars, p); results.push({ symbol: x.symbol, name: x.name, trades: r.trades.map(t => ({ ...t, symbol: x.symbol })), from: r.from, to: r.to }); sources[v.source] = (sources[v.source] || 0) + 1; }
+      } catch (e) { skipped.push({ symbol: x.symbol, why: String(e.message).slice(0, 80) }); }
+      j.done++; await new Promise(r => setTimeout(r, BACKTEST_GAP_MS));
+    }
+    const all = results.flatMap(r => r.trades);
+    const out = { at: new Date().toISOString(), params: p, label: BACKTEST_SETUPS[p.setup], exitLabel: BACKTEST_EXITS[p.exit], stocks: list.length, tested: results.length, skipped, sources,
+      from: results.map(r => r.from).filter(Boolean).sort()[0] || null, to: results.map(r => r.to).filter(Boolean).sort().at(-1) || null,
+      summary: summarize(all), perStock: perStock(results).slice(0, 80), recent: all.sort((a, b) => b.entryDay.localeCompare(a.entryDay)).slice(0, 40) };
+    await writeJson(backtestFile(), out);
+  })().catch(e => { j.error = e.message; console.error(`[backtest] ${e.message}`); }).finally(() => { j.running = false; j.endedAt = Date.now(); });
+  return j;
+}
+const BACKTEST_GAP_MS = Number(process.env.BACKTEST_GAP_MS ?? 350); // between stocks: Angel One allows a few chart requests a second
+async function backtestView() {
+  const j = btJobs.get(currentUser().id) || null, last = await readJson(backtestFile(), null);
+  return { job: j ? { running: j.running, done: j.done, total: j.total, params: j.params, error: j.error || null } : null, last, setups: BACKTEST_SETUPS, exits: BACKTEST_EXITS };
+}
+// ---- Long-term plan by theme (themeplan.mjs): your Growth / Dividends / Others stocks and when to buy them in bulk ----
+const themePlanFile = () => userFile("theme-plan.json");
+const themeTrackAt = new Map(); // userId -> last time missing stocks were queued for valuation
+async function themesView() {
+  const raw = await readJson(themePlanFile(), null), plan = sanitizeThemePlan(raw || {}, raw);
+  const [{ rows }, view] = await Promise.all([computeRows(), kiteHoldingsView().catch(() => ({ holdings: [] }))]);
+  const bySym = new Map(rows.map(r => [String(r.symbol || "").toUpperCase(), r]));
+  const held = new Map(view.holdings.map(h => [h.symbol, { qty: h.qty, value: h.value, invested: h.invested }]));
+  const syms = plan.themes.flatMap(t => t.symbols), hiLo = new Map();
+  for (const s of syms) if (!Number.isFinite(bySym.get(s.symbol)?.high)) { const x = await hiLo52(s.symbol).catch(() => null); if (x?.hi) hiLo.set(s.symbol, x); }
+  // stocks in the plan that the app does not value yet: track them (not added to a watchlist) and fetch fundamentals
+  const missing = syms.filter(s => !bySym.has(s.symbol)), uid = currentUser().id;
+  if (missing.length && Date.now() - (themeTrackAt.get(uid) || 0) > 30 * 60e3) {
+    themeTrackAt.set(uid, Date.now());
+    (async () => { for (const s of missing) await ensureInPool(s.symbol, s.exchange, s.name, "Added from Long-term themes."); queueFill(missing.map(s => s.symbol)).catch(() => {}); syncLivePrices().catch(() => {}); })().catch(e => console.error(`[themes] ${e.message}`));
+  }
+  return { ...themePlanView(plan, { rows: bySym, held, hiLo }), icons: THEME_ICONS, fetching: missing.length, marketOpen: marketIsOpen() };
+}
+async function checkThemeAlerts() {
+  const raw = await readJson(themePlanFile(), null); if (!raw?.themes?.length || raw.alerts === false) return;
+  const v = await themesView(), { next, fresh } = diffThemeAlerts(raw.state || {}, v);
+  if (fresh.length) await fireEvents(fresh);
+  if (JSON.stringify(next) !== JSON.stringify(raw.state || {})) await withUserLock(async () => { const cur = await readJson(themePlanFile(), {}); await writeJson(themePlanFile(), { ...cur, state: next }); });
+}
+setInterval(() => { if (marketIsOpen()) forEachUser(() => checkThemeAlerts()).catch(() => {}); }, 10 * 60e3).unref();
+if (!process.env.NODE_TEST_CONTEXT) setTimeout(() => forEachUser(() => checkThemeAlerts()).catch(() => {}), 90e3).unref();
+// ---- Holdings clean-up review (cleanup.mjs): Keep / Add / Trim / Exit for every stock you hold, with the reasons ----
+// Uses saved data only (the swing scan's daily-bar snapshots, saved NSE closes, the tax page, the fund X-ray): no outside site.
+async function holdingsReview() {
+  const [view, mf, nwSt, xrFile, scan, tax] = await Promise.all([kiteHoldingsView(), syncedMutualFunds().catch(() => []), readJson(networthFile(), {}), readJson(U.fundsFile, { funds: [] }), readJson(swingScanFile, { snaps: {} }), taxPage("all").catch(() => null)]);
+  const tech = new Map();
+  for (const h of view.holdings) {
+    let s = scan.snaps?.[h.symbol]?.s || null;
+    if (!s?.sma200) { const own = await eodBars(h.symbol).catch(() => []); if (own.length >= 200) s = swingSnapshot(own) || s; }
+    if (s) tech.set(h.symbol, s);
+  }
+  const items = Array.isArray(nwSt.items) ? nwSt.items : [], xray = new Map((xrFile.funds || []).map(f => [f.id, { name: f.name, holdings: f.holdings }]));
+  const funds = [...mf.map(f => ({ key: f.key, name: f.name, value: f.value, fundId: f.fundId })), ...items.filter(i => i.category === "mf").map(i => ({ key: `manual:${i.id}`, name: i.name, value: i.value, fundId: i.fundId }))];
+  const lt = lookThrough({ direct: view.holdings.map(h => ({ symbol: h.symbol, name: h.company || h.symbol, value: h.value })), funds, xray });
+  const look = new Map(lt.rows.filter(r => r.symbol).map(r => [r.symbol, r]));
+  const taxRows = new Map((tax?.rows || []).filter(r => r.kind === "stock" && r.symbol).map(r => [r.symbol, r]));
+  let realised = tax?.realised || {};
+  if (!tax?.tradeCount) { // no tradebook imported: the swing journal's booked short-term gains this FY
+    try { const st = await readJson(swingFile(), {}), b = bookedSummary(st.closed || [], {}), fy = (b.years || []).find(y => y.current); if (fy) realised = { stGain: Math.max(0, fy.netSt || 0), stLoss: 0 }; } catch { /* optional */ }
+  }
+  const out = reviewHoldings({ holdings: view.holdings, tech, look, taxRows, realised, exemptLeft: tax?.realised?.exemptLeft ?? undefined, equityTotal: lt.rows.reduce((a, r) => a + r.total, 0) });
+  return { ...out, realised: { stGain: Math.round(realised.stGain || 0), stLoss: Math.round(realised.stLoss || 0) }, hasTradebook: !!tax?.tradeCount, fundsLinked: lt.perFund.filter(f => f.linked).length, fundsTotal: lt.perFund.length,
+    trendMissing: view.holdings.filter(h => !tech.get(h.symbol)?.sma200).length, accounts: view.accounts.length, at: new Date().toISOString() };
+}
 // Re-checks every thesis against the latest numbers. First-break dates and status flips are stored, and a flip is
 // written to the change history (field "thesis") so it appears in Reports -> Change history.
 async function thesisView() {
@@ -802,6 +904,7 @@ async function restoreBackup(b, { replace = false } = {}) {
   const safety = await makeBackup(true); await fs.writeFile(path.join(dir, ".before-restore.json"), JSON.stringify(safety), { mode: 0o600 });
   if (replace) for (const name of await fs.readdir(dir)) if (BACKUP_NAME_RE.test(name) && !names.includes(name) && !BACKUP_SECRET_FILES.test(name)) await fs.rm(path.join(dir, name), { force: true });
   for (const name of names) { await fs.writeFile(path.join(dir, name), JSON.stringify(b.files[name], null, 2), { mode: BACKUP_SECRET_FILES.test(name) ? 0o600 : 0o644 }); }
+  await absorbUserXray().catch(e => console.error(`[x-ray] restore: ${e.message}`)); // an older backup may carry its own X-ray funds
   for (const s of [brokersU, kiteMain, brokerMcpU]) s.drop(currentUser().id);
   for (const k of [...kiteClients.keys()]) if (k.startsWith(`${currentUser().id}:`)) kiteClients.delete(k);
   return names;
@@ -1497,6 +1600,25 @@ async function hiLo52(sym) {
   const v = bars.length >= 100 ? { day, hi: Math.max(...bars.map(b => b.h ?? b.c)), lo: Math.min(...bars.map(b => b.l ?? b.c)) } : { day, hi: null, lo: null };
   range52.set(sym, v); return v;
 }
+// Swing stop-losses on the live feed: a held stock that comes within the near-stop band of its stop (or through it)
+// runs that user's swing check at once (at most once a minute) instead of waiting for the 5-minute round.
+const stopIndex = new Map(); // SYMBOL -> Map(userId -> { user, stop })
+async function loadStopIndex() {
+  const next = new Map();
+  await forEachUser(async () => { const u = currentUser(); for (const p of (await readJson(swingFile(), {})).positions || []) if (p.stopLoss > 0) (next.get(p.symbol) || next.set(p.symbol, new Map()).get(p.symbol)).set(u.id, { user: u, stop: p.stopLoss }); });
+  stopIndex.clear(); for (const [k, v] of next) stopIndex.set(k, v);
+}
+if (!process.env.NODE_TEST_CONTEXT) setTimeout(() => loadStopIndex().catch(() => {}), 2500).unref();
+setInterval(() => loadStopIndex().catch(() => {}), 10 * 60e3).unref();
+const stopCheckedAt = new Map(); // userId -> last check
+priceBus.on("quote", (key, q) => {
+  const sym = key.slice(key.indexOf(":") + 1), users = stopIndex.get(sym); if (!users?.size || q.stale || !(q.price > 0)) return;
+  for (const [uid, x] of users) {
+    if (q.price > x.stop * (1 + SWING_DEFAULTS.nearPct / 100) || Date.now() - (stopCheckedAt.get(uid) || 0) < 60e3) continue;
+    stopCheckedAt.set(uid, Date.now());
+    asUser(x.user, () => swingView()).catch(e => console.error(`[swing] stop check: ${e.message}`));
+  }
+});
 const ruleCheckedAt = new Map(); // live-feed prices change every second: check a stock's alerts at most every 5 s
 priceBus.on("quote", (key, q) => {
   const sym = key.slice(key.indexOf(":") + 1), users = rulesIndex.get(sym); if (!users?.size || q.stale || !(q.price > 0)) return;
@@ -1548,11 +1670,40 @@ async function eventHeadsUps() {
     await fireEvents(evs);
   }));
 }
-// Digests (Telegram): morning 08:45 IST and evening 16:00 IST on weekdays, when switched on
+// Digests (Telegram): morning 09:00 IST and evening 16:00 IST on weekdays, when switched on
+// Morning brief data (Home card and the Telegram morning note): buy-zone hits, last session's big moves in your
+// holdings, order wins for your stocks, trailing stops raised. Saved data only: no outside site is asked.
+async function briefData() {
+  const today = istDay(), [{ rows }, hold, ord, st, stocks] = await Promise.all([computeRows(), readHoldStore(), readJson(ordersFile, { orders: [] }), readJson(swingFile(), {}), readWatchlist()]);
+  const held = new Map(); for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol) { const x = held.get(h.symbol) || { symbol: h.symbol, name: h.name, qty: 0, dayChangePct: h.dayChangePct }; x.qty += h.qty || 0; held.set(h.symbol, x); }
+  const mine = new Set([...held.keys(), ...stocks.map(symOf), ...(st.positions || []).map(p => p.symbol), ...(st.watch || []).map(w => w.symbol)]);
+  const zones = rows.filter(r => (r.status === "In zone" || r.status === "Below zone") && r.price > 0 && Number.isFinite(r.zoneLow) && Number.isFinite(r.zoneHigh))
+    .map(r => { const sym = String(r.symbol || "").toUpperCase(); return { symbol: sym, company: r.company, price: r.price, zoneLow: r.zoneLow, zoneHigh: r.zoneHigh, status: r.status, held: held.has(sym) }; })
+    .sort((a, b) => (b.held - a.held) || a.price / a.zoneHigh - b.price / b.zoneHigh);
+  const nameOf = new Map(rows.map(r => [String(r.symbol || "").toUpperCase(), r.company]));
+  const moves = [];
+  for (const h of held.values()) {
+    const q = livePriceCache.get(`NSE:${h.symbol}`), pct = q?.price > 0 && q.prevClose > 0 ? (q.price / q.prevClose - 1) * 100 : Number.isFinite(h.dayChangePct) ? h.dayChangePct : null;
+    if (pct !== null && Math.abs(pct) >= 4) moves.push({ symbol: h.symbol, company: nameOf.get(h.symbol) || h.name || h.symbol, pct: Math.round(pct * 100) / 100 });
+  }
+  const from = shiftDay(today, -3);
+  const orders = (ord.orders || []).filter(o => o.day >= from && mine.has(o.symbol)).sort((a, b) => b.day.localeCompare(a.day) || (b.valueCr || 0) - (a.valueCr || 0))
+    .map(o => ({ symbol: o.symbol, name: nameOf.get(o.symbol) || o.name || o.symbol, day: o.day, valueCr: o.valueCr ?? null, text: o.text, held: held.has(o.symbol) }));
+  const trails = trailChanges(st.positions || [], new Date(Date.now() - 24 * 3600e3).toISOString());
+  const themes = (await readJson(themePlanFile(), null))?.themes?.length ? (await themesView().catch(() => null))?.bulkNow || [] : [];
+  const inPlan = new Set(themes.map(x => x.symbol));
+  return { zones: zones.filter(z => !inPlan.has(z.symbol)), moves, orders, trails, themes };
+}
+async function briefView() {
+  const [swing, up, rulesSt, extra] = await Promise.all([swingView({ alerts: false }).catch(() => null), upcomingEvents({ pastDays: 0, aheadDays: 7 }).catch(() => ({ events: [] })), readJson(rulesFile(), { rules: [] }), briefData()]);
+  const b = briefSections({ swing, events: up.events || [], rules: (rulesSt.rules || []).filter(r => r.active).length, ...extra });
+  const n = new Date(Date.now() + 5.5 * 3600e3), m = n.getUTCHours() * 60 + n.getUTCMinutes(), w = n.getUTCDay();
+  return { day: istDay(), ...b, preOpen: w !== 0 && w !== 6 && m < 555, morning: m < 660, marketOpen: marketIsOpen(), counts: { zones: extra.zones.length, moves: extra.moves.length, orders: extra.orders.length, trails: extra.trails.length } };
+}
 async function digestData(kind) {
   const day = istDay(), [swing, up, cfg] = await Promise.all([swingView({ alerts: false }).catch(() => null), upcomingEvents({ pastDays: 0, aheadDays: 7 }), readJson(U.notifyFile, {})]);
   const appUrl = process.env.APP_URL || process.env.PUBLIC_URL || "";
-  if (kind === "morning") { const rules = ((await readJson(rulesFile(), { rules: [] })).rules || []).filter(r => r.active).length; return { html: morningDigest({ day, swing, events: up.events, rules, appUrl }), cfg }; }
+  if (kind === "morning") { const rules = ((await readJson(rulesFile(), { rules: [] })).rules || []).filter(r => r.active).length, extra = await briefData().catch(() => ({})); return { html: morningDigest({ day, swing, events: up.events, rules, appUrl, ...extra }), cfg }; }
   const hold = await holdingsOf("all"); let dayChange = 0, value = 0, prevValue = 0; const movers = [];
   for (const h of hold) { const q = livePriceCache.get(`NSE:${h.symbol}`); if (!(h.price > 0)) continue; value += h.price * h.qty; if (q?.prevClose > 0) { dayChange += (h.price - q.prevClose) * h.qty; prevValue += q.prevClose * h.qty; movers.push({ symbol: h.symbol, dayPct: (h.price / q.prevClose - 1) * 100 }); } }
   const store = await readJson(U.alertsFile, { events: [] }), fired = store.events.filter(e => String(e.at || "").slice(0, 10) === day && (e.type === "rule" || String(e.type).startsWith("swing")));
@@ -1570,7 +1721,7 @@ setInterval(() => {
   const n = new Date(Date.now() + 5.5 * 3600e3), m = n.getUTCHours() * 60 + n.getUTCMinutes(), w = n.getUTCDay(), day = n.toISOString().slice(0, 10);
   if (w === 0 || w === 6) return;
   if (m >= 510 && lastDigestTick.headsUp !== day) { lastDigestTick.headsUp = day; eventHeadsUps().catch(e => console.error(`[events] heads-up: ${e.message}`)); }
-  for (const [kind, from, to] of [["morning", 525, 560], ["evening", 960, 1020]]) {
+  for (const [kind, from, to] of [["morning", 540, 575], ["evening", 960, 1020]]) {
     if (m < from || m > to || lastDigestTick[kind] === day) continue; lastDigestTick[kind] = day;
     forEachUser(async () => { const cfg = await readJson(U.notifyFile, {}); if (!cfg.digest?.[kind] || !cfg.telegram?.enabled) return; try { await sendDigest(kind); console.log(`[digest] ${kind} sent to ${currentUser().username}`); } catch (e) { console.error(`[digest] ${currentUser().username}: ${e.message}`); } }).catch(() => {});
   }
@@ -1689,6 +1840,23 @@ async function swingView({ alerts = true, fresh = false } = {}) {
   const prices = await livePrices([...positions, ...watch], fresh ? 0 : LIVE_MAX_AGE());
   syncLivePrices().catch(() => {}); // the same quotes go to the watchlist, so Valuation and Home match this page
   const pricePending = prices.pending || 0;
+  // Trailing stop-losses: raise (never lower) the stop of every position that has the trail on
+  if (positions.some(p => p.trail?.on)) {
+    const scanT = await readJson(swingScanFile, { snaps: {} }); let raisedAny = false; const raisedEvs = [];
+    for (let i = 0; i < positions.length; i++) {
+      const p = positions[i]; if (!p.trail?.on) continue;
+      const q = prices.get(p.symbol); if (!(q?.price > 0) || q.stale) continue;
+      let snap = scanT.snaps?.[p.symbol]?.s; if (!snap?.atr) { const own = await eodBars(p.symbol).catch(() => []); snap = own.length >= 60 ? swingSnapshot(own) : snap; }
+      const r = applyTrail(p, { snap, price: q.price });
+      if (r.position !== p) { positions[i] = r.position; raisedAny = true; }
+      if (r.raised) raisedEvs.push({ key: `trail-${p.id}-${istDay()}`, at: r.raised.at, type: "swing-trail", symbol: p.symbol, company: p.name, read: false, title: `🪜 ${p.name}: trailing stop raised to ₹${r.raised.to}`, detail: `${r.raised.from ? `From ₹${r.raised.from}. ` : ""}${r.raised.why}` });
+    }
+    if (raisedAny) {
+      const cur = await readJson(swingFile(), {}); cur.positions = (cur.positions || []).map(x => positions.find(y => y.id === x.id && y.trail) || x); await writeJson(swingFile(), cur);
+      if (raisedEvs.length) { const store = await readJson(U.alertsFile, { state: {}, events: [] }); await writeJson(U.alertsFile, { ...store, events: mergeEvents(store.events, raisedEvs) }); }
+      loadStopIndex().catch(() => {});
+    }
+  }
   const view = evaluateSwing({ positions, watch, prices, settings: st.settings || {}, cash: st.cash?.balance ?? null });
   if (alerts && (positions.length || watch.length)) {
     const store = await readJson(U.alertsFile, { state: {}, events: [] });
@@ -2048,7 +2216,7 @@ async function resolveDipNames(names) {
 // A swing-watchlist (or buy-the-dip) stock was bought: it becomes a swing position, or adds to the one you hold
 function promoteWatch(st, w, b) {
   const bp = Number(b.price), ideaT = w.idea && bp > 0 ? [w.idea.t1, w.idea.t2].filter(t => t > bp * 1.005).map(t => Math.round((t / bp - 1) * 1000) / 10) : [];
-  const p = sanitizePosition({ symbol: w.symbol, exchange: w.exchange, name: w.name, qty: b.qty, avgPrice: b.price, limit: b.limit ?? w.amount, notes: [w.notes, w.idea && !String(w.notes || "").includes(w.idea.label) ? `From swing idea: ${w.idea.label}` : "", w.list === "dip" ? `Bought the dip (level ₹${w.buyBelow})` : ""].filter(Boolean).join(" · ") || null, boughtOn: b.date || undefined, stopLoss: w.stopLoss ?? null, targets: ideaT.length ? ideaT.join(",") : undefined, setup: b.setup });
+  const p = sanitizePosition({ symbol: w.symbol, exchange: w.exchange, name: w.name, qty: b.qty, avgPrice: b.price, limit: b.limit ?? w.amount, notes: [w.notes, w.idea && !String(w.notes || "").includes(w.idea.label) ? `From swing idea: ${w.idea.label}` : "", w.list === "dip" ? `Bought the dip (level ₹${w.buyBelow})` : ""].filter(Boolean).join(" · ") || null, boughtOn: b.date || undefined, stopLoss: w.stopLoss ?? null, targets: ideaT.length ? ideaT.join(",") : undefined, setup: b.setup || setupFromIdea(w) || undefined });
   if (!b.keep) st.watch = st.watch.filter(x => x.id !== w.id);
   let notice = null;
   const held = st.positions.find(x => x.symbol === p.symbol && (x.exchange || "NSE") === p.exchange);
@@ -2421,13 +2589,55 @@ function startIndexValuation(view, limit = 120) {
   return idxValueJob;
 }
 
+// ---- Mutual fund X-ray library: shared by every account (fund portfolios are public data, fetched once for all) ----
+// Stored in the data root (MongoDB: the shared store), not per user. Which funds YOU hold, their values, units and your
+// links to these portfolios stay in your own files (networth.json, holdings). Each fund remembers who added it (an
+// account id, never shown to others) so only that account or the owner can delete it.
+const xrayFile = path.join(DATA_DIR, "mf-xray.json");
+let xrayLock = Promise.resolve();
+function withXrayLock(fn) { const run = xrayLock.then(fn, fn); xrayLock = run.catch(() => {}); return run; }
+const sameFund = (a, b) => (a.source?.isin && b.source?.isin && a.source.isin === b.source.isin) || normName(a.name) === normName(b.name);
+// An account's own funds.json from before v5.42 (or from an older backup): moved into the shared library. A fund that is
+// already there (same id, ISIN or name) is not duplicated; the account's links are pointed at the shared copy.
+async function absorbUserXray() {
+  const own = userFile("funds.json"), mine = await readJson(own, null);
+  if (!mine) return 0;
+  const uid = currentUser().id, remap = {};
+  await withXrayLock(async () => {
+    const st = await readJson(xrayFile, { funds: [] });
+    for (const f of mine.funds || []) {
+      if (!f?.id || !Array.isArray(f.holdings)) continue;
+      const hit = st.funds.find(x => x.id === f.id && normName(x.name) === normName(f.name)) || st.funds.find(x => sameFund(x, f));
+      if (hit) { remap[f.id] = hit.id; if (String(f.updatedAt || "") > String(hit.updatedAt || "")) Object.assign(hit, { ...f, id: hit.id, addedBy: hit.addedBy || uid }); continue; }
+      const id = st.funds.some(x => x.id === f.id) ? `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}` : f.id;
+      st.funds.push({ ...f, id, addedBy: uid }); remap[f.id] = id;
+    }
+    await writeJson(xrayFile, st);
+  });
+  const moved = Object.entries(remap).filter(([a, b]) => a !== b);
+  if (moved.length) { // point this account's links and hand-entered funds at the shared ids
+    const nw = await readJson(networthFile(), {}), m = new Map(moved);
+    if (nw.links) for (const k of Object.keys(nw.links)) if (m.has(nw.links[k])) nw.links[k] = m.get(nw.links[k]);
+    if (Array.isArray(nw.items)) nw.items = nw.items.map(i => (i.fundId && m.has(i.fundId) ? { ...i, fundId: m.get(i.fundId) } : i));
+    await writeJson(networthFile(), nw);
+  }
+  await fs.rm(own, { force: true });
+  console.log(`[x-ray] ${currentUser().username}: ${Object.keys(remap).length} fund portfolio(s) moved to the shared X-ray library`);
+  return Object.keys(remap).length;
+}
+if (!process.env.NODE_TEST_CONTEXT || process.env.XRAY_MIGRATE_IN_TESTS) setTimeout(() => forEachUser(() => absorbUserXray()).catch(e => console.error(`[x-ray] ${e.message}`)), 300).unref();
 // ---- Mutual fund X-ray: fetch a fund's portfolio automatically (holdings API, or the fund house's monthly file) ----
 async function saveXrayFund({ id = null, name, asOf = null, holdings, source = null }) {
-  const st = await readJson(U.fundsFile, { funds: [] });
-  const fid = id && st.funds.some(f => f.id === id) ? id : `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
-  const prev = st.funds.find(f => f.id === fid);
-  const fund = { id: fid, name: String(name).slice(0, 80), asOf: asOf ? String(asOf).slice(0, 30) : null, updatedAt: new Date().toISOString(), holdings, source: source || prev?.source || null };
-  st.funds = [...st.funds.filter(f => f.id !== fid), fund]; await writeJson(U.fundsFile, st);
+  const fund = await withXrayLock(async () => {
+    const st = await readJson(U.fundsFile, { funds: [] });
+    // another account may have added the same fund already: update that one instead of keeping two copies
+    const same = !(id && st.funds.some(f => f.id === id)) ? st.funds.find(f => sameFund(f, { name, source })) : null;
+    const fid = id && st.funds.some(f => f.id === id) ? id : same ? same.id : `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const prev = st.funds.find(f => f.id === fid);
+    const fund = { id: fid, name: String(prev && same ? prev.name : name).slice(0, 80), asOf: asOf ? String(asOf).slice(0, 30) : null, updatedAt: new Date().toISOString(), holdings, source: source || prev?.source || null, addedBy: prev?.addedBy || currentUser().id };
+    st.funds = [...st.funds.filter(f => f.id !== fid), fund]; await writeJson(U.fundsFile, st);
+    return fund;
+  });
   const map = await readJson(nameMapFile, {}); for (const h of holdings) if (h.symbol) map[h.isin || normName(h.name)] = { symbol: h.symbol, exchange: h.exchange || "NSE", label: null }; await writeJson(nameMapFile, map);
   for (const h of holdings) if (h.symbol) await ensureInPool(h.symbol, h.exchange || "NSE", h.name, `Added from fund X-ray (${fund.name}).`);
   queueFill(holdings.filter(h => h.symbol).map(h => h.symbol), 150).catch(() => {});
@@ -3412,6 +3622,10 @@ async function appHandler(req, res, url) {
         if (req.method === "POST" && op === "decide") {
           try { return reply(res, 200, await decideFor(await readBody(req))); } catch (e) { return reply(res, e.status || 400, { message: e.message }); }
         }
+        if (op === "backtest") { // GET: last result + job status; POST { setup, exit, maxDays }: run it in the background
+          if (req.method === "POST") startBacktest(await readBody(req));
+          return reply(res, 200, await backtestView());
+        }
         if (op === "ideas" || op === "ideas/scan") {
           if (op === "ideas/scan" && req.method === "POST") { startSwingScan({ force: true }); }
           return reply(res, 200, await swingIdeas());
@@ -3431,6 +3645,12 @@ async function appHandler(req, res, url) {
           const p = find("positions", b.id), v = b.stopLoss === null || b.stopLoss === "" ? null : Math.round(Number(String(b.stopLoss).replace(/[₹,\s]/g, "")) * 100) / 100;
           if (v !== null && !(v > 0)) throw new Error("Enter a stop-loss price.");
           st.positions = st.positions.map(x => (x.id === p.id ? { ...x, stopLoss: v } : x)); notice = v === null ? `${p.name}: stop-loss removed.` : `${p.name}: stop-loss set at ₹${v.toLocaleString("en-IN")}.`;
+        }
+        else if (op === "trail") { // automatic trailing stop-loss on / off for one position: { id, on, rule: atr|low20, mult }
+          const p = find("positions", b.id), trail = sanitizeTrail(b, p.trail || null);
+          st.positions = st.positions.map(x => (x.id === p.id ? { ...x, trail } : x));
+          notice = trail.on ? `${p.name}: trailing stop on (${trail.rule === "atr" ? `${trail.mult} × ATR under the highest price` : TRAIL_RULES[trail.rule]}). It only moves up.` : `${p.name}: trailing stop off. The stop-loss stays at ${p.stopLoss ? `₹${p.stopLoss}` : "none"}.`;
+          setTimeout(() => loadStopIndex().catch(() => {}), 50);
         }
         else if (op === "delete") { st.positions = st.positions.filter(x => x.id !== b.id); st.watch = st.watch.filter(x => x.id !== b.id); }
         else if (op === "buy") { const p = find("positions", b.id), q = Number(b.qty), pr = Number(b.price); if (!(q > 0 && Number.isInteger(q) && pr > 0)) throw new Error("Enter whole shares and a price."); const at = tradeDate(b.date); st.positions = st.positions.map(x => (x.id === p.id ? applyBuy(x, q, pr, at) : x)); moveCash(st, -q * pr, `Bought ${q} ${p.symbol} @ ₹${pr} on ${at.slice(0, 10)}`); }
@@ -3528,7 +3748,7 @@ async function appHandler(req, res, url) {
         }
         else if (op === "resolve") return reply(res, 200, { results: await resolveNames([String(b.name || "")]) });
         else return reply(res, 404, { message: "Unknown swing operation." });
-        await writeJson(swingFile(), st); notifyUser(currentUser().id, "symbols"); // the page's live stream now follows a new position too
+        await writeJson(swingFile(), st); notifyUser(currentUser().id, "symbols"); loadStopIndex().catch(() => {}); // the page's live stream now follows a new position too
         return reply(res, 200, { ...(await swingView()), ...(notice ? { notice } : {}) });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
@@ -3777,7 +3997,8 @@ async function appHandler(req, res, url) {
         if (req.method === "GET" && !op) {
           const st = await readJson(U.fundsFile, { funds: [] }); refreshStaleXray(st.funds);
           const held = await syncedMutualFunds().catch(() => []), missing = held.filter(f => !f.fundId);
-          return reply(res, 200, { funds: st.funds.map(f => ({ id: f.id, name: f.name, asOf: f.asOf, count: f.holdings.length, updatedAt: f.updatedAt, source: f.source ? { kind: f.source.kind, url: f.source.url, link: f.source.link || null } : null, ageDays: Math.floor((Date.now() - Date.parse(f.updatedAt || 0)) / 864e5) })),
+          const me = currentUser();
+          return reply(res, 200, { shared: true, funds: st.funds.map(f => ({ id: f.id, name: f.name, asOf: f.asOf, count: f.holdings.length, updatedAt: f.updatedAt, mine: !f.addedBy || f.addedBy === me.id, canDelete: !f.addedBy || f.addedBy === me.id || me.role === "owner", source: f.source ? { kind: f.source.kind, url: f.source.url, link: f.source.link || null } : null, ageDays: Math.floor((Date.now() - Date.parse(f.updatedAt || 0)) / 864e5) })),
             heldWithout: missing.map(f => ({ name: f.name, isin: f.isin })).slice(0, 40), job: XJ() });
         }
         if (req.method === "GET" && op === "search") return reply(res, 200, { results: searchAmfi(await amfiNav({ wait: true }), url.searchParams.get("q"), 10) });
@@ -3838,7 +4059,15 @@ async function appHandler(req, res, url) {
           const fund = await saveXrayFund({ id: b.id || null, name, asOf: b.asOf || null, holdings });
           return reply(res, 200, { ok: true, id: fund.id });
         }
-        if (op === "delete") { const st = await readJson(U.fundsFile, { funds: [] }); st.funds = st.funds.filter(f => f.id !== b.id); await writeJson(U.fundsFile, st); return reply(res, 200, { ok: true }); }
+        if (op === "delete") {
+          const me = currentUser();
+          await withXrayLock(async () => {
+            const st = await readJson(U.fundsFile, { funds: [] }), f = st.funds.find(x => x.id === b.id); if (!f) return;
+            if (f.addedBy && f.addedBy !== me.id && me.role !== "owner") throw new Error("This X-ray is shared with every account on this app: only the account that added it or the owner can delete it.");
+            st.funds = st.funds.filter(x => x.id !== b.id); await writeJson(U.fundsFile, st);
+          });
+          return reply(res, 200, { ok: true });
+        }
         return reply(res, 404, { message: "Unknown fund operation." });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
@@ -3874,6 +4103,22 @@ async function appHandler(req, res, url) {
         return reply(res, 404, { message: "Unknown planner operation." });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
+    if (url.pathname === "/api/themes" && req.method === "GET") return reply(res, 200, await themesView());
+    if (url.pathname === "/api/themes/save" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        await withUserLock(async () => { const prev = await readJson(themePlanFile(), null); await writeJson(themePlanFile(), sanitizeThemePlan(b, prev)); });
+        themeTrackAt.delete(currentUser().id); return reply(res, 200, await themesView());
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/themes/paste" && req.method === "POST") { // a pasted list → themes with NSE symbols to confirm
+      const { text } = await readBody(req), groups = parseThemePaste(String(text || "").slice(0, 20000));
+      if (!groups.length || !groups.some(g => g.items.length)) return reply(res, 400, { message: "Nothing to read: paste your columns (theme names on top) or lines like \"Growth: BSE, MCX\"." });
+      const all = groups.flatMap(g => g.items), found = await resolveDipNames(all); let k = 0;
+      return reply(res, 200, { themes: groups.map(g => ({ name: g.name, ...themeDefaults(g.name), items: g.items.map(input => { const f = found[k++] || {}; return { input, symbol: f.symbol || null, name: f.name || input, how: f.how || "not found", options: f.options || [] }; }) })) });
+    }
+    if (url.pathname === "/api/brief" && req.method === "GET") return reply(res, 200, await briefView());
+    if (url.pathname === "/api/holdings/review" && req.method === "GET") return reply(res, 200, await holdingsReview());
     if (url.pathname === "/api/orders" && req.method === "GET") { const d = Number(url.searchParams.get("days")); return reply(res, 200, await ordersView({ days: [30, 90, 180, 365].includes(d) ? d : 90 })); }
     if (url.pathname === "/api/orders/track" && req.method === "POST") { // value the order winners you are not tracking yet
       const { symbols } = await readBody(req), list = (Array.isArray(symbols) ? symbols : []).map(x => String(x).toUpperCase()).filter(x => /^[A-Z0-9&-]{1,20}$/.test(x)).slice(0, 60);

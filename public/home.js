@@ -348,7 +348,29 @@
     $("#vsRecent").innerHTML = rows.map(r => { const c = classify(r); return `<tr data-sym="${esc(r.symbol)}"><td><div class="company">${esc(r.company)}</div><div class="ticker">${esc(r.symbol)}</div></td><td>${money(r.price)}</td><td>${verdictChip(c)}</td><td>${viewChip(r.view)}</td><td class="range">${r.zoneLow ? `${money(r.zoneLow)} – ${money(r.zoneHigh)}` : "—"}</td><td>${statusChip(r.status)}</td></tr>`; }).join("");
   }
   $("#vsRecent").addEventListener("click", e => { const tr = e.target.closest("tr[data-sym]"); if (tr) showResult(tr.dataset.sym); });
-  window.openHome = async () => { loadSwingStrip(); await loadValuation(); renderRecent(); };
+  window.openHome = async () => { loadSwingStrip(); loadBrief(); await loadValuation(); renderRecent(); };
+  // Morning brief on Home: open in the morning (until 11:00), a one-line summary after that; ✕ folds it for the day
+  let briefOpen = null;
+  async function loadBrief() {
+    const el = $("#homeBrief"); if (!el) return;
+    try {
+      const b = await get("/api/brief"); if (b.quiet) { el.hidden = true; return; }
+      let folded = null; try { folded = localStorage.getItem("brief-fold"); } catch { /* private mode */ }
+      const open = briefOpen ?? (b.morning && folded !== b.day), n = b.sections.reduce((a, s) => a + s.items.length, 0);
+      const head = `<button type="button" class="hb-head" data-brief-toggle aria-expanded="${open}"><b>☀️ ${b.morning ? "Morning brief" : "Today's brief"}</b><span class="hint">${b.sections.map(s => `${s.icon} ${s.items.length}`).join(" · ")}${b.preOpen ? " · before the open" : ""}</span><span class="hb-caret" aria-hidden="true">${open ? "▴" : "▾"}</span></button>`;
+      el.innerHTML = head + (open ? `<div class="hb-grid">${b.sections.map(s => `<section class="hb-sec hb-${s.key}"><h4>${s.icon} ${esc(s.title)}</h4><ul>${s.items.map(it => `<li${it.symbol ? ` data-brief-sym="${esc(it.symbol)}" tabindex="0"` : ""}>${esc(it.text)}</li>`).join("")}</ul></section>`).join("")}</div>${b.rules ? `<p class="hint hb-foot">🔔 ${b.rules} price alert${b.rules === 1 ? "" : "s"} armed · the same brief goes to Telegram at 9:00 when the morning digest is on (Alerts → Phone alerts).</p>` : ""}` : "");
+      el.dataset.day = b.day; el.dataset.items = n; el.hidden = false;
+    } catch { el.hidden = true; }
+  }
+  window.loadBrief = loadBrief;
+  $("#homeBrief")?.addEventListener("click", e => {
+    if (e.target.closest("[data-brief-toggle]")) {
+      const el = $("#homeBrief"), wasOpen = !!el.querySelector(".hb-grid"); briefOpen = !wasOpen;
+      try { if (wasOpen) localStorage.setItem("brief-fold", el.dataset.day); else localStorage.removeItem("brief-fold"); } catch { /* private mode */ }
+      loadBrief(); return;
+    }
+    const li = e.target.closest("[data-brief-sym]"); if (li && typeof window.openStockSheet === "function") window.openStockSheet(li.dataset.briefSym, { back: "Home" });
+  });
   // Swing signals at a glance on Home (only when you track swing trades)
   async function loadSwingStrip() {
     const el = $("#homeSwing"); if (!el) return;
@@ -1193,11 +1215,12 @@
           <td>${h.growth ? `<span class="chip ${({ under: "v-under", fair: "v-fair", pricey: "v-rich1", rich: "v-rich" })[h.growth.key]}" title="Expected ${h.growth.growth}%/yr vs ${h.growth.implied}%/yr priced in">${esc(h.growth.verdict)}</span>` : "—"}</td>
           <td>${h.held ? '<span class="chip v-none">You hold</span>' : ""}</td></tr>`).join("")}</tbody></table></section>`;
       { const meta = fdList.find(f => f.id === id), src = meta?.source; const note = document.createElement("p"); note.className = "hint fd-src";
-        note.innerHTML = `${src ? `⚡ Fetched automatically from ${src.kind === "link" ? `the fund house's file (<a href="${esc(src.url)}" target="_blank" rel="noopener">link</a>)` : esc(new URL(src.url).hostname)}; refreshed every month. ` : "Uploaded by you. "}${meta?.ageDays > 45 ? `<span class="avoid">This portfolio is ${meta.ageDays} days old${src ? "" : ": upload the latest month"}.</span>` : ""}`;
+        note.innerHTML = `${src ? `⚡ Fetched automatically from ${src.kind === "link" ? `the fund house's file (<a href="${esc(src.url)}" target="_blank" rel="noopener">link</a>)` : esc(new URL(src.url).hostname)}; refreshed every month. ` : meta?.mine === false ? "Uploaded from another account on this app. " : "Uploaded by you. "}🔗 Shared X-ray: every account on this app sees this portfolio (only the fund's stocks and weights, never anyone's units or amounts). ${meta?.ageDays > 45 ? `<span class="avoid">This portfolio is ${meta.ageDays} days old${src ? "" : ": upload the latest month"}.</span>` : ""}`;
         body.querySelector(".fd-head")?.after(note); }
       $("#fdRefetch")?.addEventListener("click", async e => { const b = e.currentTarget; b.disabled = true; b.textContent = "Fetching…"; try { const r = await post("/api/funds/auto", { id }); window.toast(`✓ ${ui.esc(r.fund.name)}: ${r.fund.count} holdings${r.fund.asOf ? ` (as of ${ui.esc(r.fund.asOf)})` : ""}.`); await fdLoadList(); fdOpen(id); } catch (err) { window.toast(ui.esc(err.message), { kind: "bad" }); b.disabled = false; b.textContent = "↻ Refetch"; } });
       $("#fdUpdate").onclick = () => fdShowImport(x.fund);
-      $("#fdDelete").onclick = async () => { if (await ui.confirm({ title: `Delete ${x.fund.name}?`, message: "Only the fund's saved portfolio is removed; the stocks stay tracked.", okText: "Delete fund", danger: true })) { await post("/api/funds/delete", { id }); await fdLoadList(); fdOpen(fdList[0]?.id || null); } };
+      { const meta = fdList.find(f => f.id === id), del = $("#fdDelete"); if (del && meta && meta.canDelete === false) { del.disabled = true; del.title = "Shared with every account: only the account that added it or the owner can delete it."; } }
+      $("#fdDelete").onclick = async () => { if (await ui.confirm({ title: `Delete ${x.fund.name}?`, message: "The X-ray library is shared: this removes the fund's saved portfolio for every account on this app. The stocks stay tracked.", okText: "Delete fund", danger: true })) { try { await post("/api/funds/delete", { id }); await fdLoadList(); fdOpen(fdList[0]?.id || null); } catch (err) { window.toast(ui.esc(err.message), { kind: "bad" }); } } };
       if ((x.pending || x.matching) && !$("#fundView").hidden) fdPoll = setTimeout(async () => { await loadValuation(); fdOpen(id); }, 10000);
     } catch (e) { body.innerHTML = `<p class="hint">Could not load the fund: ${esc(e.message)}</p>`; }
   }

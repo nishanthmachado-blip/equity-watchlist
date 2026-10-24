@@ -68,7 +68,7 @@
         <td class="sw-tg">${r.targets.map(t => `<div class="tg-l ${t.hit ? "hit" : r.nextTarget?.n === t.n ? "next" : ""}${t.done ? " done" : ""}" title="${t.sellQty ? `Plan: sell ${t.sellQty} share${t.sellQty === 1 ? "" : "s"} at T${t.n} (${t.planPct}%), about ${sg(t.profit)} profit` : `No sale planned at T${t.n}`}${t.done ? " · booked" : ""}"><i>T${t.n}</i><span>+${t.pct}%</span><b>${px(t.price)}</b><u class="tg-inr ${cls(r.qty * (t.price - r.avgPrice))}" title="Profit if all ${r.qty} shares sold at T${t.n}">${sg(r.qty * (t.price - r.avgPrice))}</u><em>${t.sellQty ? `sell ${t.sellQty}` : "hold"}</em>${t.done ? "✓✓" : t.hit ? "✓" : ""}</div>`).join("")}${(() => { const left = r.targets.filter(t => t.sellQty && !t.done), tot = left.reduce((a, t) => a + (Number(t.profit) || 0), 0); return left.length ? `<div class="tg-plan" title="Profit from the planned sales still to come (${left.map(t => `T${t.n}: sell ${t.sellQty}`).join(", ")})">Plan books <b class="${cls(tot)}">${sg(tot)}</b></div>` : ""; })()}${r.ownTargets || r.ownPlan ? `<div class="ticker">own ${[r.ownTargets && "targets", r.ownPlan && "plan"].filter(Boolean).join(" + ")}</div>` : ""}${r.sellNow ? `<div class="sw-sellnow">Sell ${r.sellNow} now</div>` : ""}${r.stopLoss ? `<div class="sw-sl${r.status === "stop-hit" ? " hit" : ""}">SL ${px(r.stopLoss)}</div>` : ""}</td>
         <td>${r.limit ? `<div class="fd-w"><span><i style="width:${used}%"></i></span>${used}%</div><div class="ticker">${amt(r.invested)} of ${amt(r.limit)}</div>` : "—"}</td>
         <td>${r.addBelow ? `Add ${amt(r.addAmount)} below ${px(r.addBelow)}<div class="ticker">${fin(r.distanceToAdd) ? `${r.distanceToAdd > 0 ? `${r.distanceToAdd}% away` : "reached"}` : ""}</div>` : r.addAmount ? `Add ${amt(r.addAmount)}` : "—"}</td>
-        <td>${sig(r)}</td>
+        <td>${sig(r)}${trailChip(r)}</td>
         <td class="sw-acts"><button type="button" class="ghost ai-btn" data-ask-ai="My ${esc(r.symbol)} swing position: book profit, hold, add or cut? Use the hold-or-sell numbers, targets, stop, trend and any results / dividend coming up." data-ask-sym="${esc(r.symbol)}" data-ask-where="Swing trading" title="Ask AI about this position">✨</button><button type="button" class="ghost sw-decide-btn" data-decide="${esc(r.id)}" title="Hold or sell? Compare selling now, holding to the dividend / results, and booking part with a stop">⚖</button><button type="button" class="ghost" data-act="sell" title="Sell / book profit">Sell</button><button type="button" class="ghost" data-act="buy" title="Bought more">Buy</button><button type="button" class="ghost" data-act="lots" title="Buys: dates, quantities and prices">📒</button><button type="button" class="ghost" data-act="edit" title="Edit">✎</button><button type="button" class="ghost danger-text" data-act="del" title="Remove">✕</button></td></tr>${evRow(r)}`;
     }).join("") : `<tr><td colspan="12" class="nw-empty-row">No swing positions yet. <button type="button" class="linklike" data-go="paste">Paste them from your sheet</button> or add one.</td></tr>`;
     renderDips(v.watch.filter(w => w.list === "dip"));
@@ -220,10 +220,10 @@
   }
   function journalHtml(j) {
     if (!j?.total) return "";
-    const tbl = (title, rows, empty) => `<div><h4>${title}</h4>${rows.length ? `<table class="sw-prev sw-jt"><thead><tr><th></th><th class="num">Trades</th><th class="num">Won</th><th class="num">Avg</th><th class="num">P/L</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.label)}</td><td class="num">${r.trades}</td><td class="num">${r.winRate}%</td><td class="num ${cls(r.avgPct)}">${pct(r.avgPct)}</td><td class="num ${cls(r.pnl)}"><b>${sg(r.pnl)}</b></td></tr>`).join("")}</tbody></table>` : `<p class="hint">${empty}</p>`}</div>`;
+    const tbl = (title, rows, empty, full = false) => `<div><h4>${title}</h4>${rows.length ? `<table class="sw-prev sw-jt"><thead><tr><th></th><th class="num">Trades</th><th class="num">Won</th><th class="num">Avg</th>${full ? '<th class="num" title="Average winning trade">Avg win</th><th class="num" title="Average losing trade">Avg loss</th><th class="num" title="Average days held">Days</th><th class="num" title="Profit factor: gains ÷ losses">PF</th>' : ""}<th class="num">P/L</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.label)}</td><td class="num">${r.trades}</td><td class="num">${r.winRate}%</td><td class="num ${cls(r.avgPct)}">${pct(r.avgPct)}</td>${full ? `<td class="num buy">${fin(r.avgWinPct) ? pct(r.avgWinPct) : "—"}</td><td class="num avoid">${fin(r.avgLossPct) ? pct(r.avgLossPct) : "—"}</td><td class="num">${r.avgDays ?? "—"}</td><td class="num">${fin(r.profitFactor) ? r.profitFactor : r.pnl > 0 ? "∞" : "—"}</td>` : ""}<td class="num ${cls(r.pnl)}"><b>${sg(r.pnl)}</b></td></tr>`).join("")}</tbody></table>` : `<p class="hint">${empty}</p>`}</div>`;
     const early = j.earlyExits?.trades ? `<p class="hint">${j.earlyExits.trades} trade${j.earlyExits.trades === 1 ? " was" : "s were"} sold in profit before target 1${fin(j.earlyExits.missedToT1) ? `: about ${sg(j.earlyExits.missedToT1)} more if they had reached T1 at the time` : ""}.</p>` : "";
     return `<details class="sw-journal" open><summary>📝 Journal: what works for you <span class="hint">${j.reviewed} of ${j.total} trades reviewed (📝 on a closed trade)</span></summary>
-      <div class="sw-jgrid">${tbl("By setup", j.bySetup, "Tag a setup when you add a position.")}${tbl("By mistake", j.byMistake.filter(r => r.key !== "unreviewed" || j.byMistake.length === 1), "Review closed trades to see which mistakes cost the most.")}</div>${early}</details>`;
+      <div class="sw-jgrid">${tbl("By setup", j.bySetup, "Tag a setup when you add a position.", true)}${tbl("By mistake", j.byMistake.filter(r => r.key !== "unreviewed" || j.byMistake.length === 1), "Review closed trades to see which mistakes cost the most.")}</div>${early}</details>`;
   }
   function renderScore() {
     const c = sw.score, box = $("#swScore"); if (!box) return;
@@ -436,6 +436,49 @@
       <label class="ui-field"><span>Lesson / note</span><textarea class="ui-input" name="lesson" rows="2" maxlength="400" placeholder="e.g. sold at T1 into strength; should have trailed the stop">${esc(t?.review?.note || "")}</textarea></label></details>`;
   }
   const readReview = box => { const m = [...box.querySelectorAll("[name=mist]:checked")].map(i => i.value), note = box.querySelector("[name=lesson]")?.value.trim(); return m.length || note ? { mistakes: m, note } : null; };
+  // ---- Automatic trailing stop-loss (per position): rule, multiplier, history of raises ----
+  const trailChip = r => r.trail?.on
+    ? `<button type="button" class="sw-trail on" data-trail="${esc(r.id)}" title="Trailing stop on: ${r.trail.rule === "low20" ? "20-day low" : `${r.trail.mult} × ATR under the highest price`}. It only moves up.${r.trail.history?.[0] ? ` Last raised ${new Date(r.trail.history[0].at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}.` : ""}">🪜 Trailing${fin(r.stopLoss) ? ` · ${px(r.stopLoss)}` : ""}</button>`
+    : `<button type="button" class="sw-trail" data-trail="${esc(r.id)}" title="Let the app raise this stop-loss automatically as the price rises">🪜 Trail stop</button>`;
+  async function trailDialog(p) {
+    if (!p) return;
+    const t = p.trail || {}, on = !!t.on, hist = (t.history || []).slice(0, 8);
+    const out = await window.ui.dialog({ title: `Trailing stop: ${p.name}`, icon: "🪜", okText: "Save", wide: true,
+      message: `The app moves the stop-loss <b>up</b> as the price rises and never lowers it. You get an alert when the price comes near the stop, and when it hits it. Current stop: <b>${fin(p.stopLoss) ? px(p.stopLoss) : "none"}</b>${p.health?.trail ? ` · today's trailing level ${px(p.health.trail)}` : ""}.`,
+      bodyHtml: `<label class="ui-opt"><input type="checkbox" name="on"${on ? " checked" : ""}><span><b>Trail this stop-loss automatically</b><small>ATR rule: the highest price since you switch it on, less N × the average daily range. 20-day low rule: the lowest low of the last 20 trading days.</small></span></label>
+        <label class="ui-field"><span>Rule</span><select class="ui-input" name="rule"><option value="atr"${t.rule !== "low20" ? " selected" : ""}>N × ATR under the highest price</option><option value="low20"${t.rule === "low20" ? " selected" : ""}>20-day low</option></select></label>
+        <label class="ui-field"><span>N for the ATR rule (1–5; 2 is usual, 3 gives more room)</span><input class="ui-input" name="mult" inputmode="decimal" value="${t.mult || 2}"></label>
+        ${hist.length ? `<h4 style="margin:10px 0 4px">Raised so far</h4><ul class="sw-trail-hist">${hist.map(h => `<li><b>${new Date(h.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</b> ${h.from ? `${px(h.from)} → ` : ""}${px(h.to)} <span class="hint">${esc(h.why)}</span></li>`).join("")}</ul>` : ""}
+        <p class="vs-fine">Checked with each price update while the market is open (and every 5 minutes). ATR is the 14-day average true range from daily prices. The stop never goes above the current price.</p>`,
+      collect: box => api("/api/swing/trail", { id: p.id, on: box.querySelector("[name=on]").checked, rule: box.querySelector("[name=rule]").value, mult: box.querySelector("[name=mult]").value }) });
+    if (out) { sw = out; render(); if (out.notice) window.toast?.(out.notice, { kind: "ok", ms: 6000 }); }
+  }
+  // ---- Backtest a setup on ~5 years of your own stocks' daily prices ----
+  let bt = null, btTimer = null;
+  async function loadBacktest(run = null) {
+    clearTimeout(btTimer);
+    try { bt = await api("/api/swing/backtest", run || undefined); } catch (e) { $("#swBtBody").innerHTML = `<p class="hint">Could not load the backtest: ${esc(e.message)}</p>`; return; }
+    renderBacktest();
+    if (bt.job?.running && !$("#swBt")?.hidden) btTimer = setTimeout(() => loadBacktest(), 1500);
+  }
+  function renderBacktest() {
+    const box = $("#swBtBody"); if (!box || !bt) return;
+    const j = bt.job, L = bt.last, p = j?.params || L?.params || { setup: "high52", exit: "t1", maxDays: 30 };
+    const opt = (o, cur) => Object.entries(o).map(([k, l]) => `<option value="${k}"${k === cur ? " selected" : ""}>${esc(l)}</option>`).join("");
+    const form = `<div class="toolbar sw-bt-form"><label class="hint">Setup <select class="ui-input" id="swBtSetup">${opt(bt.setups, p.setup)}</select></label><label class="hint">Exit <select class="ui-input" id="swBtExit">${opt(bt.exits, p.exit)}</select></label><label class="hint">Max days <input class="ui-input" id="swBtDays" inputmode="numeric" value="${p.maxDays}" style="width:64px"></label><button type="button" id="swBtRun"${j?.running ? " disabled" : ""}>${j?.running ? `Testing ${j.done} of ${j.total || "…"}` : "▶ Run backtest"}</button></div>`;
+    $("#swBtSum").textContent = L?.summary?.trades ? `${L.label}: ${L.summary.trades} trades, ${L.summary.winRate}% won, ${pct(L.summary.avgPct)} a trade` : "";
+    if (!L) { box.innerHTML = `${form}<p class="hint">Tests the setup on about 5 years of daily prices of the stocks you hold, swing-trade and track: every day the scan's exact rules are applied, a signal is bought at the next open and sold at the stop, the target or after the max days.</p>`; return; }
+    const s = L.summary, tile = (k, v, sub = "", c = "") => `<div><span>${k}</span><strong class="${c}">${v}</strong>${sub ? `<small>${sub}</small>` : ""}</div>`;
+    const d = x => new Date(`${x}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit" });
+    box.innerHTML = `${form}<p class="hint"><b>${esc(L.label)}</b> · exit: ${esc(L.exitLabel)} · max ${L.params.maxDays} days · ${L.tested} of ${L.stocks} stocks tested${L.from ? ` · ${d(L.from)} to ${d(L.to)}` : ""} · ${L.params.costPct}% costs per trade · run ${new Date(L.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</p>
+      ${!s.trades ? '<p class="nw-empty-row">No signals in this period for these stocks. Try another setup, or track more stocks.</p>' : `<div class="sw-bt-tiles">${tile("Trades", s.trades, `${s.avgDays} days on average`)}${tile("Won", `${s.winRate}%`, `${s.wins} of ${s.trades}`)}${tile("Avg trade", pct(s.avgPct), `win ${pct(s.avgWinPct)} · loss ${pct(s.avgLossPct)}`, cls(s.avgPct))}${tile("Worst losing streak", s.worstStreak, `trades in a row`)}${tile("₹1 L a trade", sg(s.per100k), `max drawdown ${s.maxDrawdownPct}% of one position`, cls(s.per100k))}${tile("Profit factor", fin(s.profitFactor) ? s.profitFactor : "—", "gains ÷ losses")}</div>
+      <div class="sw-jgrid"><div><h4>By year</h4><table class="sw-prev sw-jt"><thead><tr><th>Year</th><th class="num">Trades</th><th class="num">Won</th><th class="num">Avg</th></tr></thead><tbody>${s.years.map(y => `<tr><td>${y.year}</td><td class="num">${y.trades}</td><td class="num">${y.winRate}%</td><td class="num ${cls(y.avgPct)}">${pct(y.avgPct)}</td></tr>`).join("")}</tbody></table>
+        <p class="hint">Exits: ${Object.entries(s.exits).map(([k, n]) => `${{ target: "target", stop: "stop", "trailing stop": "trailing stop", time: "max days", open: "still open" }[k] || k} ${n}`).join(" · ")}. Best ${pct(s.best.pct)} (${esc(s.best.symbol)}), worst ${pct(s.worst.pct)} (${esc(s.worst.symbol)}).</p></div>
+        <div><h4>By stock</h4><table class="sw-prev sw-jt"><thead><tr><th>Stock</th><th class="num">Trades</th><th class="num">Won</th><th class="num">Avg</th><th class="num">Total</th></tr></thead><tbody>${L.perStock.slice(0, 15).map(r => `<tr><td>${esc(r.symbol)}</td><td class="num">${r.trades}</td><td class="num">${r.winRate}%</td><td class="num ${cls(r.avgPct)}">${pct(r.avgPct)}</td><td class="num ${cls(r.totalPct)}"><b>${pct(r.totalPct)}</b></td></tr>`).join("")}</tbody></table></div></div>
+      <details><summary class="hint">Latest ${Math.min(40, L.recent.length)} trades</summary><table class="sw-prev sw-jt"><thead><tr><th>Stock</th><th>Bought</th><th class="num">At</th><th>Sold</th><th class="num">At</th><th>Why</th><th class="num">Result</th></tr></thead><tbody>${L.recent.map(t => `<tr><td>${esc(t.symbol)}</td><td>${d(t.entryDay)}</td><td class="num">${px(t.entry)}</td><td>${d(t.exitDay)}</td><td class="num">${px(t.exit)}</td><td>${esc(t.why)}</td><td class="num ${cls(t.pct)}">${pct(t.pct)}</td></tr>`).join("")}</tbody></table></details>`}
+      ${L.skipped?.length ? `<p class="hint">Skipped ${L.skipped.length}: ${L.skipped.slice(0, 8).map(x => `${esc(x.symbol)} (${esc(x.why)})`).join(", ")}${L.skipped.length > 8 ? "…" : ""}</p>` : ""}
+      <p class="vs-fine">Past results on your current stocks (survivors: stocks you dropped or that were delisted are not in it), so expect real results to be worse. Signals use the same rules as Swing ideas; a gap below the stop is sold at the open. Not advice.</p>`;
+  }
   async function reviewDialog(t) {
     const out = await window.ui.dialog({ title: `Review: ${t.name}`, icon: "📝", okText: "Save review", wide: true,
       message: `${t.qty} shares bought at ${px(t.buyAvg)}, sold at ${px(t.sellPrice)} on ${new Date(t.closedAt).toLocaleDateString("en-IN")}: ${sg(t.pnl)} (${pct(t.pnlPct)})${t.reason ? `. Why you bought: “${t.reason}”` : ""}.`,
@@ -627,6 +670,7 @@
     });
     $("#swExport").onclick = () => { if (!sw?.realised?.count && !sw?.positions?.length) { window.toast?.("Nothing to export yet.", { kind: "info" }); return; } const a = document.createElement("a"); a.href = "/api/swing/export.xlsx"; a.download = ""; document.body.append(a); a.click(); a.remove(); };
     $("#swRefresh").onclick = () => load(false, true);
+    $("#swBt")?.addEventListener("toggle", e => { if (e.target.open) loadBacktest(); else clearTimeout(btTimer); });
     $("#swingView").addEventListener("click", async e => {
       const pn = e.target.closest("[data-px-now]"); if (pn) { e.stopPropagation(); pxNow(pn); return; }
       const mb = e.target.closest("[data-more]"); if (mb) { swMore = mb.dataset.more === "1"; try { localStorage.setItem("sw-more", swMore ? "1" : "0"); } catch { /* private mode */ } render(); return; }
@@ -649,6 +693,8 @@
         if (ok) { try { sw = await api(`/api/swing/${tb.dataset.tact}`, { id: t.id }); render(); window.toast?.(reopen ? `${t.name} reopened.` : "Trade deleted.", { kind: "ok" }); } catch (err) { window.toast?.(err.message, { kind: "error" }); } }
         return;
       }
+      const tz = e.target.closest("[data-trail]"); if (tz) { trailDialog(sw.positions.find(x => x.id === tz.dataset.trail)); return; }
+      if (e.target.closest("#swBtRun")) { loadBacktest({ setup: $("#swBtSetup").value, exit: $("#swBtExit").value, maxDays: $("#swBtDays").value }); return; }
       const dz = e.target.closest("[data-decide]"); if (dz) { decideDialog(sw.positions.find(x => x.id === dz.dataset.decide)); return; }
       const btn = e.target.closest("[data-act]"), tr = e.target.closest("tr[data-id]"); if (!btn || !tr) return;
       const id = tr.dataset.id, p = sw.positions.find(x => x.id === id), w = sw.watch.find(x => x.id === id), act = btn.dataset.act;

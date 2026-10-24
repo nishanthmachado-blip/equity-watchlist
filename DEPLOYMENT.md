@@ -204,8 +204,9 @@ Use this option if the team standardises on ALBs.
   - watchlists and lists
   - synced broker holdings
   - Kite / Angel One / Dhan / Groww / INDmoney sessions and saved API keys
-  - alerts, theses, buying plan, dividend plan, fund X-rays, valuation log
-- **Shared** (top level of `DATA_DIR`): public market-data caches only (fundamentals, Screener extras, dividend history, technicals, fund name→symbol map). These hold no personal data.
+  - alerts, theses, buying plan, dividend plan, long-term themes, valuation log
+  - which mutual funds you hold, their values, and your links to X-ray portfolios
+- **Shared** (top level of `DATA_DIR`): public market-data caches only (fundamentals, Screener extras, dividend history, technicals, fund name→symbol map), and the **mutual fund X-ray library** (`mf-xray.json`: each fund's stocks and weights, fetched once for every account). These hold no personal data; every account sees the list of X-ray funds, and only the account that added one (or the owner) can delete it.
 - **Owner only:**
   - broker keys in the env file (other accounts enter their own in the app)
   - manual fundamentals import

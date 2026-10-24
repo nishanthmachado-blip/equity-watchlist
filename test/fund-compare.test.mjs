@@ -54,9 +54,9 @@ test("server: compare two saved funds (and each one's overlap with your other fu
     assert.equal(r.json.a.withOthers[0].name, "Flexi cap fund");
     assert.ok(r.json.a.withOthers[0].overlapPct > r.json.b.withOthers[0].overlapPct, "the momentum fund repeats the flexi cap more");
     assert.equal((await call(`/api/funds/compare?a=${mom}&b=${mom}`, { cookie: owner })).status, 400);
-    // another account can't read these funds
+    // the X-ray library is shared (v5.42): another account can compare these funds, but sees none of this account's money in them
     await call("/api/auth/users", { cookie: owner, body: { username: "other", password: "other-pass-phrase" } });
     const other = (await call("/api/auth/login", { body: { username: "other", password: "other-pass-phrase" } })).cookie;
-    if (other) assert.equal((await call(`/api/funds/compare?a=${mom}&b=${mid}`, { cookie: other })).status, 404);
+    if (other) { const o = await call(`/api/funds/compare?a=${mom}&b=${mid}`, { cookie: other }); assert.equal(o.status, 200); assert.equal(o.json.a.held, null); assert.equal(o.json.b.held, null); }
   } finally { child.kill("SIGTERM"); await new Promise(r => child.once("exit", r)); }
 });

@@ -148,7 +148,7 @@
     const tg = st.telegram || {}, dg = st.digest || {};
     await window.ui.dialog({ title: "Daily Telegram digests", icon: "☀️", okText: "Save", wide: true,
       message: tg.connected ? `Sent to @${tg.bot} → ${tg.chat} on weekdays.` : "Connect Telegram first (📱 Phone alerts above), then switch these on.",
-      bodyHtml: `<label class="ui-opt"><input type="checkbox" name="morning"${dg.morning ? " checked" : ""}><span><b>☀️ Morning, 8:45 am</b><small>Swing positions to book or watch, cash to deploy, results and dividend dates this week, alerts armed.</small></span></label>
+      bodyHtml: `<label class="ui-opt"><input type="checkbox" name="morning"${dg.morning ? " checked" : ""}><span><b>☀️ Morning brief, 9:00 am</b><small>Swing positions to book or watch, trailing stops raised, cash to deploy, holdings and watchlist stocks in the buy zone, big moves, order wins for your stocks, results and dividend dates this week.</small></span></label>
         <label class="ui-opt"><input type="checkbox" name="evening"${dg.evening ? " checked" : ""}><span><b>🌙 Evening, 4:00 pm</b><small>Today's P/L on swing and holdings, biggest movers, trades booked, alerts that fired, top new swing ideas, what's coming up.</small></span></label>
         <div class="toolbar"><button type="button" class="ghost" data-pv="morning">Preview morning</button><button type="button" class="ghost" data-pv="evening">Preview evening</button>${tg.connected ? '<button type="button" class="ghost" data-send="morning">Send morning now</button>' : ""}</div><pre class="dg-preview" data-out hidden></pre>`,
       onOpen: (box, { setError }) => {

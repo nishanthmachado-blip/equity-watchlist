@@ -16,5 +16,6 @@ Personal Indian-equity research app: Node ESM server (`server.mjs`, per-user dat
 
 ## Privacy rules
 - Per-user files only through `userFile()`; shared public caches live in `DATA_DIR` root.
+- The mutual fund X-ray library (`mf-xray.json`, `U.fundsFile`) is shared by every account (fund portfolios are public data); write it only inside `withXrayLock()`. Which funds a user holds, values and links stay in their own files.
 - Secrets (broker sessions, Telegram, the Anthropic key `ai-key.json`) are excluded from backups (`BACKUP_SECRET_FILES`) and never sent to the browser.
 - Ask AI (`ai.mjs`): only `buildContext()` output and tool results go to Anthropic; never account labels / client IDs / PAN / email / folio numbers.
