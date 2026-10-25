@@ -71,6 +71,7 @@ import { METRICS, OPS, PRESETS, sanitizeThesis, evaluateThesis, trackBreaks } fr
 import { AI_MODELS, AI_DEFAULTS, PRIVACY as AI_PRIVACY, sealKey, openKey, looksLikeKey, buildContext, SYSTEM as AI_SYSTEM, TOOLS as AI_TOOLS, sseParser, messageCollector, monthKey, friendlyApiError, AI_PROVIDERS, pickModel, chatModelIds, toOpenAiTools, openAiCollector, friendlyProviderError, looksLikeAnyKey } from "./ai.mjs";
 import { sanitizeMenu } from "./menuprefs.mjs";
 import { firePlan, sanitizeFirePlan } from "./fire.mjs";
+import { decide as nowCall, marketMood } from "./nowcall.mjs";
 import { addMarketDay, movers as marketMovers, indexChanges } from "./movers.mjs";
 import { fetchFromApi, fetchFromLink } from "./fundsource.mjs";
 import { SMART_INDICES, normIndex, parseAllIndices as parseIndexList, parseIndexStocks, parseIndexCsv, fillFromBars, smartRows, indexSummary } from "./indices.mjs";
@@ -946,6 +947,25 @@ async function firePage() {
   const start = { safety: 0, pf: 0, other: 0, equity: 0 };
   for (const b of bk.buckets) for (const l of b.lines) { if (["epf", "ppf", "nps"].includes(l.category)) start.pf += l.value; else if (b.id === "safety") start.safety += l.value; else if (b.id === "long") start.equity += l.value; else start.other += l.value; }
   return { ...firePlan({ plan, tracked, start, liabilities: bk.liabilities || 0 }), saved: plan, at: new Date().toISOString() };
+}
+// ---- Decide now (decide.mjs): one call per stock across holdings, favourites and theme stocks, plus a Top 5 ----
+async function decideView({ amount = null } = {}) {
+  const [{ rows }, hv, fav, themesRaw, scan, review] = await Promise.all([computeRows(), kiteHoldingsView(), readJson(favFile(), { symbols: [] }), readJson(themePlanFile(), null), readJson(swingScanFile, { snaps: {} }),
+    holdingsReview().catch(() => null)]);
+  const bySym = new Map(rows.map(r => [String(r.symbol).toUpperCase(), r])), snaps = scan.snaps || {};
+  const list = new Map(), addSym = (sym, name, src) => { sym = String(sym || "").toUpperCase(); if (!sym) return; const x = list.get(sym) || { symbol: sym, name: name || null, sources: [] }; if (!x.sources.includes(src)) x.sources.push(src); if (!x.name && name) x.name = name; list.set(sym, x); };
+  for (const h of hv.holdings) addSym(h.symbol, h.company, "Holding");
+  for (const sym of fav.symbols || []) addSym(sym, null, "Favourite");
+  for (const t of themesRaw?.themes || []) for (const x of t.symbols || []) addSym(typeof x === "string" ? x : x.symbol, typeof x === "string" ? null : x.name, `Theme: ${t.name}`);
+  const held = new Map(hv.holdings.map(h => [h.symbol, h])), tot = hv.holdings.reduce((a, h) => a + (h.value || 0), 0);
+  const reviewOf = new Map((review?.rows || []).map(r => [r.symbol, r]));
+  const ideaItems = [...list.values()].map(x => { const r = bySym.get(x.symbol), v = r?.verdict; return { symbol: x.symbol, name: x.name || r?.company || x.symbol, snap: snaps[x.symbol]?.s || null, verdict: v ? { key: v.key, label: v.label, inZone: v.inZone, fairBase: r.fairValue?.base ?? null, fairBull: r.fairValue?.bull ?? null } : null }; });
+  const ideas = new Map(rankIdeas(ideaItems, { limit: 500 }).map(i => [i.symbol, i]));
+  const items = [...list.values()].map(x => { const h = held.get(x.symbol); return { ...x, row: bySym.get(x.symbol) || null, snap: snaps[x.symbol]?.s || null,
+    held: h ? { value: Math.round(h.value || 0), weightPct: tot > 0 ? Math.round(h.value / tot * 1000) / 10 : null, pnlPct: h.invested > 0 && h.value > 0 ? Math.round((h.value / h.invested - 1) * 1000) / 10 : null } : null,
+    review: reviewOf.get(x.symbol) ? { verdict: reviewOf.get(x.symbol).verdict, reasons: reviewOf.get(x.symbol).reasons } : null, swing: ideas.get(x.symbol) || null }; });
+  const out = nowCall(items, { market: marketMood(scan.nifty?.bars || []), cash: amount });
+  return { ...out, scanAt: scan.lastRun || null, noScan: !Object.keys(snaps).length, at: new Date().toISOString() };
 }
 // ---- Holdings clean-up review (cleanup.mjs): Keep / Add / Trim / Exit for every stock you hold, with the reasons ----
 // Uses saved data only (the swing scan's daily-bar snapshots, saved NSE closes, the tax page, the fund X-ray): no outside site.
@@ -4380,6 +4400,7 @@ async function appHandler(req, res, url) {
         return reply(res, 404, { message: "Unknown planner operation." });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
+    if (url.pathname === "/api/decide" && req.method === "GET") { const a = Number(url.searchParams.get("amount")); return reply(res, 200, await decideView({ amount: a > 0 && a < 1e11 ? a : null })); }
     if (url.pathname === "/api/fire" && req.method === "GET") return reply(res, 200, await firePage());
     if (url.pathname === "/api/fire/save" && req.method === "POST") {
       try { const b = await readBody(req); await withUserLock(async () => { const prev = await readJson(fireFile(), {}); await writeJson(fireFile(), b.reset ? sanitizeFirePlan({}, { age: prev.age, retireAge: prev.retireAge, goals: prev.goals }) : sanitizeFirePlan(b, prev)); }); return reply(res, 200, await firePage()); }

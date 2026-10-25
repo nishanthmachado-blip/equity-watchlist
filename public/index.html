@@ -8,6 +8,7 @@
     <nav class="side-nav" aria-label="View">
       <p class="side-label">Main</p>
       <button id="viewHome" class="viewTab active" title="Value a stock"><span class="ico" aria-hidden="true">🔎</span><span class="lbl">Value a stock</span></button>
+      <button id="viewDecide" class="viewTab" data-goto="decide" title="What to do now"><span class="ico" aria-hidden="true">🚦</span><span class="lbl">What to do now</span></button>
       <button id="viewFavs" class="viewTab" data-goto="favs" title="Favourites"><span class="ico" aria-hidden="true">❤️</span><span class="lbl">Favourites</span></button>
       <button id="viewLists" class="viewTab" title="Watchlists"><span class="ico" aria-hidden="true">⭐</span><span class="lbl">Watchlists</span></button>
       <button id="viewMarket" class="viewTab" title="Market today"><span class="ico" aria-hidden="true">📈</span><span class="lbl">Market today</span></button>
@@ -237,6 +238,10 @@
     <section id="bkView" data-feature-view="buckets" hidden>
       <section class="toolbar"><span class="hint">Your net worth in four buckets: safety, short term, long-term growth and retirement. Click a bucket to jump to it.</span><button type="button" class="ghost" data-bk-settings>⚙ Settings</button><button type="button" class="ghost" id="bkReload">⟳ Refresh</button></section>
       <div id="bkSum"></div><div id="bkBody"><p class="hint">Loading…</p></div><div id="bkNotes"></div>
+    </section>
+    <section id="dcView" data-feature-view="decide" hidden>
+      <section class="toolbar"><span class="hint">Your holdings, favourites and Long-term theme stocks in one place: what to buy for the long term, what is only a swing trade, what to wait for, and what to trim.</span><button type="button" class="ghost" id="dcReload">⟳ Refresh</button></section>
+      <div id="dcBody"><p class="hint">Loading…</p></div>
     </section>
     <section id="fiView" data-feature-view="fire" hidden>
       <section class="toolbar"><span class="hint">Built from your Monthly expenses and Net worth. Change any number below and the plan updates. Private to your login.</span><button type="button" class="ghost" id="fiReset">↺ Use my tracked numbers</button><button type="button" class="ghost" id="fiReload">⟳ Refresh</button></section>

@@ -1,5 +1,21 @@
 # Equity Watchlist MVP
 
+## v5.48.0: What to do now
+
+New screen at the top of the menu (Main → 🚦 What to do now). It gives one call per stock across your holdings, ❤ favourites and Long-term theme stocks, so you don't have to piece it together from Focus list, Holdings clean-up, Swing and Themes.
+- **Market mood** from Nifty (NIFTYBEES in the daily swing scan): healthy / mild dip / weak / bear.
+  - In a weak or bear market, long-term buys are split into 3 parts (now, −5%, −10%).
+  - The ranking also leans to quality and to stocks holding up better than Nifty.
+- **One lane per stock:**
+  - 🟢 Long-term buy now: quality ≥ 55 and a fair price.
+  - ⏳ Long-term wait for price: shows the price to wait for and how far away it is.
+  - ⚡ Swing trade: a chart setup on a stock that isn't a keeper, with entry / stop / target.
+  - ✋ Hold, don't add.
+  - ✂️ Trim / exit: from Holdings clean-up.
+  - Skip.
+- **🏆 Top 5 to focus on now:** best long-term buys from your own list, at most 2 per sector. Add "Money to invest now" to see the split, and a "Next to watch" list of good businesses nearest their buy zone.
+- Private to your login; uses saved data only (no outside site on the request). New module `nowcall.mjs`.
+
 ## v5.47.0: FIRE planner
 
 New screen in the menu (Your portfolio → 🔥 FIRE planner). It is built from your own numbers and private to your login. It is never sent to Ask AI.

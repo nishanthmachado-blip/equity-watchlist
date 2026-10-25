@@ -22,3 +22,4 @@ Personal Indian-equity research app: Node ESM server (`server.mjs`, per-user dat
 - Ask AI (`ai.mjs`): only `buildContext()` output and tool results go to the AI provider the user picked (Anthropic or an OpenAI-compatible one); never account labels / client IDs / PAN / email / folio numbers. Provider keys live in `ai-key.json` / `ai-keys.json` (secret files).
 - Side-menu arrangement (`navorder.js`, `/api/ui/menu`, `menu.json`) is per login. New menu buttons need an `id` and `class="viewTab"`; they land in their default group for users who already arranged the menu.
 - FIRE planner (`fire.mjs`, `/api/fire`, `fire.json`) is per login and, like expenses and buckets, never goes to Ask AI.
+- `decide.mjs` is the Ask AI hold-or-sell helper; the "What to do now" screen is `nowcall.mjs` + `public/decide.js` (`/api/decide`). Check a module name is free before creating one.
