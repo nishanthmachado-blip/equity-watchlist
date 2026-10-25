@@ -36,6 +36,7 @@ import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, buildNetworth, ad
 import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { reviewHoldings } from "./cleanup.mjs";
 import { BUCKETS, sanitizeBucketPlan, bucketView } from "./buckets.mjs";
+import { moneyMapData, buildMoneyMap } from "./moneymap.mjs";
 import { DEFAULT_MODES, CATEGORIES as EXP_CATEGORIES, PLAN_TYPES, MONTH_RE, sanitizeEntry as sanitizeSpend, sanitizePlanLine, sanitizeIncome, newMonth, toTemplate, parsePlanPaste, parseLogPaste, monthSummary, yearReport, toCsv as expensesCsv, guessCategory } from "./expenses.mjs";
 import { parseMfapi, seriesStats, barsToSeries, reviewFunds, fundIdeas, diffFundAlerts, portfolioChurn } from "./mfreview.mjs";
 import { sanitizeThemePlan, parseThemePaste, themePlanView, diffThemeAlerts, themeDefaults, THEME_ICONS } from "./themeplan.mjs";
@@ -4028,6 +4029,13 @@ async function appHandler(req, res, url) {
         const monthOf = v => { const m = String(v || "").slice(0, 7); if (!MONTH_RE.test(m)) throw new Error("Pick a month."); return m; };
         if (req.method === "GET" && op === "") return reply(res, 200, await view(monthOf(url.searchParams.get("month") || istDay().slice(0, 7))));
         if (req.method === "GET" && op === "year") { const st = await expenseStore(); return reply(res, 200, yearReport(st.months, monthOf(url.searchParams.get("month") || istDay().slice(0, 7)), { budgets: st.budgets })); }
+        if (req.method === "GET" && op === "money-map.xlsx") { // one month in the Money Map layout (expenses, investments, portfolio)
+          const month = monthOf(url.searchParams.get("month") || istDay().slice(0, 7)), st = await expenseStore(), nw = await networthView().catch(() => ({ lines: [] }));
+          const label = new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" });
+          const d = moneyMapData({ month, label, data: st.months[month] || { income: [], plan: [], entries: [] }, budgets: st.budgets, nwLines: nw.lines || [], basis: url.searchParams.get("basis") === "budget" ? "budget" : "actual" });
+          res.writeHead(200, { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="Money-Map-${month}.xlsx"`, "Cache-Control": "no-store" });
+          return res.end(buildMoneyMap(d));
+        }
         if (req.method === "GET" && op === "export.csv") { const st = await expenseStore(); res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": "attachment; filename=\"expenses.csv\"", "Cache-Control": "no-store" }); return res.end(expensesCsv(st.months)); }
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown expense operation." });
         const b = await readBody(req), month = monthOf(b.month); let notice = null;

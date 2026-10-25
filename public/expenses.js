@@ -89,6 +89,14 @@
       collect: box => Object.fromEntries(["date", "amount", "item", "mode", "category", "note"].map(k => [k, box.querySelector(`[name=${k}]`).value])) });
     if (out) post("entry", { ...out, id: e.id }, "Saved.");
   }
+  async function moneyMap() {
+    const out = await window.ui.dialog({ title: `Money Map: ${monName(month)}`, icon: "⬇", okText: "Download",
+      message: "One page: responsible and bonus spending, monthly investments and your current portfolio (from Net worth), in your Money Map layout. The orange totals are live formulas, and a Details sheet shows where each number came from.",
+      bodyHtml: `<label class="ui-opt"><input type="radio" name="basis" value="actual" checked><span><b>Actual spends where you logged them</b><small>Grocery, Milk, Petrol… use what you spent in Daily spends; other lines use the budget.</small></span></label><label class="ui-opt"><input type="radio" name="basis" value="budget"><span><b>Budgeted amounts</b><small>The plan for the month, not what was spent.</small></span></label>`,
+      collect: box => box.querySelector("[name=basis]:checked").value });
+    if (!out) return;
+    const a = document.createElement("a"); a.href = `/api/expenses/money-map.xlsx?month=${month}&basis=${out}`; a.download = ""; document.body.append(a); a.click(); a.remove();
+  }
   async function settings() {
     const out = await window.ui.dialog({ title: "Expense settings", icon: "⚙️", okText: "Save", wide: true,
       bodyHtml: `<label class="ui-field"><span>Payment methods (one per line; e.g. Pluxee, GPay, Credit card, a family member who pays)</span><textarea class="ui-input" name="modes" rows="6">${esc(d.modes.join("\n"))}</textarea></label>
@@ -103,7 +111,7 @@
       const nav = e.target.closest("[data-mnav]"); if (nav) { month = shiftM(month, Number(nav.dataset.mnav)); remember(); load(); return; }
       const t = e.target.closest("[data-tab]"); if (t) { tab = t.dataset.tab; load(); return; }
       const b = e.target.closest("[data-ex]");
-      if (b) { const k = b.dataset.ex; if (k === "start") post("start", {}); else if (k === "apply-std") { if (await window.ui.confirm({ title: `Reset ${monName(month)} to your standard budget?`, message: "This month's budget lines and income are replaced by the standard ones (nothing ticked as done). Daily spends are not touched.", okText: "Reset" })) post("start", { applyStandard: true }); } else if (k === "paste") paste(); else if (k === "plan") editPlan(); else if (k === "settings") settings(); else if (k === "today") { month = ist().slice(0, 7); remember(); load(); } return; }
+      if (b) { const k = b.dataset.ex; if (k === "moneymap") { moneyMap(); return; } if (k === "start") post("start", {}); else if (k === "apply-std") { if (await window.ui.confirm({ title: `Reset ${monName(month)} to your standard budget?`, message: "This month's budget lines and income are replaced by the standard ones (nothing ticked as done). Daily spends are not touched.", okText: "Reset" })) post("start", { applyStandard: true }); } else if (k === "paste") paste(); else if (k === "plan") editPlan(); else if (k === "settings") settings(); else if (k === "today") { month = ist().slice(0, 7); remember(); load(); } return; }
       const ed = e.target.closest("[data-edit]"); if (ed) { editEntry(d.data.entries.find(x => x.id === ed.dataset.edit)); return; }
       const del = e.target.closest("[data-del]"); if (del) { const x = d.data.entries.find(z => z.id === del.dataset.del); if (x && await window.ui.confirm({ title: `Delete ${x.item} ${inr(x.amount)}?`, okText: "Delete", danger: true })) post("entry-delete", { id: x.id }, "Deleted."); }
     });

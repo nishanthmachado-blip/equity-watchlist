@@ -1,5 +1,12 @@
 # Equity Watchlist MVP
 
+## v5.45.0: Money Map download
+- Monthly expenses → **⬇ Money Map**: the month as an Excel file in your Money Map layout. Responsible spending (rent + maintenance, utilities, groceries, domestic help, car, mobile, insurance, child education, EMIs, elderly care, family, transport) and bonus spending (food delivery, dining out, entertainment, subscriptions, gadgets, grooming, clothing, fitness, travel, other) on the left. Monthly investments (SIPs, direct equities, EPF / PPF / NPS, FD / RD, crypto, gold, emergency fund), savings spent and the current portfolio (from Net worth) on the right.
+- Blue numbers come from the app; the orange TOTAL rows and NET SURPLUS / (DEFICIT) are live Excel formulas, so you can still change any number.
+- Choose actual spends (Grocery, Milk, Petrol… from Daily spends) or the budgeted amounts.
+- A **Details** sheet shows where every number came from (budget line, daily spend, net worth line), with your income; a **Spends** sheet lists the month's spends. Prints on one page width.
+- New API: `GET /api/expenses/money-map.xlsx?month=YYYY-MM&basis=actual|budget` (per login).
+
 ## v5.44.1: standard monthly budget
 - Monthly expenses: tick **"Make this my standard monthly budget"** when you edit or paste a budget, and every new month starts with those fixed lines (rent, maintenance, maid, SIPs, PPF…) with their amounts and banks, nothing ticked as done. One-off costs go in Daily spends as they happen.
 - "Reset this month to it" puts a month's budget back to the standard lines; ⚙ settings can remove the standard budget.
