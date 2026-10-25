@@ -244,10 +244,17 @@ table.bk-gtable{min-width:720px!important}.bk-gtable th,.bk-gtable td{white-spac
 .ex-invsum{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 10px}
 .ex-invsum>div{display:flex;flex-direction:column;padding:8px 12px;border:1px solid var(--line);border-radius:12px;min-width:120px}.ex-invsum>div span{font-size:11.5px;color:var(--muted);font-weight:600}.ex-invsum>div b{font-size:17px}
 .ex-invsum>div.tot{border-color:#1f9d55;background:rgba(31,157,85,.07)}.ex-invsum>i{font-style:normal;font-size:18px;color:var(--muted)}
-table.ex-invt{min-width:760px!important}.ex-invt th{text-transform:none!important;letter-spacing:0!important}.ex-invt td{vertical-align:top}.ex-invt td.hint{font-size:12px;max-width:340px}
+table.ex-invt{min-width:1040px!important}.ex-invt th{text-transform:none!important;letter-spacing:0!important}.ex-invt td{vertical-align:top}.ex-invt td.hint{font-size:12px;max-width:340px}
 .ex-invt tr.ex-invold td{opacity:.75}
 .ex-rules{margin:10px 0 4px;padding-left:18px;font-size:13px;line-height:1.7}
 table.ex-ip{min-width:820px!important}.ex-ip input,.ex-ip select{margin:0!important}
 .ui-dlg.wide:has(.ex-ip){width:min(940px,100%)}
 .ui-dlg table.ex-edit.ex-ip{min-width:820px!important}
 .ex-ip td{padding:4px!important}.ex-ip td:first-child{min-width:220px}.ex-ip td:nth-child(5){min-width:220px}.ex-ip input,.ex-ip select{width:100%}
+.ex-invt .ex-invchk input{width:18px;height:18px}
+.ex-invt tr.ex-done td{background:rgba(31,157,85,.05)}.ex-invt tr.ex-done b{color:inherit}
+.ex-invact{width:120px;padding:6px 8px!important;margin:0!important}.ex-invact.off{border-color:#e0a31e}
+.ex-invt td small{display:block;font-size:11px;margin-top:2px}
+.ex-invsum>div.act{border-color:#0ea5e9}.ex-invsum>div.act.ok{border-color:#1f9d55;background:rgba(31,157,85,.07)}.ex-invsum>div small{font-size:11px;color:var(--muted)}
+.ex-inv .table-wrap{max-height:none}.ex-invact{width:130px}
+.ex-invt tr.ex-done td{opacity:1!important;text-decoration:none!important}.ex-invt tr.ex-done td:not(:first-child){color:var(--muted)}

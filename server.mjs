@@ -72,7 +72,7 @@ import { AI_MODELS, AI_DEFAULTS, PRIVACY as AI_PRIVACY, sealKey, openKey, looksL
 import { sanitizeMenu } from "./menuprefs.mjs";
 import { firePlan, sanitizeFirePlan } from "./fire.mjs";
 import { swingIncome, INCOME_DEFAULTS } from "./swingincome.mjs";
-import { buildSplit, sanitizeInvestPlan, DEFAULT_INVEST_PLAN } from "./investplan.mjs";
+import { buildSplit, sanitizeInvestPlan, DEFAULT_INVEST_PLAN, investKey } from "./investplan.mjs";
 import { defaultRate as growthRate, matchContributions, projectLines } from "./bucketgrowth.mjs";
 import { decide as nowCall, marketMood } from "./nowcall.mjs";
 import { addMarketDay, movers as marketMovers, indexChanges } from "./movers.mjs";
@@ -918,7 +918,8 @@ async function expenseStore() { const st = await readJson(expensesFile(), {}); r
 async function investSplit(st, m) {
   const raw = await readJson(expensesFile(), {}), plan = raw.investPlan || DEFAULT_INVEST_PLAN, sp = await spendAverage().catch(() => null);
   const income = (m.income || []).reduce((a, x) => a + (x.amount || 0), 0), current = (m.plan || []).filter(p => p.type === "invest").map(p => ({ name: p.name, amount: p.amount || 0 }));
-  return { ...buildSplit({ income, spend: sp?.avgMonthly ?? 0, current, plan, spendMonths: sp?.months || 0 }), custom: !!raw.investPlan, plan };
+  const record = { ...(m.invested || {}) }; for (const p of (m.plan || []).filter(x => x.type === "invest" && x.done)) { const k = investKey(p.name); if (!record[k]) record[k] = { done: true }; } // ticked in the Budget
+  return { ...buildSplit({ income, spend: sp?.avgMonthly ?? 0, current, plan, spendMonths: sp?.months || 0, record }), custom: !!raw.investPlan, plan };
 }
 async function spendAverage() { // last 6 months with a log, for sizing the safety bucket
   const st = await expenseStore(), ks = Object.keys(st.months).filter(k => (st.months[k].entries || []).length || (st.months[k].plan || []).length).sort().slice(-6);
@@ -4135,7 +4136,7 @@ async function appHandler(req, res, url) {
           else if (op === "entry-delete") { const m = M(); m.entries = m.entries.filter(x => x.id !== b.id); }
           else if (op === "plan") { const m = M(); m.plan = (Array.isArray(b.plan) ? b.plan : []).slice(0, 80).map(sanitizePlanLine); m.income = (Array.isArray(b.income) ? b.income : m.income).slice(0, 20).map(sanitizeIncome); keepStandard(); }
           else if (op === "standard-clear") { st.template = null; notice = "Standard monthly budget removed: new months start from the previous month."; }
-          else if (op === "plan-done") { const m = M(), p = m.plan.find(x => x.id === b.id); if (!p) throw new Error("That line no longer exists."); p.done = !!b.done; }
+          else if (op === "plan-done") { const m = M(), p = m.plan.find(x => x.id === b.id); if (!p) throw new Error("That line no longer exists."); p.done = !!b.done; if (p.type === "invest") { const k = investKey(p.name); (m.invested ||= {})[k] = { ...(m.invested[k] || {}), done: p.done, at: new Date().toISOString() }; } }
           else if (op === "paste") { // from your spreadsheet: the budget block, the daily log, or both
             const m = M(), out = [];
             if (b.plan) { const p = parsePlanPaste(b.plan); if (p.plan.length) { m.plan = p.plan.slice(0, 80).map(sanitizePlanLine); out.push(`${p.plan.length} budget lines`); } if (p.income.length) { m.income = p.income.map(sanitizeIncome); out.push(`${p.income.length} income lines`); } }
@@ -4155,6 +4156,14 @@ async function appHandler(req, res, url) {
           else if (op === "settle-delete") { const m = M(); m.settlements = (m.settlements || []).filter(z => z.id !== b.id); }
           else if (op === "people") { st.people = [...new Set((Array.isArray(b.people) ? b.people : []).map(x => String(x).replace(/[<>]/g, "").trim().slice(0, 30)).filter(Boolean))].slice(0, 12); notice = st.people.length ? `Settle up with: ${st.people.join(", ")}.` : "Back to automatic: payment methods that are names."; if (!st.people.length) st.people = null; }
           else if (op === "invest-plan") { if (b.reset) { delete raw.investPlan; notice = "Invest plan back to the suggested lines."; } else { raw.investPlan = sanitizeInvestPlan(b.plan || {}); notice = "Invest plan saved."; } }
+          else if (op === "invest-mark") { // tick an investment as done and / or record what actually went in
+            const m = M(), name = String(b.name || "").replace(/[<>]/g, "").trim().slice(0, 50); if (!name) throw new Error("Which investment?");
+            const k = investKey(name), cur = (m.invested ||= {})[k] || {};
+            if ("done" in b) cur.done = !!b.done;
+            if ("actual" in b) { const v = b.actual === "" || b.actual === null ? null : Number(String(b.actual).replace(/[,₹\s]/g, "")); if (v !== null && !(v >= 0 && v <= 1e8)) throw new Error("Enter the amount invested."); cur.actual = v; if (v > 0) cur.done = true; }
+            cur.at = new Date().toISOString(); m.invested[k] = cur;
+            const line = m.plan.find(p => p.type === "invest" && investKey(p.name) === k); if (line) line.done = !!cur.done; // keep the budget's done tick in step
+          }
           else if (op === "invest-apply") { // write the plan's amounts into this month's investment lines (and the standard budget)
             const m = M(), sp = await spendAverage().catch(() => null), income = (m.income || []).reduce((a, x) => a + (x.amount || 0), 0);
             const split = buildSplit({ income, spend: sp?.avgMonthly ?? 0, current: [], plan: raw.investPlan || DEFAULT_INVEST_PLAN });

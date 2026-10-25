@@ -32,24 +32,30 @@ export function sanitizeInvestPlan(b = {}) {
 }
 const norm = s => String(s || "").toLowerCase().replace(/\(.*?\)/g, " ").replace(/[^a-z0-9]+/g, " ").trim();
 // income, spend: ₹ a month; current: this month's investment lines [{ name, amount }]
-export function buildSplit({ income = 0, spend = 0, current = [], plan = DEFAULT_INVEST_PLAN, spendMonths = 0 } = {}) {
+export const investKey = name => norm(name);
+// record: { [investKey(name)]: { done, actual, at } } for this month: ticked as done, and what actually went in
+export function buildSplit({ income = 0, spend = 0, current = [], plan = DEFAULT_INVEST_PLAN, spendMonths = 0, record = {} } = {}) {
   const available = Math.max(0, (income || 0) - (spend || 0) - (plan.buffer || 0));
   const fixed = plan.lines.filter(l => l.kind === "fixed"), share = plan.lines.filter(l => l.kind === "share");
   const fixedWant = fixed.reduce((a, l) => a + l.amount, 0), scale = fixedWant > available && fixedWant > 0 ? available / fixedWant : 1;
   const rest = Math.max(0, available - fixedWant * scale), wsum = share.reduce((a, l) => a + l.weight, 0);
   const used = new Set();
+  const mark = (name, planned) => { const r = record[investKey(name)] || {}; const actual = fin(r.actual) ? r.actual : r.done ? planned : null; return { done: !!r.done, actual, actualTyped: fin(r.actual), at: r.at || null }; };
   const curOf = name => { const k = norm(name), first = k.split(" ")[0]; const hit = current.find((c, i) => !used.has(i) && (norm(c.name) === k || (first.length >= 2 && norm(c.name).split(" ")[0] === first))); if (!hit) return null; used.add(current.indexOf(hit)); return hit.amount || 0; };
   const lines = plan.lines.map(l => {
     const amount = r500(l.kind === "fixed" ? l.amount * scale : wsum > 0 ? rest * l.weight / wsum : 0);
-    return { ...l, amount, pct: available > 0 ? Math.round(amount / available * 1000) / 10 : 0, current: curOf(l.name) };
+    const cur = curOf(l.name); // ticked without an amount: what your budget line says (else the plan's amount)
+    return { ...l, amount, pct: available > 0 ? Math.round(amount / available * 1000) / 10 : 0, current: cur, ...mark(l.name, cur ?? amount) };
   });
-  const other = current.filter((c, i) => !used.has(i) && c.amount > 0).map(c => ({ name: c.name, current: c.amount }));
+  const other = current.filter((c, i) => !used.has(i) && c.amount > 0).map(c => ({ name: c.name, current: c.amount, ...mark(c.name, c.amount) }));
   const total = lines.reduce((a, l) => a + l.amount, 0), nowTotal = current.reduce((a, c) => a + (c.amount || 0), 0);
   const equity = lines.filter(l => l.group === "equity").reduce((a, l) => a + l.amount, 0);
+  const all = [...lines, ...other], actualTotal = all.reduce((a, l) => a + (l.actual || 0), 0), doneCount = all.filter(l => l.done).length, toDo = lines.filter(l => l.amount > 0).length;
   const notes = [];
   if (!income) notes.push({ tone: "warn", text: "No income in this month's budget: add your salary (and other income) in Budget → Edit." });
   if (scale < 1) notes.push({ tone: "warn", text: "Fixed lines are more than what's left after spending: they were scaled down. Lower a fixed amount or the spending." });
   if (available > 0 && nowTotal < available * 0.8) notes.push({ tone: "info", text: `Today your budget invests ₹${Math.round(nowTotal).toLocaleString("en-IN")} of the ₹${Math.round(available).toLocaleString("en-IN")} left after spending: ₹${Math.round(available - nowTotal).toLocaleString("en-IN")} a month has no job yet.` });
   if (spendMonths && spendMonths < 3) notes.push({ tone: "info", text: `Spending is the average of only ${spendMonths} month${spendMonths === 1 ? "" : "s"}: the split gets steadier as you log more months.` });
-  return { income: Math.round(income), spend: Math.round(spend), buffer: plan.buffer || 0, available: Math.round(available), lines, other, total, unallocated: Math.round(available - total), nowTotal: Math.round(nowTotal), equity, equityPct: available > 0 ? Math.round(equity / available * 100) : 0, notes, spendMonths };
+  return { income: Math.round(income), spend: Math.round(spend), buffer: plan.buffer || 0, available: Math.round(available), lines, other, total, unallocated: Math.round(available - total), nowTotal: Math.round(nowTotal), equity, equityPct: available > 0 ? Math.round(equity / available * 100) : 0, notes, spendMonths,
+    actual: { total: Math.round(actualTotal), done: doneCount, of: toDo, vsPlan: Math.round(actualTotal - total), notInvested: Math.round(Math.max(0, available - actualTotal)), pct: total > 0 ? Math.round(actualTotal / total * 100) : 0 } };
 }

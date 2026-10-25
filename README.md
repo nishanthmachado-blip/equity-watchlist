@@ -1,5 +1,12 @@
 # Equity Watchlist MVP
 
+## v5.56.0: Invest plan — done ticks and actual amounts
+
+- **✓ Done column** on every Invest plan line (and on budget investment lines not in the plan). It stays in step with the Budget's done tick, both ways.
+- **"Actually invested" amount** per line: leave it empty when it went as planned, or type what really went in. Short or extra against the plan is shown.
+- **New summary card: "Actually invested · n of m done"**, with the % of the plan and how much of this month's money hasn't been invested yet. The total row shows actual vs plan.
+- A tick without an amount counts what your budget line says (else the plan's amount).
+
 ## v5.55.0: Invest plan (Monthly expenses)
 
 - **💡 Invest plan** section in Monthly expenses: income − average spending (− an optional buffer) = what you can invest each month.
