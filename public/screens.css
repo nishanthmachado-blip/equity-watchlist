@@ -190,3 +190,20 @@ table.dc-table{min-width:980px!important}
 .dc-lane.l-buy{background:#e6f6ec;color:#1f7a45}.dc-lane.l-swing{background:#fff4e0;color:#a35b00}.dc-lane.l-wait{background:#e8f1ff;color:#205d98}.dc-lane.l-trim{background:#fee8e6;color:#b13c35}
 [data-theme="dark"] .dc-lane.l-buy{background:#16341f;color:#7ddc9f}[data-theme="dark"] .dc-lane.l-swing{background:#3a2a10;color:#ffc874}[data-theme="dark"] .dc-lane.l-wait{background:#1a2a44;color:#9cc4ff}[data-theme="dark"] .dc-lane.l-trim{background:#3a1a18;color:#ff9b91}
 @media (max-width:699px){.dc-card{padding:10px}.dc-rank{font-size:20px;min-width:18px}}
+
+/* ---------- Bucket strategy: Till you retire ---------- */
+.bk-in{width:110px;padding:6px 8px!important;margin:0!important}.bk-in.bk-rate{width:70px}
+.bk-src{display:block;font-size:10.5px;color:var(--muted);margin-top:2px;white-space:nowrap}
+.bk-gin{display:flex;flex-wrap:wrap;gap:10px 16px;margin:6px 0 10px}.bk-gin .ui-field{margin:0}.bk-gin input{width:110px;display:inline-block;margin:0}
+.bk-gsum{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:6px 0 10px}
+.bk-gsum>div{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--line);border-radius:12px}
+.bk-gsum>div:first-child{border-color:#8b5cf6;background:rgba(139,92,246,.06)}
+.bk-gsum span{font-size:12px;color:var(--muted);font-weight:600}.bk-gsum strong{font-size:20px}.bk-gsum small{font-size:11.5px;color:var(--muted)}
+.bk-gchart{width:100%;max-width:900px;height:auto;display:block;margin:4px auto}
+.bk-gchart text{font-size:11px;fill:var(--muted,#64748b)}.bk-gchart .bk-gv{fill:var(--ink,#13263d);font-weight:700}.bk-gchart .bk-ga{font-size:10px}
+.bk-glegend{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;font-size:12px;margin:0 0 10px}
+.bk-dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+table.bk-gtable{min-width:720px!important}.bk-gtable th,.bk-gtable td{white-space:nowrap}.bk-ga{font-size:10.5px;color:var(--muted);font-weight:500}
+.bk-gtable th .bk-ga{color:inherit;opacity:.75}
+.bk-gtot td{border-top:2px solid var(--line)}
+.bk-sec table.bk-table{min-width:1040px!important}

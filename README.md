@@ -1,5 +1,26 @@
 # Equity Watchlist MVP
 
+## v5.51.0: Bucket strategy — Till you retire
+
+- **📈 Till you retire** card in Bucket strategy. Each line in Safety, Short term, Long-term growth and Retirement is grown month by month until your retirement age, using what you add each month and its expected return. Today's contributions stay the same unless you set a yearly increase.
+- **Per line, editable:**
+  - "Adding / month" starts from your Monthly expenses plan. PPF goes to PPF, EPF / VPF to EPF, NPS to NPS, arbitrage / liquid to those funds, and MF / SIP to your equity funds (split by size).
+  - "Return % a yr" starts from typical rates: EPF 8.25%, PPF 7.1%, NPS 10%, arbitrage 6.5%, hybrid 9.5%, equity 12–14%, and so on.
+  - Clear a box to go back to the tracked or typical number.
+  - The bucket tables show the value at your retirement age for each line.
+- **Card shows:**
+  - value at retirement, also in today's money
+  - what you put in, and the growth on top
+  - a stacked chart by bucket at Now, 1, 3, 5, 10, 15, 20 years and retirement
+  - the same as a table, with ages
+- PPF deposits stop at ₹1.5 L a year. Plan lines with no matching net worth line are listed so you can add them. Age and retirement age are shared with the FIRE planner.
+
+## v5.50.0: Live-price status for Angel One
+
+- **Integrations → Price sources** now opens with a "⚡ Live prices from Angel One" card. It shows whether the live feed is Live, Waiting for the market, Angel One not logged in, Off, or has a Problem. It also shows how many of your stocks it follows, how many price updates arrived and when the last one came, and what to do when it isn't live.
+- **Long-term theme stocks** are now on the live feed and in the regular price refresh, alongside holdings, swing positions, watchlists and favourites.
+- `/api/prices/status` → `stream` adds `why` (market-closed / no-account / ok / error), `checkedAt` and `instruments`.
+
 ## v5.49.0: Weight in My holdings
 
 - **Weight column** right after the stock name: each holding's share of the current value, with a bar scaled to the biggest holding. It is worked out per tab, so "All accounts" and each account have their own weights. Holdings at 10% or more show in amber. Click the header (or Sort → Weight) to rank by it.

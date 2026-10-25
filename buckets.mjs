@@ -48,7 +48,12 @@ export function sanitizeBucketPlan(b = {}, prev = {}) {
   for (const [k, v] of Object.entries(b.goalOf || {})) { if (String(k).length > 200) continue; if (!v) delete goalOf[k]; else if (ids.has(v)) goalOf[k] = v; }
   for (const k of Object.keys(goalOf)) if (!ids.has(goalOf[k])) delete goalOf[k];
   const targets = {}; for (const bk of ["short", "long", "retirement"]) { const t = (b.targets || prev.targets || {})[bk]; const v = num(t, 0, 100, null); if (v !== null) targets[bk] = v; }
-  return { monthly, minMonths, maxMonths, assign, goalOf, goals, targets, updatedAt: new Date().toISOString() };
+  // "Till you retire": per-line monthly contribution and expected return you set (empty = from your expenses / typical rate)
+  const contrib = { ...(prev.contrib || {}) }, rate = { ...(prev.rate || {}) };
+  for (const [k, v] of Object.entries(b.contrib || {}).slice(0, 300)) { if (String(k).length > 200) continue; const x = num(v, 0, 1e8, null); if (x === null) delete contrib[k]; else contrib[k] = x; }
+  for (const [k, v] of Object.entries(b.rate || {}).slice(0, 300)) { if (String(k).length > 200) continue; const x = num(v, -20, 40, null); if (x === null) delete rate[k]; else rate[k] = x; }
+  const stepUp = "stepUp" in b ? num(b.stepUp, 0, 50, null) : prev.stepUp ?? null;
+  return { monthly, minMonths, maxMonths, assign, goalOf, goals, targets, contrib, rate, stepUp, updatedAt: new Date().toISOString() };
 }
 
 // lines: net worth asset lines [{ id, category, name, value, fundCategory? }]; plan: sanitizeBucketPlan output;

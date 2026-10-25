@@ -19,7 +19,18 @@
     if (!h) { $("#intSources").innerHTML = '<p class="hint">Start the local server.</p>'; return; }
     const names = { kite: "Kite MCP (Zerodha LTP)", nse: "NSE (exchange quote)", yahoo: "Yahoo Finance", google: "Google Finance" };
     const cool = { nse: h.nseCooldownUntil, yahoo: h.yahooCooldownUntil, google: h.googleCooldownUntil };
-    $("#intSources").innerHTML = `<ol class="flag-list">${h.priceSources.map(s => {
+    const ps = await api("/api/prices/status").catch(() => null), lv = ps?.stream || null, tm = t => (t ? new Date(t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—");
+    const feed = !lv ? "" : (() => {
+      const why = lv.why || "", live = lv.state === "live";
+      const [cls, head, text] = !lv.enabled ? ["v-none", "Off", "Switched off by ANGEL_PRICES=0 or ANGEL_STREAM=0 in .env. Remove that line and restart."]
+        : live ? ["v-under", "Live", `Following ${lv.following || lv.tokens} of your stocks · ${lv.ticks} price updates · last at ${tm(lv.lastTickAt)}. Prices on every screen change within a second of the market; the header shows “Live · Angel One”.`]
+        : why === "market-closed" ? ["v-fair", "Waiting for the market", "The feed starts by itself at 9:15 am on trading days and stops after 3:30 pm. Keep the app running (and the computer awake) during market hours."]
+        : why === "no-account" ? ["v-rich", "Angel One not logged in", "Connect Angel One below with your SmartAPI key and client ID, and save your PIN and TOTP secret so it logs in by itself every morning."]
+        : why.startsWith("error") ? ["v-rich", "Problem", `${why.slice(7).replace(/\.$/, "")}. It retries every 30 seconds.`]
+        : ["v-fair", { off: "Starting", connecting: "Connecting", reconnecting: "Reconnecting" }[lv.state] || lv.state, lv.error ? `Last error: ${String(lv.error).replace(/\.$/, "")}. It retries by itself.` : "Connecting to Angel One…"];
+      return `<div class="report-card live-feed"><h3>⚡ Live prices from Angel One <span class="chip ${cls}">${esc(head)}</span></h3><p class="hint">${esc(text)}</p>${lv.instruments ? "" : '<p class="hint">Angel\'s instrument list has not downloaded yet (needed to match stocks to Angel\'s codes); it is fetched once a week.</p>'}<p class="vs-fine">Followed in this order (up to 1,000): swing positions, holdings, swing watchlist, then your watchlists, ❤ favourites and Long-term theme stocks. Stocks not on the feed still refresh every few minutes from the sources below.${lv.reconnects ? ` Reconnects today: ${lv.reconnects}.` : ""}${lv.checkedAt ? ` Checked ${tm(lv.checkedAt)}.` : ""}</p></div>`;
+    })();
+    $("#intSources").innerHTML = feed + `<ol class="flag-list">${h.priceSources.map(s => {
       const note = s === "kite" && !h.kiteEnabled ? "switched off (KITE_MCP_ENABLED=0)" : cool[s] ? `cooling down until ${new Date(cool[s]).toLocaleTimeString("en-IN")}` : "active";
       return `<li><div class="fcompany">${esc(names[s])}</div><div class="fnote">${esc(note)}</div></li>`;
     }).join("")}</ol><p class="hint">Change the order with <code>PRICE_SOURCES</code>, e.g. <code>PRICE_SOURCES=google,yahoo</code>.</p>`;

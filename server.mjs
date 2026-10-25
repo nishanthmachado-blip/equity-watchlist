@@ -71,6 +71,7 @@ import { METRICS, OPS, PRESETS, sanitizeThesis, evaluateThesis, trackBreaks } fr
 import { AI_MODELS, AI_DEFAULTS, PRIVACY as AI_PRIVACY, sealKey, openKey, looksLikeKey, buildContext, SYSTEM as AI_SYSTEM, TOOLS as AI_TOOLS, sseParser, messageCollector, monthKey, friendlyApiError, AI_PROVIDERS, pickModel, chatModelIds, toOpenAiTools, openAiCollector, friendlyProviderError, looksLikeAnyKey } from "./ai.mjs";
 import { sanitizeMenu } from "./menuprefs.mjs";
 import { firePlan, sanitizeFirePlan } from "./fire.mjs";
+import { defaultRate as growthRate, matchContributions, projectLines } from "./bucketgrowth.mjs";
 import { decide as nowCall, marketMood } from "./nowcall.mjs";
 import { addMarketDay, movers as marketMovers, indexChanges } from "./movers.mjs";
 import { fetchFromApi, fetchFromLink } from "./fundsource.mjs";
@@ -924,7 +925,24 @@ async function bucketsPage() {
   const catOf = new Map();
   for (const f of held) { const code = f.isin && amfi[f.isin]?.[2]; if (code) { const c = await readJson(mfNavFile(code), null); if (c?.category) catOf.set(`mf:${f.key}`, c.category); else queueMfNav([code]); } }
   const lines = (nw.lines || []).map(l => ({ ...l, fundCategory: catOf.get(l.id) || null }));
-  return { ...bucketView(lines, plan, { spend, liabilities: nw.totals?.liabilities || 0 }), goalsList: plan.goals, spend, net: nw.totals?.net ?? null, BUCKETS };
+  const view = bucketView(lines, plan, { spend, liabilities: nw.totals?.liabilities || 0 });
+  return { ...view, goalsList: plan.goals, spend, net: nw.totals?.net ?? null, BUCKETS, growth: await bucketGrowth(view, plan).catch(e => ({ error: e.message })) };
+}
+// "Till you retire": each bucket line grown with its monthly contribution and expected return (bucketgrowth.mjs)
+async function bucketGrowth(view, plan) {
+  const [st, fire] = await Promise.all([expenseStore(), readJson(fireFile(), {})]);
+  const month = Object.keys(st.months).filter(k => (st.months[k].plan || []).some(p => p.type === "invest" && p.amount > 0)).sort().pop() || null;
+  const planLines = month ? st.months[month].plan.filter(p => p.type === "invest" && p.amount > 0).map(p => ({ name: p.name, amount: p.amount })) : [];
+  const rows = view.buckets.flatMap(b => b.lines.map(l => ({ ...l, bucket: b.id })));
+  const matched = matchContributions(rows, planLines);
+  const age = fire.age ?? null, retireAge = fire.retireAge ?? null, years = age !== null && retireAge > age ? retireAge - age : null;
+  const lines = rows.map(l => ({ id: l.id, name: l.name, category: l.category, bucket: l.bucket, value: l.value, fundCategory: l.fundCategory,
+    monthly: plan.contrib?.[l.id] ?? matched.byLine[l.id] ?? 0, monthlySrc: plan.contrib?.[l.id] !== undefined ? "you" : matched.byLine[l.id] ? "expenses" : "none",
+    rate: plan.rate?.[l.id] ?? growthRate(l), rateSrc: plan.rate?.[l.id] !== undefined ? "you" : "typical" }));
+  const stepUp = plan.stepUp ?? 0, inflation = fire.inflation ?? 6, pr = projectLines(lines, { years: years ?? 25, stepUp, inflation });
+  const src = new Map(lines.map(l => [l.id, l]));
+  pr.lines = pr.lines.map(r => ({ ...r, monthlySrc: src.get(r.id).monthlySrc, rateSrc: src.get(r.id).rateSrc }));
+  return { ...pr, age, retireAge, assumedYears: years === null, stepUp, inflation, fromMonth: month, matched: matched.notes };
 }
 // ---- FIRE planner (fire.mjs): from your own expenses and net worth; private to each login, never sent to Ask AI ----
 const fireFile = () => userFile("fire.json");
@@ -1527,7 +1545,7 @@ async function runLogos() {
 // public sites are asked far less. ANGEL_STREAM=0 turns it off; ANGEL_WS_URL points it elsewhere (tests).
 const ANGEL_STREAM = ANGEL_PRICES && process.env.ANGEL_STREAM !== "0";
 const streamSym = new Map(); // "NSE|token" -> symbol
-let streamListAt = 0, streamOpenAt = 0, streamBusy = false;
+let streamListAt = 0, streamOpenAt = 0, streamBusy = false, streamWhy = "starting", streamCheckedAt = null;
 const angelStream = createAngelStream({
   auth: async ({ fresh }) => { const u = await angelAccount({ ignorePause: true }); if (!u) throw new Error("Angel One is not connected"); return asUser(u, () => brokers.angel.streamAuth({ fresh })); },
   onTicks: ticks => {
@@ -1561,16 +1579,18 @@ async function streamItems() {
 async function streamCheck() {
   if (!ANGEL_STREAM || streamBusy) return; streamBusy = true;
   try {
-    if (!marketIsOpen()) { if (angelStream.running() && Date.now() - streamOpenAt > 10 * 60e3) { angelStream.stop(); console.log("[angel-live] market closed: feed stopped"); } return; }
+    streamCheckedAt = new Date().toISOString();
+    if (!marketIsOpen()) { streamWhy = "market-closed"; if (angelStream.running() && Date.now() - streamOpenAt > 10 * 60e3) { angelStream.stop(); console.log("[angel-live] market closed: feed stopped"); } return; }
     streamOpenAt = Date.now();
-    if (!(await angelAccount({ ignorePause: true }))) { if (angelStream.running()) angelStream.stop(); return; }
+    if (!(await angelAccount({ ignorePause: true }))) { streamWhy = "no-account"; if (angelStream.running()) angelStream.stop(); return; }
+    streamWhy = "ok";
     if (!angelStream.running() || Date.now() - streamListAt > 120e3) { streamListAt = Date.now(); angelStream.setTokens(await streamItems()); }
     if (!angelStream.running()) angelStream.start();
-  } catch (e) { console.warn(`[angel-live] ${e.message}`); }
+  } catch (e) { streamWhy = `error: ${e.message}`; console.warn(`[angel-live] ${e.message}`); }
   finally { streamBusy = false; }
 }
 if (ANGEL_STREAM) { setInterval(() => streamCheck(), 30e3).unref(); setTimeout(() => streamCheck(), 4000).unref(); }
-const streamView = () => ({ enabled: ANGEL_STREAM, ...angelStream.status() });
+const streamView = () => ({ enabled: ANGEL_STREAM, ...angelStream.status(), why: ANGEL_STREAM ? streamWhy : "off", checkedAt: streamCheckedAt, instruments: angelTok ? Object.keys(angelTok.map || {}).length : 0 });
 
 // Marks on the chart: results, dividends, bonuses / splits, order wins and your own swing buys and sells
 const chartLinesFile = () => userFile("chart-lines.json");
@@ -3253,12 +3273,13 @@ async function mapLimit(items, limit, worker) { const results = new Array(items.
 // the fund is opened, but are left out of the price refresh, the Refresh button and the daily chart scan: refreshing
 // them all made the free data sites block the server.
 async function activeSymbols() {
-  const [lists, st, hold, fav] = await Promise.all([readLists().catch(() => ({ lists: [] })), readJson(swingFile(), {}), readHoldStore(), readJson(favFile(), { symbols: [] })]);
+  const [lists, st, hold, fav, themes] = await Promise.all([readLists().catch(() => ({ lists: [] })), readJson(swingFile(), {}), readHoldStore(), readJson(favFile(), { symbols: [] }), readJson(themePlanFile(), null)]);
   const set = new Set();
   for (const l of lists.lists || []) for (const x of l.symbols || []) set.add(String(x).toUpperCase());
   for (const x of [...(st.positions || []), ...(st.watch || [])]) set.add(x.symbol);
   for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol) set.add(String(h.symbol).toUpperCase());
   for (const x of fav.symbols || []) set.add(String(x).toUpperCase());
+  for (const t of themes?.themes || []) for (const x of t.symbols || []) { const sym = typeof x === "string" ? x : x?.symbol; if (sym) set.add(String(sym).toUpperCase()); } // Long-term theme stocks
   return set;
 }
 async function refreshWatchlist(stocks, withNews = true, { only = null } = {}) { const act = only ? stocks.filter(s => only.has(symOf(s))) : stocks; console.log(`[refresh] Starting ${act.length}-stock refresh${withNews ? " with news" : ""}${only ? ` (${stocks.length - act.length} fund-only stocks left as they are)` : ""} (sources: ${PRICE_SOURCES.join(" → ")}).`); const kitePrices = await fetchKitePrices(act); kitePrices.angel = await batchAngel(act.map(s => ({ symbol: symOf(s), exchange: s.exchange || "NSE", last: s.price }))); const refreshed = await mapLimit(stocks, 3, stock => (only && !only.has(symOf(stock)) ? stock : refreshOne(stock, withNews, kitePrices))); await persistWatchlist(refreshed, stocks); if (refreshed.some(s => s.feedStatus === "Price refreshed")) { lastPriceRefreshAt = new Date().toISOString(); await writeJson(userFile("meta.json"), { ...(await readJson(userFile("meta.json"), {})), lastPriceRefresh: lastPriceRefreshAt }); } const bySrc = {}; for (const r of refreshed) if (r.feedStatus === "Price refreshed") bySrc[r.priceSource] = (bySrc[r.priceSource] || 0) + 1; console.log(`[refresh] Finished: ${refreshed.filter(s => s.feedStatus === "Price refreshed").length}/${stocks.length} prices refreshed ${JSON.stringify(bySrc)}; ${refreshed.filter(s => String(s.feedStatus).startsWith("Refresh failed")).length} failed.`); return refreshed; }
@@ -4059,7 +4080,7 @@ async function appHandler(req, res, url) {
     if (url.pathname === "/api/buckets" && req.method === "GET") return reply(res, 200, await bucketsPage());
     if (url.pathname === "/api/buckets/save" && req.method === "POST") {
       const b = await readBody(req);
-      try { await withUserLock(async () => { const prev = await readJson(bucketsFile(), {}); await writeJson(bucketsFile(), sanitizeBucketPlan(b, prev)); }); return reply(res, 200, await bucketsPage()); }
+      try { await withUserLock(async () => { const prev = await readJson(bucketsFile(), {}); await writeJson(bucketsFile(), sanitizeBucketPlan(b, prev)); if ("age" in b || "retireAge" in b) { const f = await readJson(fireFile(), {}); await writeJson(fireFile(), sanitizeFirePlan({ ...("age" in b ? { age: b.age } : {}), ...("retireAge" in b ? { retireAge: b.retireAge } : {}) }, f)); } }); return reply(res, 200, await bucketsPage()); }
       catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname === "/api/expenses" || url.pathname.startsWith("/api/expenses/")) {
