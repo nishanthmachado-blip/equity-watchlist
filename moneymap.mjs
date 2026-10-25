@@ -100,17 +100,29 @@ export function moneyMapData({ month, label, data = {}, budgets = {}, nwLines = 
 // cell styles (same look as the template): 1 title, 2 section header, 3 section header (second cell), 4 label,
 // 5 blue number (input), 7 total label (orange), 8 total number (orange), 9 note, 10 black number, 11 bold label, 12 date
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="\\₹#,##0;&quot;(₹&quot;#,##0\\);\\-"/></numFmts>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="3"><numFmt numFmtId="164" formatCode="[&gt;=10000000]&quot;₹&quot;##\\,##\\,##\\,##0;[&gt;=100000]&quot;₹&quot;##\\,##\\,##0;&quot;₹&quot;#,##0"/><numFmt numFmtId="165" formatCode="&quot;₹&quot;#,##0;&quot;(₹&quot;#,##0&quot;)&quot;;&quot;-&quot;"/><numFmt numFmtId="166" formatCode="[&gt;=100000]&quot;₹&quot;##\\,##\\,##0;[&gt;0]&quot;₹&quot;#,##0;&quot;-&quot;"/></numFmts>
 <fonts count="9"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="20"/><color rgb="FF1A1A1A"/><name val="Arial"/></font><font><b/><sz val="12"/><color rgb="FF1A1A1A"/><name val="Arial"/></font><font><sz val="11"/><name val="Arial"/></font><font><sz val="11"/><color rgb="FF1A1A1A"/><name val="Arial"/></font><font><sz val="11"/><color rgb="FF0000FF"/><name val="Arial"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Arial"/></font><font><i/><sz val="10"/><color rgb="FF808080"/><name val="Arial"/></font><font><b/><sz val="11"/><color rgb="FF1A1A1A"/><name val="Arial"/></font></fonts>
 <fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFBD9C6"/><bgColor rgb="FFFBD9C6"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF4703A"/><bgColor rgb="FFF4703A"/></patternFill></fill></fills>
 <borders count="4"><border/><border><left style="thin"><color rgb="FFD9D9D9"/></left><top style="thin"><color rgb="FFD9D9D9"/></top><bottom style="thin"><color rgb="FFD9D9D9"/></bottom></border><border><right style="thin"><color rgb="FFD9D9D9"/></right><top style="thin"><color rgb="FFD9D9D9"/></top><bottom style="thin"><color rgb="FFD9D9D9"/></bottom></border><border><left style="thin"><color rgb="FFD9D9D9"/></left><right style="thin"><color rgb="FFD9D9D9"/></right><top style="thin"><color rgb="FFD9D9D9"/></top><bottom style="thin"><color rgb="FFD9D9D9"/></bottom></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="13"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="3" fillId="2" borderId="2" xfId="0" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="4" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="164" fontId="5" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1" applyNumberFormat="1"/><xf numFmtId="164" fontId="5" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1" applyNumberFormat="1"/><xf numFmtId="0" fontId="6" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="164" fontId="6" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyNumberFormat="1"/><xf numFmtId="0" fontId="7" fillId="0" borderId="0" xfId="0" applyFont="1"><alignment wrapText="1" vertical="top"/></xf><xf numFmtId="164" fontId="4" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1" applyNumberFormat="1"/><xf numFmtId="0" fontId="8" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="0" fontId="4" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1"/></cellXfs>
+<cellXfs count="17"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="3" fillId="2" borderId="2" xfId="0" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="4" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="166" fontId="5" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1" applyNumberFormat="1"/><xf numFmtId="166" fontId="5" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1" applyNumberFormat="1"/><xf numFmtId="0" fontId="6" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="166" fontId="6" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyNumberFormat="1"/><xf numFmtId="0" fontId="7" fillId="0" borderId="0" xfId="0" applyFont="1"><alignment wrapText="1" vertical="top"/></xf><xf numFmtId="164" fontId="4" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1" applyNumberFormat="1"/><xf numFmtId="0" fontId="8" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="0" fontId="4" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="0" fontId="7" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf><xf numFmtId="164" fontId="5" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1" applyNumberFormat="1"/><xf numFmtId="164" fontId="6" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyNumberFormat="1"/><xf numFmtId="165" fontId="6" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyNumberFormat="1"/></cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 const str = (ref, s, st) => `<c r="${ref}" s="${st}" t="inlineStr"><is><t xml:space="preserve">${xe(s)}</t></is></c>`;
 const num = (ref, v, st = 5) => `<c r="${ref}" s="${st}"><v>${Number(v) || 0}</v></c>`;
-const fml = (ref, f, v) => `<c r="${ref}" s="8"><f>${f}</f><v>${v}</v></c>`;
+const fml = (ref, f, v, st = 8) => `<c r="${ref}" s="${st}"><f>${f}</f><v>${v}</v></c>`;
 const blank = (ref, st) => `<c r="${ref}" s="${st}"/>`;
+// "₹30.60 L" / "₹2.18 Cr" beside an amount (a formula, so it follows when you change the number); blank under a lakh
+export const lakhCrore = v => { const a = Math.abs(v || 0), sg = v < 0 ? "-" : ""; return a >= 1e7 ? `${sg}₹${(a / 1e7).toFixed(2)} Cr` : a >= 1e5 ? `${sg}₹${(a / 1e5).toFixed(2)} L` : ""; };
+const lcFormula = ref => `IF(ABS(${ref})&gt;=10000000,IF(${ref}&lt;0,"-","")&amp;"₹"&amp;TEXT(ABS(${ref})/10000000,"0.00")&amp;" Cr",IF(ABS(${ref})&gt;=100000,IF(${ref}&lt;0,"-","")&amp;"₹"&amp;TEXT(ABS(${ref})/100000,"0.00")&amp;" L",""))`;
+// add a lakh / crore label in the next column for every amount cell in these columns
+function withLabels(rows, cols) {
+  return rows.map(([r, cells, ht]) => {
+    const extra = [];
+    for (const c of cells) { const m = c.match(/^<c r="([A-Z]+)(\d+)" s="(\d+)">(?:<f>[^<]*<\/f>)?<v>(-?[\d.]+)<\/v>/); if (!m || !cols[m[1]]) continue; extra.push(`<c r="${cols[m[1]]}${m[2]}" s="13" t="str"><f>${lcFormula(m[1] + m[2])}</f><v>${xe(lakhCrore(Number(m[4])))}</v></c>`); }
+    const all = [...cells, ...extra], key = c => { const col = c.match(/r="([A-Z]+)/)[1]; return col.length * 100 + col.charCodeAt(0); };
+    return [r, all.sort((a, b) => key(a) - key(b)), ht];
+  });
+}
 const sheetXml = ({ cols, rows, merges = [], freeze = null }) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><sheetViews><sheetView workbookViewId="0" showGridLines="0">${freeze ? `<pane ySplit="${freeze}" topLeftCell="A${freeze + 1}" activePane="bottomLeft" state="frozen"/>` : ""}</sheetView></sheetViews><sheetFormatPr defaultRowHeight="15.75"/><cols>${cols.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("")}</cols><sheetData>${rows.map(([r, cells, ht]) => `<row r="${r}"${ht ? ` ht="${ht}" customHeight="1"` : ""}>${cells.join("")}</row>`).join("")}</sheetData>${merges.length ? `<mergeCells count="${merges.length}">${merges.map(m => `<mergeCell ref="${m}"/>`).join("")}</mergeCells>` : ""}<pageMargins left="0.75" right="0.75" top="1" bottom="1" header="0" footer="0"/><pageSetup paperSize="9" orientation="portrait" fitToWidth="1" fitToHeight="0"/></worksheet>`;
 
@@ -129,25 +141,25 @@ export function buildMoneyMap(d) {
   [[15, "Car"], [16, "Real Estate Purchase"], [17, "Spends on Marriage"], [18, "Other Big Purchase"]].forEach(([r, l]) => put(r, str(`D${r}`, l, 4), num(`E${r}`, E[r])));
   put(18, str("A18", "TOTAL RESPONSIBLE SPENDING", 7), fml("B18", "SUM(B4:B17)", b18));
   put(19, str("D19", "TOTAL SAVINGS SPENT", 7), fml("E19", "SUM(E15:E18)", e19));
-  put(20, str("A20", "Bonus Spending", 2), blank("B20", 3), str("D20", "TOTAL MONTHLY SAVINGS", 7), fml("E20", "E12-E19", e12 - e19));
-  put(21, str("D21", "NET SURPLUS / (DEFICIT)", 7), fml("E21", "(E12)-(B32)", e12 - (b18 + b31)));
+  put(20, str("A20", "Bonus Spending", 2), blank("B20", 3), str("D20", "TOTAL MONTHLY SAVINGS", 7), fml("E20", "E12-E19", e12 - e19, 16));
+  put(21, str("D21", "NET SURPLUS / (DEFICIT)", 7), fml("E21", "(E12)-(B32)", e12 - (b18 + b31), 16));
   for (const [r, label] of SPEND_ROWS) if (r >= 21) put(r, str(`A${r}`, label, 4), num(`B${r}`, B[r]));
   put(23, str("D23", "Current Portfolio Value", 2), blank("E23", 3));
-  for (const [r, label] of PORTFOLIO_ROWS) put(r, str(`D${r}`, label, 4), num(`E${r}`, E[r]));
+  for (const [r, label] of PORTFOLIO_ROWS) put(r, str(`D${r}`, label, 4), num(`E${r}`, E[r], 14)); // crore-aware format
   put(31, str("A31", "TOTAL BONUS SPENDING", 7), fml("B31", "SUM(B21:B30)", b31));
   put(32, str("A32", "TOTAL MONTHLY SPENDING", 7), fml("B32", "B18+B31", b18 + b31));
-  put(35, str("D35", "TOTAL PORTFOLIO VALUE", 7), fml("E35", "SUM(E24:E34)", e35));
+  put(35, str("D35", "TOTAL PORTFOLIO VALUE", 7), fml("E35", "SUM(E24:E34)", e35, 15));
   put(37, str("A37", `Income this month: ₹${d.income.toLocaleString("en-IN")} · spending ₹${(b18 + b31).toLocaleString("en-IN")} · investing ₹${e12.toLocaleString("en-IN")} · left over ₹${(d.income - b18 - b31 - e12).toLocaleString("en-IN")}`, 9));
   put(38, str("A38", "Blue numbers come from the app (Monthly expenses and Net worth): change any of them here and the orange TOTAL rows and NET SURPLUS/(DEFICIT) recalculate. The Details sheet shows where each number came from.", 9));
   const order = c => c.match(/^[A-Z]+/)[0].charCodeAt(0);
   const rows = [...R].sort((a, b) => a[0] - b[0]).map(([r, cells]) => [r, cells.sort((x, y) => order(x.match(/r="([A-Z]+)/)[1]) - order(y.match(/r="([A-Z]+)/)[1])), r === 1 ? 27.75 : r === 38 ? 42 : null]);
-  const map = sheetXml({ cols: [34, 16, 3, 34, 16], rows, merges: ["A1:B1", "D1:E1", "A2:E2", "A3:B3", "D4:E4", "D14:E14", "A20:B20", "D23:E23", "A37:E37", "A38:E38"], freeze: 2 });
+  const map = sheetXml({ cols: [34, 16, 11, 34, 16, 11], rows: withLabels(rows, { B: "C", E: "F" }), merges: ["A1:B1", "D1:E1", "A2:E2", "A3:B3", "D4:E4", "D14:E14", "A20:B20", "D23:E23", "A37:E37", "A38:E38"], freeze: 2 });
   // Details
   const dr = [[1, [str("A1", `Where the numbers came from: ${d.label}`, 1)], 27.75], [3, [str("A3", "Income", 11), num("B3", d.income, 10)]]];
   let r = 4; for (const i of d.incomeLines) dr.push([r++, [str(`A${r - 1}`, `  ${i.name}`, 12), num(`B${r - 1}`, i.amount, 10)]]);
   r++; dr.push([r, [str(`A${r}`, "Section", 2), str(`B${r}`, "Money Map row", 2), str(`C${r}`, "From", 2), str(`D${r}`, "What", 2), str(`E${r}`, "Amount", 2)]]); r++;
   for (const [sec, row, from, what, amt] of d.details) { dr.push([r, [str(`A${r}`, sec, 12), str(`B${r}`, row, 12), str(`C${r}`, from, 12), str(`D${r}`, what, 12), num(`E${r}`, amt, 10)]]); r++; }
-  const details = sheetXml({ cols: [22, 30, 62, 44, 16], rows: dr, freeze: null });
+  const details = sheetXml({ cols: [22, 30, 62, 44, 16, 11], rows: withLabels(dr, { B: "C", E: "F" }), freeze: null });
   // Spends
   const sr = [[1, [str("A1", "Date", 2), str("B1", "Item", 2), str("C1", "Category", 2), str("D1", "Paid by", 2), str("E1", "Amount", 2), str("F1", "Note", 2)]]];
   d.entries.forEach((e, i) => sr.push([i + 2, [str(`A${i + 2}`, e.date, 12), str(`B${i + 2}`, e.item, 12), str(`C${i + 2}`, e.category, 12), str(`D${i + 2}`, e.mode || "", 12), num(`E${i + 2}`, e.amount, 10), str(`F${i + 2}`, e.note || "", 12)]]));

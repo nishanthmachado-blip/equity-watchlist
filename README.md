@@ -1,5 +1,45 @@
 # Equity Watchlist MVP
 
+## v5.47.0: FIRE planner
+
+New screen in the menu (Your portfolio → 🔥 FIRE planner). It is built from your own numbers and private to your login. It is never sent to Ask AI.
+- **Inputs:** spends and investing come from Monthly expenses (last 6 months). Plan lines named PPF / EPF / VPF / NPS count as PF; the rest count as equity. What you hold comes from Net worth / Bucket strategy. Override anything; amounts accept 1.2L, 50L, 10Cr.
+- **Your rules, month by month:**
+  - New money fills a 36-month arbitrage reserve first. The reserve grows with inflation. You can choose what share of new money goes to it.
+  - PF-type money goes to PF until ₹50 L, then to equity (or keep adding, for mandatory EPF).
+  - Everything else goes to equity. Anything above the reserve moves to equity once a year.
+- **Shows:**
+  - When you reach FIRE (Lean / regular / Fat / Coast).
+  - Milestones from 1 Cr to 100 Cr with age, year and today's value.
+  - A log-scale chart.
+  - What it takes to stop working by a chosen age.
+- **Get there faster:** each lever ranked by how many months it saves for your targets and FIRE:
+  - Invest more.
+  - A higher SIP step-up.
+  - Spend 10% less.
+  - 1% lower costs.
+  - A smaller reserve, or filling it with half your new money.
+  - The PF cap.
+  - Halving your top discretionary spends.
+- **Also:**
+  - The monthly SIP needed to hit each target 3 or 5 years sooner.
+  - Return sensitivity (equity ±2%).
+  - A year-by-year table.
+
+## v5.46.0: Arrange the menu
+
+- **✎ in the menu header** turns on arrange mode. Drag any item to a new place, inside its group or into another group. On a phone, use ▲▼ instead (at the edge of a group they move the item into the next group).
+- **☆ pins an item** to a **⭐ Pinned** group at the top of the menu. ★ unpins it, and it goes back to its own group.
+- **👁 hides an item** you don't use. Hidden items show faded while arranging, so you can bring them back.
+- **Reset** puts the default menu back. **Done** saves.
+- **Saved to your login** (`/api/ui/menu`, `menu.json` in your own folder), so your phone and laptop show the same menu. Each login arranges its own. A copy is kept in the browser so the menu is in order before the server answers.
+- Items added in later versions appear in their default group until you move them.
+- Perf: the baseline was refreshed for the new `/api/ui/menu` page. First page load is now 896 KB compressed (budget 900 KB).
+
+## v5.45.1: Money Map in lakh and crore
+- Every amount in the Money Map (and the Details sheet) has a lakh / crore label beside it (₹30.60 L, ₹1.41 Cr). The label is a formula, so it follows when you change the number.
+- Amounts use Indian digit grouping (₹1,40,74,230); the spending side shows "-" for nothing; NET SURPLUS / (DEFICIT) keeps its sign as (₹1,06,565).
+
 ## v5.45.0: Money Map download
 - Monthly expenses → **⬇ Money Map**: the month as an Excel file in your Money Map layout. Responsible spending (rent + maintenance, utilities, groceries, domestic help, car, mobile, insurance, child education, EMIs, elderly care, family, transport) and bonus spending (food delivery, dining out, entertainment, subscriptions, gadgets, grooming, clothing, fitness, travel, other) on the left. Monthly investments (SIPs, direct equities, EPF / PPF / NPS, FD / RD, crypto, gold, emergency fund), savings spent and the current portfolio (from Net worth) on the right.
 - Blue numbers come from the app; the orange TOTAL rows and NET SURPLUS / (DEFICIT) are live Excel formulas, so you can still change any number.

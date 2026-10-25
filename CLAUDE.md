@@ -20,3 +20,5 @@ Personal Indian-equity research app: Node ESM server (`server.mjs`, per-user dat
 - The mutual fund X-ray library (`mf-xray.json`, `U.fundsFile`) is shared by every account (fund portfolios are public data); write it only inside `withXrayLock()`. Which funds a user holds, values and links stay in their own files.
 - Secrets (broker sessions, Telegram, the Anthropic key `ai-key.json`) are excluded from backups (`BACKUP_SECRET_FILES`) and never sent to the browser.
 - Ask AI (`ai.mjs`): only `buildContext()` output and tool results go to the AI provider the user picked (Anthropic or an OpenAI-compatible one); never account labels / client IDs / PAN / email / folio numbers. Provider keys live in `ai-key.json` / `ai-keys.json` (secret files).
+- Side-menu arrangement (`navorder.js`, `/api/ui/menu`, `menu.json`) is per login. New menu buttons need an `id` and `class="viewTab"`; they land in their default group for users who already arranged the menu.
+- FIRE planner (`fire.mjs`, `/api/fire`, `fire.json`) is per login and, like expenses and buckets, never goes to Ask AI.

@@ -69,6 +69,8 @@ import { parseOrderAnnouncements, mergeOrders, rankOrderWinners } from "./orders
 import { ensureLists, createList, renameList, deleteList, setMembers, prune, DEFAULT_ID } from "./lists.mjs";
 import { METRICS, OPS, PRESETS, sanitizeThesis, evaluateThesis, trackBreaks } from "./thesis.mjs";
 import { AI_MODELS, AI_DEFAULTS, PRIVACY as AI_PRIVACY, sealKey, openKey, looksLikeKey, buildContext, SYSTEM as AI_SYSTEM, TOOLS as AI_TOOLS, sseParser, messageCollector, monthKey, friendlyApiError, AI_PROVIDERS, pickModel, chatModelIds, toOpenAiTools, openAiCollector, friendlyProviderError, looksLikeAnyKey } from "./ai.mjs";
+import { sanitizeMenu } from "./menuprefs.mjs";
+import { firePlan, sanitizeFirePlan } from "./fire.mjs";
 import { addMarketDay, movers as marketMovers, indexChanges } from "./movers.mjs";
 import { fetchFromApi, fetchFromLink } from "./fundsource.mjs";
 import { SMART_INDICES, normIndex, parseAllIndices as parseIndexList, parseIndexStocks, parseIndexCsv, fillFromBars, smartRows, indexSummary } from "./indices.mjs";
@@ -922,6 +924,28 @@ async function bucketsPage() {
   for (const f of held) { const code = f.isin && amfi[f.isin]?.[2]; if (code) { const c = await readJson(mfNavFile(code), null); if (c?.category) catOf.set(`mf:${f.key}`, c.category); else queueMfNav([code]); } }
   const lines = (nw.lines || []).map(l => ({ ...l, fundCategory: catOf.get(l.id) || null }));
   return { ...bucketView(lines, plan, { spend, liabilities: nw.totals?.liabilities || 0 }), goalsList: plan.goals, spend, net: nw.totals?.net ?? null, BUCKETS };
+}
+// ---- FIRE planner (fire.mjs): from your own expenses and net worth; private to each login, never sent to Ask AI ----
+const fireFile = () => userFile("fire.json");
+const PF_LINE = /\b(ppf|epf|vpf|nps|pf|provident)\b/i;
+async function fireTracked() { // averages over the last 6 months that have a plan or a log
+  const st = await expenseStore(), ks = Object.keys(st.months).filter(k => (st.months[k].entries || []).length || (st.months[k].plan || []).length).sort().slice(-6);
+  if (!ks.length) return { months: 0 };
+  let income = 0, invest = 0, pf = 0, spend = 0; const wants = new Map(); let logged = 0;
+  for (const k of ks) {
+    const m = st.months[k], s = monthSummary(m, { budgets: st.budgets });
+    income += s.income; spend += s.plannedTotal - s.planned.invest || s.spent;
+    for (const l of m.plan || []) if (l.type === "invest" && l.amount > 0) { if (PF_LINE.test(l.name)) pf += l.amount; else invest += l.amount; }
+    if ((m.entries || []).length) { logged++; for (const c of s.byCategory) if (c.kind === "want" && c.key !== "Other") wants.set(c.key, (wants.get(c.key) || 0) + c.amount); }
+  }
+  const n = ks.length, avg = v => Math.round(v / n);
+  return { months: n, income: avg(income), invest: avg(invest), pfMonthly: avg(pf), spend: avg(spend), wants: logged ? [...wants].map(([key, v]) => ({ key, amount: Math.round(v / logged) })).sort((a, z) => z.amount - a.amount) : [] };
+}
+async function firePage() {
+  const [bk, tracked, plan] = await Promise.all([bucketsPage(), fireTracked().catch(() => ({ months: 0 })), readJson(fireFile(), {})]);
+  const start = { safety: 0, pf: 0, other: 0, equity: 0 };
+  for (const b of bk.buckets) for (const l of b.lines) { if (["epf", "ppf", "nps"].includes(l.category)) start.pf += l.value; else if (b.id === "safety") start.safety += l.value; else if (b.id === "long") start.equity += l.value; else start.other += l.value; }
+  return { ...firePlan({ plan, tracked, start, liabilities: bk.liabilities || 0 }), saved: plan, at: new Date().toISOString() };
 }
 // ---- Holdings clean-up review (cleanup.mjs): Keep / Add / Trim / Exit for every stock you hold, with the reasons ----
 // Uses saved data only (the swing scan's daily-bar snapshots, saved NSE closes, the tax page, the fund X-ray): no outside site.
@@ -4355,6 +4379,15 @@ async function appHandler(req, res, url) {
         if (op === "refresh") { fetchDividendsFor(cur.rows.map(r => r.symbol), true).catch(() => {}); return reply(res, 200, { started: true, count: cur.rows.length }); }
         return reply(res, 404, { message: "Unknown planner operation." });
       } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/fire" && req.method === "GET") return reply(res, 200, await firePage());
+    if (url.pathname === "/api/fire/save" && req.method === "POST") {
+      try { const b = await readBody(req); await withUserLock(async () => { const prev = await readJson(fireFile(), {}); await writeJson(fireFile(), b.reset ? sanitizeFirePlan({}, { age: prev.age, retireAge: prev.retireAge, goals: prev.goals }) : sanitizeFirePlan(b, prev)); }); return reply(res, 200, await firePage()); }
+      catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/ui/menu") { // the user's own side-menu arrangement
+      if (req.method === "GET") return reply(res, 200, await readJson(userFile("menu.json"), { order: {}, pinned: [], hidden: [] }));
+      if (req.method === "POST") { try { const m = sanitizeMenu(await readBody(req)); await withUserLock(() => writeJson(userFile("menu.json"), m)); return reply(res, 200, m); } catch (e) { return reply(res, 400, { message: e.message }); } }
     }
     if (url.pathname === "/api/themes" && req.method === "GET") return reply(res, 200, await themesView());
     if (url.pathname === "/api/themes/save" && req.method === "POST") {

@@ -7,7 +7,7 @@ import net from "node:net";
 import zlib from "node:zlib";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { moneyMapData, buildMoneyMap } from "../moneymap.mjs";
+import { moneyMapData, buildMoneyMap, lakhCrore } from "../moneymap.mjs";
 
 // read one file out of a zip (central directory)
 function unzipText(buf, name) {
@@ -25,6 +25,9 @@ const plan = [{ name: "Rent", amount: 47500, type: "needs" }, { name: "Maintaina
 const entries = [{ date: "2026-10-02", item: "Grocery", amount: 6810, category: "Groceries", mode: "Pluxee" }, { date: "2026-10-09", item: "Swiggy", amount: 900, category: "Food delivery & eating out", mode: "Credit card" }, { date: "2026-10-15", item: "Netflix", amount: 649, category: "Entertainment", mode: "Credit card" }, { date: "2026-10-15", item: "Bike Service", amount: 3489, category: "Vehicle", mode: "Credit card" }];
 const nw = [{ category: "mf", name: "PPFAS", value: 2100000 }, { category: "epf", name: "EPF", value: 4000000 }, { category: "ppf", name: "PPF", value: 1400000 }, { category: "crypto", name: "CoinDCX", value: 30000 }, { kind: "liability", category: "homeloan", name: "Loan", value: 9 }];
 
+test("money map: lakh / crore labels", () => {
+  assert.equal(lakhCrore(21752449), "₹2.18 Cr"); assert.equal(lakhCrore(3060000), "₹30.60 L"); assert.equal(lakhCrore(-121727), "-₹1.22 L"); assert.equal(lakhCrore(99999), "");
+});
 test("money map: budget lines and daily spends land in the template's rows; actual vs budget; portfolio from net worth", () => {
   const d = moneyMapData({ month: "2026-10", label: "October 2026", data: { income: [{ name: "Salary", amount: 198000 }], plan, entries }, nwLines: nw });
   assert.equal(d.B[4], 53000, "rent + maintenance"); assert.equal(d.B[6], 6810, "grocery uses what was spent"); assert.equal(d.B[7], 25000); assert.equal(d.B[8], 1500 + 3489, "car cleaning + bike service, not the credit card bill");
@@ -36,6 +39,8 @@ test("money map: budget lines and daily spends land in the template's rows; actu
   const x = buildMoneyMap(d), sheet = unzipText(x, "xl/worksheets/sheet1.xml"), wb = unzipText(x, "xl/workbook.xml");
   assert.match(wb, /Money Map.*Details.*Spends/); assert.match(wb, /fullCalcOnLoad="1"/);
   assert.match(sheet, /<c r="B4" s="5"><v>53000<\/v><\/c>/); assert.match(sheet, /<c r="E12" s="8"><f>SUM\(E5:E11\)<\/f><v>45000<\/v>/); assert.match(sheet, /<f>\(E12\)-\(B32\)<\/f>/); assert.match(sheet, /TOTAL PORTFOLIO VALUE/);
+  assert.match(sheet, /<c r="F27" s="13" t="str"><f>IF\(ABS\(E27\)&gt;=10000000.*<v>₹54.00 L<\/v><\/c>/, "lakh label beside the EPF / PPF balance");
+  assert.match(sheet, /<c r="F35" s="13" t="str">.*<v>₹75.30 L<\/v>/); assert.match(sheet, /<c r="E21" s="16">/, "the surplus keeps its sign: (₹…)");
   assert.match(unzipText(x, "xl/worksheets/sheet3.xml"), /Bike Service/);
 });
 
