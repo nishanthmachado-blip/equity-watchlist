@@ -71,6 +71,8 @@ import { METRICS, OPS, PRESETS, sanitizeThesis, evaluateThesis, trackBreaks } fr
 import { AI_MODELS, AI_DEFAULTS, PRIVACY as AI_PRIVACY, sealKey, openKey, looksLikeKey, buildContext, SYSTEM as AI_SYSTEM, TOOLS as AI_TOOLS, sseParser, messageCollector, monthKey, friendlyApiError, AI_PROVIDERS, pickModel, chatModelIds, toOpenAiTools, openAiCollector, friendlyProviderError, looksLikeAnyKey } from "./ai.mjs";
 import { sanitizeMenu } from "./menuprefs.mjs";
 import { firePlan, sanitizeFirePlan } from "./fire.mjs";
+import { swingIncome, INCOME_DEFAULTS } from "./swingincome.mjs";
+import { buildSplit, sanitizeInvestPlan, DEFAULT_INVEST_PLAN } from "./investplan.mjs";
 import { defaultRate as growthRate, matchContributions, projectLines } from "./bucketgrowth.mjs";
 import { decide as nowCall, marketMood } from "./nowcall.mjs";
 import { addMarketDay, movers as marketMovers, indexChanges } from "./movers.mjs";
@@ -912,6 +914,12 @@ if (!process.env.NODE_TEST_CONTEXT) setTimeout(() => forEachUser(() => checkFund
 // ---- Bucket strategy (buckets.mjs) and monthly expenses (expenses.mjs): private to each login (userFile only) ----
 const bucketsFile = () => userFile("buckets.json"), expensesFile = () => userFile("expenses.json");
 async function expenseStore() { const st = await readJson(expensesFile(), {}); return { months: st.months || {}, modes: Array.isArray(st.modes) && st.modes.length ? st.modes : DEFAULT_MODES, learned: st.learned || {}, budgets: st.budgets || {}, template: st.template || null, people: Array.isArray(st.people) ? st.people : null }; }
+// Invest plan (investplan.mjs): this month's income minus your average spending, split across your investment lines
+async function investSplit(st, m) {
+  const raw = await readJson(expensesFile(), {}), plan = raw.investPlan || DEFAULT_INVEST_PLAN, sp = await spendAverage().catch(() => null);
+  const income = (m.income || []).reduce((a, x) => a + (x.amount || 0), 0), current = (m.plan || []).filter(p => p.type === "invest").map(p => ({ name: p.name, amount: p.amount || 0 }));
+  return { ...buildSplit({ income, spend: sp?.avgMonthly ?? 0, current, plan, spendMonths: sp?.months || 0 }), custom: !!raw.investPlan, plan };
+}
 async function spendAverage() { // last 6 months with a log, for sizing the safety bucket
   const st = await expenseStore(), ks = Object.keys(st.months).filter(k => (st.months[k].entries || []).length || (st.months[k].plan || []).length).sort().slice(-6);
   if (!ks.length) return null;
@@ -3834,6 +3842,13 @@ async function appHandler(req, res, url) {
           const v = await swingView(), t = v.totals;
           return reply(res, 200, { has: true, positions: v.positions.length, watch: v.watch.length, takeProfit: t.takeProfit, deploy: t.deploy, deployNow: t.deployNow, near: [...v.positions, ...v.watch].filter(r => /^near/.test(r.status)).length, pnl: t.pnl, pnlPct: t.pnlPct, cash: t.cash, cashShort: t.cashShort, top: [...v.positions, ...v.watch].filter(r => r.status === "take-profit" || r.status === "deploy").slice(0, 3).map(r => ({ symbol: r.symbol, name: r.name, status: r.status, note: r.note })), marketOpen: v.marketOpen });
         }
+        if (op === "income") { // Swing income tracker: monthly booked profit against your target, and the capital it takes
+          if (req.method === "POST") { const b = await readBody(req), t = Number(String(b.target ?? "").replace(/[,₹\s]/g, "")); if (!(t >= 1000 && t <= 1e8)) return reply(res, 400, { message: "Enter a monthly target between ₹1,000 and ₹10 Cr." }); await withUserLock(async () => { const st = await readJson(swingFile(), {}); st.settings = { ...(st.settings || {}), incomeTarget: Math.round(t) }; await writeJson(swingFile(), st); }); }
+          else if (req.method !== "GET") return reply(res, 405, { message: "GET or POST." });
+          const st = await readJson(swingFile(), {}), open = (st.positions || []).reduce((a, p) => a + (Number(p.buyAvg ?? p.avgPrice) || 0) * (Number(p.qty) || 0), 0);
+          const capital = Number.isFinite(st.cash?.balance) ? st.cash.balance + open : open > 0 ? open : null;
+          return reply(res, 200, { ...swingIncome(st.closed || [], { target: st.settings?.incomeTarget || INCOME_DEFAULTS.target, capital, today: istDay() }), openCost: Math.round(open), cash: Number.isFinite(st.cash?.balance) ? Math.round(st.cash.balance) : null });
+        }
         if (req.method === "GET" && op === "export.xlsx") return sendSwingExport(res);
         if (req.method === "POST" && op === "tax") { // sell preview / calculator: { id, qty, price, date } or { buyPrice, boughtOn, qty, price, date }
           const b = await readBody(req), st = await readJson(swingFile(), {}), qty = Number(b.qty), price = Number(b.price);
@@ -4090,7 +4105,7 @@ async function appHandler(req, res, url) {
         const view = async (month, notice = null) => {
           const st = await expenseStore(), m = st.months[month] || null;
           return { month, data: m, exists: !!m, summary: m ? monthSummary(m, { budgets: st.budgets }) : null, modes: st.modes, categories: Object.entries(EXP_CATEGORIES).map(([k, v]) => ({ key: k, ...v, budget: st.budgets[k] ?? v.budget ?? null })), planTypes: PLAN_TYPES,
-            months: Object.keys(st.months).sort(), template: st.template ? { lines: st.template.plan.length, income: st.template.income.length, savedAt: st.template.savedAt } : null, items: [...new Set(Object.values(st.months).flatMap(x => (x.entries || []).map(e => e.item)))].slice(-300), notice, people: peopleOf(st), settle: settleUp(st.months, peopleOf(st), month) };
+            months: Object.keys(st.months).sort(), template: st.template ? { lines: st.template.plan.length, income: st.template.income.length, savedAt: st.template.savedAt } : null, items: [...new Set(Object.values(st.months).flatMap(x => (x.entries || []).map(e => e.item)))].slice(-300), notice, people: peopleOf(st), settle: settleUp(st.months, peopleOf(st), month), invest: m ? await investSplit(st, m) : null };
         };
         const monthOf = v => { const m = String(v || "").slice(0, 7); if (!MONTH_RE.test(m)) throw new Error("Pick a month."); return m; };
         if (req.method === "GET" && op === "") return reply(res, 200, await view(monthOf(url.searchParams.get("month") || istDay().slice(0, 7))));
@@ -4139,6 +4154,15 @@ async function appHandler(req, res, url) {
           else if (op === "settle-add") { const m = M(), x = sanitizeSettlement(b, { month, people: peopleOf(st) }); m.settlements ||= []; const i = m.settlements.findIndex(z => z.id === x.id); if (i >= 0) m.settlements[i] = x; else { if (m.settlements.length >= 200) throw new Error("Too many payments this month."); m.settlements.push(x); } notice = `Recorded: ${x.dir === "paid" ? `you paid ${x.person}` : `${x.person} paid you`} ₹${Math.round(x.amount).toLocaleString("en-IN")}.`; }
           else if (op === "settle-delete") { const m = M(); m.settlements = (m.settlements || []).filter(z => z.id !== b.id); }
           else if (op === "people") { st.people = [...new Set((Array.isArray(b.people) ? b.people : []).map(x => String(x).replace(/[<>]/g, "").trim().slice(0, 30)).filter(Boolean))].slice(0, 12); notice = st.people.length ? `Settle up with: ${st.people.join(", ")}.` : "Back to automatic: payment methods that are names."; if (!st.people.length) st.people = null; }
+          else if (op === "invest-plan") { if (b.reset) { delete raw.investPlan; notice = "Invest plan back to the suggested lines."; } else { raw.investPlan = sanitizeInvestPlan(b.plan || {}); notice = "Invest plan saved."; } }
+          else if (op === "invest-apply") { // write the plan's amounts into this month's investment lines (and the standard budget)
+            const m = M(), sp = await spendAverage().catch(() => null), income = (m.income || []).reduce((a, x) => a + (x.amount || 0), 0);
+            const split = buildSplit({ income, spend: sp?.avgMonthly ?? 0, current: [], plan: raw.investPlan || DEFAULT_INVEST_PLAN });
+            if (!split.total) throw new Error("Nothing to invest: add your income in Budget → Edit first.");
+            const old = new Map(m.plan.filter(p => p.type === "invest").map(p => [p.name.toLowerCase(), p]));
+            m.plan = [...m.plan.filter(p => p.type !== "invest"), ...split.lines.filter(l => l.amount > 0).map(l => sanitizePlanLine({ name: l.name, amount: l.amount, type: "invest", bank: old.get(l.name.toLowerCase())?.bank || null, done: !!old.get(l.name.toLowerCase())?.done }))];
+            notice = `Budget updated: ${split.lines.filter(l => l.amount > 0).length} investment lines, ₹${split.total.toLocaleString("en-IN")} a month.`; keepStandard();
+          }
           else if (op === "month-delete") { delete st.months[month]; notice = `${month} deleted.`; }
           else throw new Error("Unknown expense operation.");
           await writeJson(expensesFile(), { ...raw, ...st });

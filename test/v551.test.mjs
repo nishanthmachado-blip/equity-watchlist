@@ -39,3 +39,10 @@ test("bucket plan keeps per-line contributions and returns; empty resets", () =>
   p = sanitizeBucketPlan({ contrib: { epf: "" } }, p);
   assert.deepEqual(p.contrib, {}); assert.equal(p.rate.epf, 8.1); assert.equal(p.stepUp, 5);
 });
+test("a budget line named after a fund feeds only that fund", async () => {
+  const { matchContributions } = await import("../bucketgrowth.mjs");
+  const ls = [{ id: "pp", name: "PARAG PARIKH FLEXI CAP FUND - DIRECT PLAN", category: "mf", value: 7000 }, { id: "uti", name: "UTI NIFTY200 MOMENTUM 30 INDEX FUND - DIRECT PLAN", category: "mf", value: 174000 }, { id: "tata", name: "TATA NIFTY MIDCAP 150 MOMENTUM 50 INDEX FUND", category: "mf", value: 62000 }];
+  const m = matchContributions(ls, [{ name: "Parag Parikh Flexi Cap", amount: 30000 }, { name: "UTI Nifty200 Momentum 30", amount: 10000 }, { name: "Kids education (Nifty 50 index)", amount: 10000 }]);
+  assert.equal(m.byLine.pp, 30000 + Math.round(10000 * 7000 / 243000));
+  assert.equal(m.byLine.uti, 10000 + Math.round(10000 * 174000 / 243000));
+});

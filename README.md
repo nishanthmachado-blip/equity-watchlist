@@ -1,5 +1,31 @@
 # Equity Watchlist MVP
 
+## v5.55.0: Invest plan (Monthly expenses)
+
+- **💡 Invest plan** section in Monthly expenses: income − average spending (− an optional buffer) = what you can invest each month.
+- **The split:** fixed lines come off first: yearly-expenses liquid fund ₹15k, PPF ₹12.5k, crypto ₹2k. The rest is shared out 30 / 10 / 10 / 15 / 15:
+  - Parag Parikh Flexi Cap
+  - UTI Nifty200 Momentum 30
+  - Kids education (Nifty 50 index)
+  - IND Stocks (buy zone only)
+  - US Stocks (VOO / QQQ)
+- **Comparison with today's budget:** each line shows plan, %, today and the change. Budget lines the plan replaces are listed, with the money "with no job yet" and the equity share.
+- **✎ Edit lines:** names, fixed ₹ or share of the rest, type and why. **Use in my budget** writes the lines into this month's investments (and the standard monthly budget if ticked); needs and wants are untouched.
+- **Bucket strategy matching:** a budget line named after a fund ("Parag Parikh Flexi Cap", "UTI Nifty200 Momentum 30") now feeds that fund only, not every equity fund by size.
+
+## v5.54.0: Swing income tracker
+
+- **💰 Swing income** card at the top of Swing. It compares your booked profit with a monthly income target: ₹1 L after tax by default, editable.
+- **What it shows:**
+  - This month so far against the target before tax (short-term gains tax of 20% + cess taken into account).
+  - A 12-month chart: months that hit the target in dark green, losing months in red.
+  - Average month before and after tax, and months at target out of months tracked.
+  - Win rate, trades a month, average holding period, average win and loss, how much bigger wins are than losses, and profit per trade.
+  - Current and worst losing streak, and the deepest dip.
+  - **The swing capital your own results say the target needs**, against what you have (cash plus open positions).
+- **Tells you plainly** whether it's too early to judge (fewer than 20 trades or 6 months), on track, profitable but short, or losing money.
+- Loads only when you open Swing. Perf baseline refreshed for the new `/api/swing/income`.
+
 ## v5.53.0: Instant live prices
 
 - **Prices change in place, like a trading app.** With Angel One live, each new price is written straight into the screen about half a second after Angel sends it. A green or red flash shows the move up or down.

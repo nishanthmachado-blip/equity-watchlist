@@ -273,7 +273,9 @@
   }
   window.addEventListener("prices:updated", () => { if (!$("#swingView").hidden) load(true); }); // the header refresh / live update
   document.addEventListener("visibilitychange", () => { if (!document.hidden && !$("#swingView").hidden && Date.now() - lastLoaded > 30e3) load(true); });
-  window.openSwing = () => { if (!sw) { $("#swRows").innerHTML = `<tr><td colspan="12" class="nw-empty-row">Loading live prices…</td></tr>`; $("#swStatus").textContent = "Loading…"; } load(); loadIdeas(); };
+  // Swing income tracker: its script (and the screen styles) load the first time Swing opens
+  const openIncome = () => { if (typeof window.loadSwIncome === "function") return window.loadSwIncome(); if (document.getElementById("swIncomeJs")) return; if (!document.getElementById("screensCss")) { const l = document.createElement("link"); l.id = "screensCss"; l.rel = "stylesheet"; l.href = "screens.css"; document.head.appendChild(l); } const sc = document.createElement("script"); sc.id = "swIncomeJs"; sc.src = "swincome.js"; document.head.appendChild(sc); };
+  window.openSwing = () => { openIncome(); if (!sw) { $("#swRows").innerHTML = `<tr><td colspan="12" class="nw-empty-row">Loading live prices…</td></tr>`; $("#swStatus").textContent = "Loading…"; } load(); loadIdeas(); };
   // ---- Swing ideas ----
   let ideas = null, ideasTimer = null, ideasShown = 12;
   async function loadIdeas(scan = false) {

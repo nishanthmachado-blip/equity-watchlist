@@ -44,13 +44,17 @@ const FEEDS = [
   [/stock|share|equity|smallcase|direct/i, l => l.category === "stocks"],
   [/\bmf\b|sip|mutual|fund|flexi|index|nifty|elss|small ?cap|mid ?cap|large ?cap/i, l => l.category === "mf" && !/arbitrage|liquid|overnight|money market|debt|bond|gilt/i.test(`${l.fundCategory || ""} ${l.name}`)]
 ];
+const GENERIC = new Set(["fund", "direct", "plan", "growth", "sip", "the", "and", "regular", "option", "index", "kids", "education", "stocks", "liquid", "yearly", "expenses"]);
 // planLines: [{ name, amount }] (monthly). Returns { byLine: { id: amount }, notes: [{ plan, amount, to:[names] } | { plan, amount, unmatched:true }] }
 export function matchContributions(lines = [], planLines = []) {
   const byLine = {}, notes = [];
   for (const p of planLines) {
     if (!(p.amount > 0)) continue;
-    const hit = FEEDS.find(([re]) => re.test(p.name));
-    const targets = hit ? lines.filter(hit[1]) : [];
+    // a line named after the fund itself ("Parag Parikh Flexi Cap", "UTI Nifty200 Momentum 30") goes to that fund only
+    const words = String(p.name).toLowerCase().replace(/\(.*?\)/g, " ").split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !GENERIC.has(w));
+    const named = words.length >= 2 ? lines.filter(l => { const n = String(l.name || "").toLowerCase(); return words.every(w => n.includes(w)); }) : [];
+    const hit = named.length ? null : FEEDS.find(([re]) => re.test(p.name));
+    const targets = named.length ? named : hit ? lines.filter(hit[1]) : [];
     if (!targets.length) { notes.push({ plan: p.name, amount: p.amount, unmatched: true }); continue; }
     const tot = targets.reduce((a, l) => a + Math.max(l.value, 0), 0); // split across matching lines by size (equally when all are zero)
     for (const l of targets) byLine[l.id] = (byLine[l.id] || 0) + (tot > 0 ? p.amount * l.value / tot : p.amount / targets.length);

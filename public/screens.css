@@ -222,3 +222,32 @@ table.bk-gtable{min-width:720px!important}.bk-gtable th,.bk-gtable td{white-spac
 .ex-scols li .ex-rm{padding:2px 6px!important}
 .ex-sline{margin:8px 0 0;font-size:13.5px}
 .ex-share{display:block;font-style:normal;font-size:10.5px;font-weight:700;margin-top:2px;white-space:nowrap}.ex-share.owe{color:#b13c35}.ex-share.owed{color:#1f7a45}
+
+/* ---------- Swing income tracker (swincome.js) ---------- */
+.sw-income{margin:0 0 14px}
+.si-target{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--muted)}.si-target input{width:110px;margin:0!important}
+.si-now{display:flex;flex-direction:column;gap:6px;margin:6px 0 8px}.si-now>div{display:flex;flex-direction:column}.si-now span{font-size:12px;color:var(--muted);font-weight:600}.si-now strong{font-size:22px}.si-now small{font-size:12px;color:var(--muted)}
+.si-prog{display:block;height:9px;border-radius:5px;background:var(--mute-bg,#e9edf3);overflow:hidden;max-width:520px}.si-prog b{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#1f9d55)}
+.si-chart{position:relative;display:flex;gap:6px;align-items:stretch;margin:16px 0 10px;padding-top:4px}
+.si-line{position:absolute;left:0;right:0;bottom:calc(var(--line) + 64px);border-top:2px dashed #e0a31e;z-index:1;pointer-events:none}.si-line em{position:absolute;right:0;top:-18px;font-style:normal;font-size:11px;color:#b07d00;font-weight:700}
+.si-col{flex:1;display:flex;flex-direction:column;align-items:center;min-width:0}
+.si-up{height:120px;display:flex;align-items:flex-end;width:100%;justify-content:center}.si-dn{height:44px;display:flex;align-items:flex-start;width:100%;justify-content:center;border-top:1px solid var(--line)}
+.si-col i{display:block;width:70%;max-width:34px;border-radius:5px 5px 0 0;background:#86d7a5}.si-col i.hit{background:#1f9d55}.si-dn i{background:#e57368;border-radius:0 0 5px 5px}
+.si-col span{font-size:11px;color:var(--muted);margin-top:2px}.si-col.now span{font-weight:800;color:inherit}
+.si-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:8px 0}
+.si-grid>div{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--line);border-radius:12px}
+.si-grid span{font-size:12px;color:var(--muted);font-weight:600}.si-grid b{font-size:17px}.si-grid small{font-size:11.5px;color:var(--muted);line-height:1.35}
+.si-grid .si-cap{border-color:#e0a31e;background:rgba(224,163,30,.07)}
+
+/* ---------- Monthly expenses: Invest plan ---------- */
+.ex-inv{margin-top:14px}.ex-invb{display:flex;gap:8px;flex-wrap:wrap}
+.ex-invsum{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 10px}
+.ex-invsum>div{display:flex;flex-direction:column;padding:8px 12px;border:1px solid var(--line);border-radius:12px;min-width:120px}.ex-invsum>div span{font-size:11.5px;color:var(--muted);font-weight:600}.ex-invsum>div b{font-size:17px}
+.ex-invsum>div.tot{border-color:#1f9d55;background:rgba(31,157,85,.07)}.ex-invsum>i{font-style:normal;font-size:18px;color:var(--muted)}
+table.ex-invt{min-width:760px!important}.ex-invt th{text-transform:none!important;letter-spacing:0!important}.ex-invt td{vertical-align:top}.ex-invt td.hint{font-size:12px;max-width:340px}
+.ex-invt tr.ex-invold td{opacity:.75}
+.ex-rules{margin:10px 0 4px;padding-left:18px;font-size:13px;line-height:1.7}
+table.ex-ip{min-width:820px!important}.ex-ip input,.ex-ip select{margin:0!important}
+.ui-dlg.wide:has(.ex-ip){width:min(940px,100%)}
+.ui-dlg table.ex-edit.ex-ip{min-width:820px!important}
+.ex-ip td{padding:4px!important}.ex-ip td:first-child{min-width:220px}.ex-ip td:nth-child(5){min-width:220px}.ex-ip input,.ex-ip select{width:100%}
