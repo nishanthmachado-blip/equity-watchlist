@@ -62,7 +62,54 @@ export function sanitizeEntry(b = {}, { month, modes = DEFAULT_MODES, learned = 
   const date = String(b.date || "").slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || (month && date.slice(0, 7) !== month)) throw new Error(`Pick a date in ${month || "the month"}.`);
   const item = txt(b.item, 80); if (!item) throw new Error("What was it for?");
   const mode = txt(b.mode, 30) || modes[0], category = CATEGORIES[b.category] ? b.category : guessCategory(item, learned);
-  return { id: /^x[\w]{4,20}$/.test(b.id || "") ? b.id : id(), date, item, amount, mode, category, note: txt(b.note, 120) || null };
+  const out = { id: /^x[\w]{4,20}$/.test(b.id || "") ? b.id : id(), date, item, amount, mode, category, note: txt(b.note, 120) || null };
+  // shared with someone: { person, dir: "owe" (they paid, you owe them) | "owed" (you paid for them, they owe you), amount }
+  // false = not shared even though a person paid; missing = automatic (paid by a person → you owe them all of it)
+  if (b.share === false || b.share === "none") out.share = false;
+  else if (b.share && typeof b.share === "object" && txt(b.share.person, 30) && ["owe", "owed"].includes(b.share.dir)) {
+    const part = money(b.share.amount); out.share = { person: txt(b.share.person, 30), dir: b.share.dir, amount: part > 0 ? Math.min(part, amount) : amount };
+  }
+  return out;
+}
+
+// ---- Settle up: money between you and family / friends ----
+const NOT_PEOPLE = /card|cash|pay|upi|pluxee|sodexo|bank|wallet|net ?banking|other|not given|neft|imps|cheque|amazon|paytm/i;
+// people you share money with: the ones you named, else payment methods that are names (e.g. "Sophia")
+export function peopleOf({ people = null, modes = [] } = {}) {
+  if (Array.isArray(people) && people.length) return people;
+  return modes.filter(m => !DEFAULT_MODES.some(d => d.toLowerCase() === String(m).toLowerCase()) && !NOT_PEOPLE.test(m));
+}
+export function shareOf(e, people = []) {
+  if (e.share === false) return null;
+  if (e.share?.person) return e.share;
+  const p = people.find(x => x.toLowerCase() === String(e.mode || "").toLowerCase());
+  return p ? { person: p, dir: "owe", amount: e.amount, auto: true } : null;
+}
+export function sanitizeSettlement(b = {}, { month, people = [] } = {}) {
+  const amount = money(b.amount); if (!(amount > 0) || amount > 1e9) throw new Error("Enter the amount.");
+  const person = txt(b.person, 30); if (!person) throw new Error("Who was it with?");
+  const date = String(b.date || "").slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || (month && date.slice(0, 7) !== month)) throw new Error(`Pick a date in ${month || "the month"}.`);
+  return { id: /^x[\w]{4,20}$/.test(b.id || "") ? b.id : id(), date, person, amount, dir: b.dir === "received" ? "received" : "paid", note: txt(b.note, 120) || null };
+}
+// For each person: this month's items both ways, payments, and the running balance from your first month to this one.
+// net > 0: they owe you; net < 0: you owe them.
+export function settleUp(months = {}, people = [], month) {
+  const keys = Object.keys(months).filter(k => k <= month).sort(), names = new Set(people);
+  for (const k of keys) { for (const e of months[k].entries || []) if (e.share?.person) names.add(e.share.person); for (const x of months[k].settlements || []) names.add(x.person); }
+  const list = [...names];
+  const out = list.map(person => {
+    let before = 0; const cur = { owe: [], owed: [], payments: [] };
+    for (const k of keys) {
+      const m = months[k], here = k === month;
+      for (const e of m.entries || []) { const sh = shareOf(e, list); if (!sh || sh.person !== person) continue; const v = sh.dir === "owed" ? sh.amount : -sh.amount; if (here) cur[sh.dir].push({ id: e.id, date: e.date, item: e.item, amount: sh.amount, of: e.amount, auto: !!sh.auto }); else before += v; }
+      for (const x of m.settlements || []) { if (x.person !== person) continue; const v = x.dir === "paid" ? x.amount : -x.amount; if (here) cur.payments.push(x); else before += v; }
+    }
+    const owe = cur.owe.reduce((a, x) => a + x.amount, 0), owed = cur.owed.reduce((a, x) => a + x.amount, 0);
+    const paid = cur.payments.filter(x => x.dir === "paid").reduce((a, x) => a + x.amount, 0), received = cur.payments.filter(x => x.dir === "received").reduce((a, x) => a + x.amount, 0);
+    const monthNet = owed - owe + paid - received, net = Math.round((before + monthNet) * 100) / 100;
+    return { person, ...cur, owe: cur.owe, owed: cur.owed, totals: { owe: r0(owe), owed: r0(owed), paid: r0(paid), received: r0(received) }, monthNet: Math.round(monthNet * 100) / 100, before: Math.round(before * 100) / 100, net };
+  });
+  return out.filter(p => people.includes(p.person) || p.owe.length || p.owed.length || p.payments.length || p.before);
 }
 export function sanitizePlanLine(b = {}) {
   const amount = b.amount === "" || b.amount == null ? null : money(b.amount); if (amount !== null && (amount < 0 || amount > 1e9)) throw new Error("Amount looks wrong.");

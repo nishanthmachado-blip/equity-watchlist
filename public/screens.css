@@ -207,3 +207,18 @@ table.bk-gtable{min-width:720px!important}.bk-gtable th,.bk-gtable td{white-spac
 .bk-gtable th .bk-ga{color:inherit;opacity:.75}
 .bk-gtot td{border-top:2px solid var(--line)}
 .bk-sec table.bk-table{min-width:1040px!important}
+
+/* ---------- Monthly expenses: Settle up ---------- */
+.ex-settle{margin-top:14px}
+.ex-sp{border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:10px 0}
+.ex-snet{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;padding:10px 12px;border-radius:12px;background:var(--mute-bg,#f1f4f8)}
+.ex-snet>div:first-child{display:flex;flex-direction:column;gap:2px}.ex-snet span{font-size:12px;color:var(--muted);font-weight:600}.ex-snet strong{font-size:18px;font-weight:600}.ex-snet small{font-size:12px;color:var(--muted)}
+.ex-snet.out{background:#fdecea}.ex-snet.out strong b{color:#b13c35}.ex-snet.in{background:#e6f6ec}.ex-snet.in strong b{color:#1f7a45}
+[data-theme="dark"] .ex-snet.out{background:#3a1a18}[data-theme="dark"] .ex-snet.in{background:#16341f}
+.ex-sbtn{display:flex;gap:8px;flex-wrap:wrap}
+.ex-scols{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:10px 0 4px}
+.ex-scols h4{margin:4px 0 6px;font-size:13px;display:flex;justify-content:space-between;gap:8px}.ex-scols h4 span{font-weight:700}
+.ex-scols ul{list-style:none;margin:0;padding:0}.ex-scols li{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:5px 0;border-bottom:1px dashed var(--line);font-size:13px}
+.ex-scols li .ex-rm{padding:2px 6px!important}
+.ex-sline{margin:8px 0 0;font-size:13.5px}
+.ex-share{display:block;font-style:normal;font-size:10.5px;font-weight:700;margin-top:2px;white-space:nowrap}.ex-share.owe{color:#b13c35}.ex-share.owed{color:#1f7a45}

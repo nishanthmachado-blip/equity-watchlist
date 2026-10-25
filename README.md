@@ -1,5 +1,25 @@
 # Equity Watchlist MVP
 
+## v5.53.0: Instant live prices
+
+- **Prices change in place, like a trading app.** With Angel One live, each new price is written straight into the screen about half a second after Angel sends it. A green or red flash shows the move up or down.
+- **Where:** My holdings (price, current value and P/L), the Watchlist table, Favourites (price and day %), and Swing (positions and watchlists).
+- **Totals and verdicts** refresh with a full redraw every 30 s while the feed is live. That was every 10 s, and it was the only way prices used to update.
+- **Faster pipeline:** Angel ticks are passed on every 0.5 s (was 1 s; `ANGEL_FLUSH_MS` to change it). The page batch went from 0.3 s to 0.15 s.
+- The page now also gets live prices for ❤ favourites, watchlists and Long-term theme stocks.
+
+## v5.52.0: Settle up (Monthly expenses)
+
+- **🤝 Settle up** section below Daily spends. It tracks money between you and family or friends, for example Sophia.
+- **Spends paid by a person** count as "you owe them" automatically: their name as Paid by, as in your sheet's Sophia column.
+- **When adding or editing a spend,** pick "Sophia paid · I owe" or "I paid for Sophia · owes me". Edit (✎) can also split it, e.g. half.
+- **Record a payment** ("I paid Sophia" / "Sophia paid me"), or settle the balance in one click.
+- **Shows, per person:**
+  - this month's lists both ways, with payments
+  - this month's net
+  - the **overall balance carried across months**: "You owe Sophia ₹X" or "Sophia owes you ₹X"
+- People come from payment methods that are names, or a list in ⚙ Settings.
+
 ## v5.51.0: Bucket strategy — Till you retire
 
 - **📈 Till you retire** card in Bucket strategy. Each line in Safety, Short term, Long-term growth and Retirement is grown month by month until your retirement age, using what you add each month and its expected return. Today's contributions stay the same unless you set a yearly increase.

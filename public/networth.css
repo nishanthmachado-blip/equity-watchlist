@@ -828,3 +828,8 @@ td.co-has-logo>.co-logo{left:10px;top:10px}
 .pf-weights>div span{font-size:11.5px;color:var(--muted)}.pf-weights>div b{font-size:16px}.pf-weights>div small{font-size:11.5px;color:var(--muted)}
 .pf-weights .pf-secs{flex:1;min-width:240px;flex-direction:row!important;flex-wrap:wrap;gap:4px 12px!important;align-items:center}.pf-secs span{width:100%}.pf-secs em{font-style:normal;font-size:12.5px}
 .pf-wnote{width:100%;margin:2px 0 0;font-size:13px;color:#b45309}
+/* live prices: flash on change */
+@keyframes lpUp{0%{background:rgba(31,157,85,.35)}100%{background:transparent}}@keyframes lpDn{0%{background:rgba(192,57,43,.35)}100%{background:transparent}}
+.lp-fu{animation:lpUp 1.2s ease-out;border-radius:4px}.lp-fd{animation:lpDn 1.2s ease-out;border-radius:4px}
+.lp-up{color:var(--good,#1f9d55)}.lp-dn{color:var(--bad,#c0392b)}
+@media (prefers-reduced-motion:reduce){.lp-fu,.lp-fd{animation:none}}

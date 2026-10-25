@@ -37,7 +37,7 @@ import { TAX_RULES, parseTradebook, mergeTrades, taxView } from "./tax.mjs";
 import { reviewHoldings } from "./cleanup.mjs";
 import { BUCKETS, sanitizeBucketPlan, bucketView } from "./buckets.mjs";
 import { moneyMapData, buildMoneyMap } from "./moneymap.mjs";
-import { DEFAULT_MODES, CATEGORIES as EXP_CATEGORIES, PLAN_TYPES, MONTH_RE, sanitizeEntry as sanitizeSpend, sanitizePlanLine, sanitizeIncome, newMonth, toTemplate, parsePlanPaste, parseLogPaste, monthSummary, yearReport, toCsv as expensesCsv, guessCategory } from "./expenses.mjs";
+import { peopleOf, settleUp, sanitizeSettlement, DEFAULT_MODES, CATEGORIES as EXP_CATEGORIES, PLAN_TYPES, MONTH_RE, sanitizeEntry as sanitizeSpend, sanitizePlanLine, sanitizeIncome, newMonth, toTemplate, parsePlanPaste, parseLogPaste, monthSummary, yearReport, toCsv as expensesCsv, guessCategory } from "./expenses.mjs";
 import { parseMfapi, seriesStats, barsToSeries, reviewFunds, fundIdeas, diffFundAlerts, portfolioChurn } from "./mfreview.mjs";
 import { sanitizeThemePlan, parseThemePaste, themePlanView, diffThemeAlerts, themeDefaults, THEME_ICONS } from "./themeplan.mjs";
 import { backtestBars, summarize, perStock, sanitizeBacktest, BACKTEST_SETUPS, BACKTEST_EXITS } from "./backtest.mjs";
@@ -911,7 +911,7 @@ setInterval(() => forEachUser(() => checkFundAlerts()).catch(() => {}), 3 * 3600
 if (!process.env.NODE_TEST_CONTEXT) setTimeout(() => forEachUser(() => checkFundAlerts()).catch(() => {}), 120e3).unref();
 // ---- Bucket strategy (buckets.mjs) and monthly expenses (expenses.mjs): private to each login (userFile only) ----
 const bucketsFile = () => userFile("buckets.json"), expensesFile = () => userFile("expenses.json");
-async function expenseStore() { const st = await readJson(expensesFile(), {}); return { months: st.months || {}, modes: Array.isArray(st.modes) && st.modes.length ? st.modes : DEFAULT_MODES, learned: st.learned || {}, budgets: st.budgets || {}, template: st.template || null }; }
+async function expenseStore() { const st = await readJson(expensesFile(), {}); return { months: st.months || {}, modes: Array.isArray(st.modes) && st.modes.length ? st.modes : DEFAULT_MODES, learned: st.learned || {}, budgets: st.budgets || {}, template: st.template || null, people: Array.isArray(st.people) ? st.people : null }; }
 async function spendAverage() { // last 6 months with a log, for sizing the safety bucket
   const st = await expenseStore(), ks = Object.keys(st.months).filter(k => (st.months[k].entries || []).length || (st.months[k].plan || []).length).sort().slice(-6);
   if (!ks.length) return null;
@@ -1547,6 +1547,7 @@ const ANGEL_STREAM = ANGEL_PRICES && process.env.ANGEL_STREAM !== "0";
 const streamSym = new Map(); // "NSE|token" -> symbol
 let streamListAt = 0, streamOpenAt = 0, streamBusy = false, streamWhy = "starting", streamCheckedAt = null;
 const angelStream = createAngelStream({
+  flushMs: Number(process.env.ANGEL_FLUSH_MS) || 500, // how often ticks are passed on (the page gets them ~0.2 s later)
   auth: async ({ fresh }) => { const u = await angelAccount({ ignorePause: true }); if (!u) throw new Error("Angel One is not connected"); return asUser(u, () => brokers.angel.streamAuth({ fresh })); },
   onTicks: ticks => {
     for (const t of ticks) {
@@ -3427,7 +3428,7 @@ async function appHandler(req, res, url) {
     // Live updates for this page: new prices for this account's stocks, refresh results. One stream per open tab.
     if (url.pathname === "/api/events" && req.method === "GET") {
       const user = currentUser(); let syms = new Set();
-      const loadSyms = async () => { const [stocks, st, hold] = await Promise.all([readWatchlist(), readJson(swingFile(), {}), readHoldStore()]); syms = new Set([...stocks.filter(x => symOf(x)).map(x => `${x.exchange || "NSE"}:${symOf(x)}`), ...[...(st.positions || []), ...(st.watch || [])].map(x => `${x.exchange || "NSE"}:${x.symbol}`), ...Object.values(hold.accounts || {}).flatMap(a => (a.holdings || []).filter(h => h.symbol).map(h => `${h.exchange === "BSE" ? "BSE" : "NSE"}:${String(h.symbol).toUpperCase()}`))]); };
+      const loadSyms = async () => { const [stocks, st, hold, act] = await Promise.all([readWatchlist(), readJson(swingFile(), {}), readHoldStore(), activeSymbols().catch(() => new Set())]); syms = new Set([...[...act].map(x => `NSE:${x}`), ...stocks.filter(x => symOf(x)).map(x => `${x.exchange || "NSE"}:${symOf(x)}`), ...[...(st.positions || []), ...(st.watch || [])].map(x => `${x.exchange || "NSE"}:${x.symbol}`), ...Object.values(hold.accounts || {}).flatMap(a => (a.holdings || []).filter(h => h.symbol).map(h => `${h.exchange === "BSE" ? "BSE" : "NSE"}:${String(h.symbol).toUpperCase()}`))]); };
       await loadSyms();
       res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" });
       const send = (event, data) => { try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* closed */ } };
@@ -3435,7 +3436,7 @@ async function appHandler(req, res, url) {
       const onQuote = (key, q) => {
         if (!syms.has(key)) return;
         batch[key.slice(key.indexOf(":") + 1)] = { price: q.price, asOf: q.asOf || null, source: q.source, prevClose: q.prevClose ?? null, ...(q.stream ? { stream: true, dayOpen: q.dayOpen ?? null, dayHigh: q.dayHigh ?? null, dayLow: q.dayLow ?? null, volume: q.volume ?? null } : {}) };
-        if (!timer) timer = setTimeout(() => { timer = null; const b = batch; batch = {}; send("prices", { quotes: b, at: Date.now() }); }, 300);
+        if (!timer) timer = setTimeout(() => { timer = null; const b = batch; batch = {}; send("prices", { quotes: b, at: Date.now() }); }, 150);
       };
       const onUser = (uid, event, data) => { if (uid === user.id) { if (event === "symbols") asUser(user, loadSyms).catch(() => {}); else send(event, data); } };
       priceBus.on("quote", onQuote); priceBus.on("user", onUser);
@@ -4089,7 +4090,7 @@ async function appHandler(req, res, url) {
         const view = async (month, notice = null) => {
           const st = await expenseStore(), m = st.months[month] || null;
           return { month, data: m, exists: !!m, summary: m ? monthSummary(m, { budgets: st.budgets }) : null, modes: st.modes, categories: Object.entries(EXP_CATEGORIES).map(([k, v]) => ({ key: k, ...v, budget: st.budgets[k] ?? v.budget ?? null })), planTypes: PLAN_TYPES,
-            months: Object.keys(st.months).sort(), template: st.template ? { lines: st.template.plan.length, income: st.template.income.length, savedAt: st.template.savedAt } : null, items: [...new Set(Object.values(st.months).flatMap(x => (x.entries || []).map(e => e.item)))].slice(-300), notice };
+            months: Object.keys(st.months).sort(), template: st.template ? { lines: st.template.plan.length, income: st.template.income.length, savedAt: st.template.savedAt } : null, items: [...new Set(Object.values(st.months).flatMap(x => (x.entries || []).map(e => e.item)))].slice(-300), notice, people: peopleOf(st), settle: settleUp(st.months, peopleOf(st), month) };
         };
         const monthOf = v => { const m = String(v || "").slice(0, 7); if (!MONTH_RE.test(m)) throw new Error("Pick a month."); return m; };
         if (req.method === "GET" && op === "") return reply(res, 200, await view(monthOf(url.searchParams.get("month") || istDay().slice(0, 7))));
@@ -4105,7 +4106,7 @@ async function appHandler(req, res, url) {
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown expense operation." });
         const b = await readBody(req), month = monthOf(b.month); let notice = null;
         await withUserLock(async () => {
-          const raw = await readJson(expensesFile(), {}), st = { months: raw.months || {}, modes: Array.isArray(raw.modes) && raw.modes.length ? raw.modes : [...DEFAULT_MODES], learned: raw.learned || {}, budgets: raw.budgets || {}, template: raw.template || null };
+          const raw = await readJson(expensesFile(), {}), st = { months: raw.months || {}, modes: Array.isArray(raw.modes) && raw.modes.length ? raw.modes : [...DEFAULT_MODES], learned: raw.learned || {}, budgets: raw.budgets || {}, template: raw.template || null, people: Array.isArray(raw.people) ? raw.people : null };
           const M = () => (st.months[month] ||= newMonth(st.months[Object.keys(st.months).filter(k => k < month).sort().at(-1)] || null, st.template));
           const keepStandard = () => { if (b.standard) { st.template = toTemplate(st.months[month]); notice = `${notice ? `${notice} ` : ""}Saved as your standard monthly budget: every new month starts with these ${st.template.plan.length} lines.`; } };
           if (op === "start") { const had = !!st.months[month], m = M(); notice = had ? null : m.plan.length ? `Started ${month} from your ${st.template ? "standard monthly budget" : "last month's plan"}.` : `Started ${month}.`; if (b.applyStandard && st.template) { const t = newMonth(null, st.template); m.plan = t.plan; m.income = t.income; notice = `${month}: budget reset to your standard ${t.plan.length} lines.`; } }
@@ -4135,6 +4136,9 @@ async function appHandler(req, res, url) {
             if (Array.isArray(b.modes)) { const ms = [...new Set(b.modes.map(x => String(x).replace(/[<>]/g, "").trim().slice(0, 30)).filter(Boolean))].slice(0, 15); if (!ms.length) throw new Error("Keep at least one payment method."); st.modes = ms; }
             if (b.budgets && typeof b.budgets === "object") for (const [k, v] of Object.entries(b.budgets)) if (EXP_CATEGORIES[k]) { const t = String(v || "").replace(/[<>]/g, "").trim().slice(0, 50); if (t) st.budgets[k] = t; else st.budgets[k] = null; }
           }
+          else if (op === "settle-add") { const m = M(), x = sanitizeSettlement(b, { month, people: peopleOf(st) }); m.settlements ||= []; const i = m.settlements.findIndex(z => z.id === x.id); if (i >= 0) m.settlements[i] = x; else { if (m.settlements.length >= 200) throw new Error("Too many payments this month."); m.settlements.push(x); } notice = `Recorded: ${x.dir === "paid" ? `you paid ${x.person}` : `${x.person} paid you`} ₹${Math.round(x.amount).toLocaleString("en-IN")}.`; }
+          else if (op === "settle-delete") { const m = M(); m.settlements = (m.settlements || []).filter(z => z.id !== b.id); }
+          else if (op === "people") { st.people = [...new Set((Array.isArray(b.people) ? b.people : []).map(x => String(x).replace(/[<>]/g, "").trim().slice(0, 30)).filter(Boolean))].slice(0, 12); notice = st.people.length ? `Settle up with: ${st.people.join(", ")}.` : "Back to automatic: payment methods that are names."; if (!st.people.length) st.people = null; }
           else if (op === "month-delete") { delete st.months[month]; notice = `${month} deleted.`; }
           else throw new Error("Unknown expense operation.");
           await writeJson(expensesFile(), { ...raw, ...st });

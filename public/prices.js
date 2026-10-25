@@ -16,7 +16,7 @@
     b.classList.toggle("stale", !!(st?.marketOpen && age !== null && age > 5));
     b.classList.toggle("is-loading", busy);
     b.classList.toggle("is-live", live);
-    b.title = `${feed ? "Market open: live prices from your Angel One account, updated the moment they change (the screen redraws every 10 s)." : st?.marketOpen ? `Market open: prices stream in as they change (checked every ${st.intervalSec >= 60 ? `${Math.round(st.intervalSec / 60)} min` : `${st.intervalSec} s`}).` : "Market closed."} Click to refresh now.${live ? "" : " (Live updates unavailable; checking every 30 s.)"}`;
+    b.title = `${feed ? "Market open: live prices from your Angel One account. Prices on screen change the moment Angel One sends them (about a second); totals and verdicts refresh every 30 s." : st?.marketOpen ? `Market open: prices stream in as they change (checked every ${st.intervalSec >= 60 ? `${Math.round(st.intervalSec / 60)} min` : `${st.intervalSec} s`}).` : "Market closed."} Click to refresh now.${live ? "" : " (Live updates unavailable; checking every 30 s.)"}`;
   }
   // Reload the data of the screen that is open; other screens are marked and reloaded when you open them
   async function refreshVisible() {
@@ -30,16 +30,35 @@
     } catch (e) { console.warn("price redraw:", e); }
     window.dispatchEvent(new CustomEvent("prices:updated"));
   }
-  // With Angel One's live feed prices change every second: redraw the open screen at most every 10 s then (every 2 s otherwise)
+  // Instant prices: every price on screen marked by lpAttr() is rewritten the moment a quote arrives, with a green / red
+  // flash like a trading app; values and P/L next to it follow. Totals and verdicts catch up with the full redraw.
+  const nf2 = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), nf0 = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
+  window.lpAttr = (sym, kind = "px", o = {}) => (sym ? `data-lp="${String(sym).toUpperCase().replace(/[^A-Z0-9&.-]/g, "")}" data-lk="${kind}"${Number.isFinite(o.q) ? ` data-q="${o.q}"` : ""}${Number.isFinite(o.c) ? ` data-c="${Math.round(o.c * 100) / 100}"` : ""}` : "");
+  function patch(quotes) {
+    for (const [sym, q] of Object.entries(quotes || {})) {
+      if (!(q?.price > 0)) continue;
+      for (const el of document.querySelectorAll(`[data-lp="${sym.replace(/"/g, "")}"]`)) {
+        const k = el.dataset.lk, qty = Number(el.dataset.q) || 0, cost = Number(el.dataset.c) || 0;
+        const v = k === "px" ? q.price : k === "val" ? q.price * qty : k === "pnl" ? q.price * qty - cost : k === "chg" && q.prevClose > 0 ? (q.price / q.prevClose - 1) * 100 : null;
+        if (v === null || !Number.isFinite(v)) continue;
+        const old = el.dataset.v !== undefined ? Number(el.dataset.v) : null; el.dataset.v = v;
+        el.textContent = k === "px" ? `₹${nf2.format(v)}` : k === "val" ? `₹${nf0.format(v)}` : k === "pnl" ? `${v >= 0 ? "+" : "−"}₹${nf0.format(Math.abs(v))}` : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+        if (k === "pnl" || k === "chg") { el.classList.toggle("lp-up", v >= 0); el.classList.toggle("lp-dn", v < 0); }
+        const was = old ?? (k === "px" ? Number(String(el.dataset.p || "").replace(/,/g, "")) : null);
+        if (Number.isFinite(was) && was !== v) { el.classList.remove("lp-fu", "lp-fd"); void el.offsetWidth; el.classList.add(v > was ? "lp-fu" : "lp-fd"); }
+      }
+    }
+  }
+  // With Angel One's live feed: prices on screen change in place at once; the whole screen is redrawn every 30 s (every 2 s otherwise)
   let streaming = false;
-  function schedule() { if (document.hidden) { dirty = true; return; } if (timer) return; timer = setTimeout(refreshVisible, Math.max(250, (streaming ? 10000 : 2000) - (Date.now() - lastRun))); }
+  function schedule() { if (document.hidden) { dirty = true; return; } if (timer) return; timer = setTimeout(refreshVisible, Math.max(250, (streaming ? 30000 : 2000) - (Date.now() - lastRun))); }
   // Switching screens: catch up if prices changed while it was hidden
   const wrapSetView = () => { const orig = window.setView; if (typeof orig !== "function" || orig.__live) return; const w = function (v) { const r = orig.apply(this, arguments); if (dirty) schedule(); return r; }; w.__live = true; window.setView = w; };
   function connect() {
     if (!("EventSource" in window)) return startPolling();
     es = new EventSource("/api/events");
     es.addEventListener("hello", e => { live = true; const h = JSON.parse(e.data); st = { ...(st || {}), marketOpen: h.marketOpen, intervalSec: h.intervalSec }; streaming = !!h.streaming; total = h.symbols || 0; stopPolling(); paint(); });
-    es.addEventListener("prices", e => { const x = JSON.parse(e.data); lastQuoteAt = Date.now(); if (Object.values(x.quotes).some(q => q.stream)) { streaming = true; lastStreamAt = Date.now(); } else if (Date.now() - lastStreamAt > 60e3) streaming = false; if (got) for (const k of Object.keys(x.quotes)) got.add(k); window.liveQuotes = { ...(window.liveQuotes || {}), ...x.quotes }; window.dispatchEvent(new CustomEvent("prices:quotes", { detail: x.quotes })); schedule(); paint(); });
+    es.addEventListener("prices", e => { const x = JSON.parse(e.data); lastQuoteAt = Date.now(); try { patch(x.quotes); } catch (err) { console.warn("live patch:", err); } if (Object.values(x.quotes).some(q => q.stream)) { streaming = true; lastStreamAt = Date.now(); } else if (Date.now() - lastStreamAt > 60e3) streaming = false; if (got) for (const k of Object.keys(x.quotes)) got.add(k); window.liveQuotes = { ...(window.liveQuotes || {}), ...x.quotes }; window.dispatchEvent(new CustomEvent("prices:quotes", { detail: x.quotes })); schedule(); paint(); });
     es.addEventListener("alert", e => { const x = JSON.parse(e.data); window.toast?.(`🔔 ${x.titles.join(" · ")}${x.count > x.titles.length ? ` +${x.count - x.titles.length} more` : ""}`, { kind: "ok", ms: 8000 }); window.dispatchEvent(new CustomEvent("prices:alert", { detail: x })); window.pollAlerts?.(); });
     es.addEventListener("refresh", e => { const x = JSON.parse(e.data); if (refreshWait) { refreshWait(x); refreshWait = null; } });
     es.onerror = () => { live = false; paint(); if (es.readyState === EventSource.CLOSED) { startPolling(); setTimeout(connect, 15e3); } else startPolling(); };
