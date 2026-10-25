@@ -14,7 +14,7 @@
       <button id="viewMarket" class="viewTab" title="Market today"><span class="ico" aria-hidden="true">📈</span><span class="lbl">Market today</span></button>
       <button id="viewIndices" class="viewTab" data-goto="indices" title="Smart indices"><span class="ico" aria-hidden="true">🧠</span><span class="lbl">Smart indices</span></button>
       <button id="viewOrders" class="viewTab" data-goto="orders" title="Order wins"><span class="ico" aria-hidden="true">📦</span><span class="lbl">Order wins</span></button>
-      <button id="viewUs" class="viewTab" title="US stocks"><span class="ico" aria-hidden="true">🇺🇸</span><span class="lbl">US stocks</span></button>
+      <button id="viewUs" class="viewTab" data-goto="us" title="US stocks"><span class="ico" aria-hidden="true">🇺🇸</span><span class="lbl">US stocks</span></button>
       <button id="viewDividends" class="viewTab" title="Dividend income planner"><span class="ico" aria-hidden="true">💰</span><span class="lbl">Dividend income planner</span></button>
       <p class="side-label">Your portfolio</p>
       <button id="viewNetworth" class="viewTab" title="Net worth"><span class="ico" aria-hidden="true">🏦</span><span class="lbl">Net worth</span></button>
@@ -307,7 +307,7 @@
         <p>It covers funds bought anywhere: direct with Axis MF, INDmoney, Groww, Kuvera, a distributor. Funds that a broker sync already brings (Zerodha Coin, INDmoney) are counted once. Import a fresh CAS every few months to pick up new SIP units (NAVs update by themselves every day).</p>
         <p><b>Without the CAS</b>: press <b>+ Add a fund</b>, pick the fund (e.g. “Axis ELSS Direct Growth”), and type the units and the amount invested from the AMC's app or statement. A CSV with columns <i>Scheme name (or ISIN), Units, Invested</i> works too.</p></details>
     </section>
-    <section id="usView" hidden>
+    <section id="usView" data-feature-view="us" hidden>
       <section class="report-card us-hold" id="usHold">
         <div class="nw-head"><h3>💼 My US holdings <span class="hint">INDmoney · Vested · any US broker, in $ and ₹</span></h3><span class="us-cur-wrap"><span class="hint" id="usHoldNote"></span><span class="md-seg us-cur" id="usCur" role="group" aria-label="Show amounts in"><button type="button" data-cur="inr" class="active">₹ INR</button><button type="button" data-cur="usd">$ USD</button></span></span></div>
         <nav class="views sub pf-acc" id="usAccTabs" aria-label="Broker"></nav>
@@ -320,7 +320,7 @@
           <label class="pf-sel">Invested<select id="usInv"><option value="0">Any</option><option value="25000">₹25 K+</option><option value="50000">₹50 K+</option><option value="100000">₹1 L+</option><option value="300000">₹3 L+</option><option value="500000">₹5 L+</option><option value="-50000">Under ₹50 K</option></select></label>
           <label class="pf-sel">P/L %<select id="usPct"><option value="">Any</option><option value="50:">+50% or more</option><option value="20:">+20% or more</option><option value="0:20">0 to +20%</option><option value="-10:0">0 to −10%</option><option value="-20:-10">−10% to −20%</option><option value=":-20">−20% or worse</option></select></label>
           <label class="pf-sel">P/L ₹<select id="usAbs"><option value="">Any</option><option value="100000:">+₹1 L or more</option><option value="25000:">+₹25 K or more</option><option value=":-25000">−₹25 K or worse</option><option value=":-100000">−₹1 L or worse</option></select></label>
-          <label class="pf-sel">Sort<select id="usSort"><option value="value">Current value</option><option value="invested">Invested</option><option value="pnl">P/L ₹</option><option value="pnlPct">P/L %</option><option value="xirr">XIRR</option><option value="day">Day change %</option><option value="weight">% of total</option><option value="name">Name A–Z</option></select></label>
+          <label class="pf-sel">Sort<select id="usSort"><option value="value">Current value</option><option value="invested">Invested</option><option value="pnl">P/L ₹</option><option value="pnlPct">P/L %</option><option value="xirr">XIRR</option><option value="day">Day change %</option><option value="weight">Weight</option><option value="name">Name A–Z</option></select></label>
           <button type="button" class="ghost pf-dir" id="usDir">↓ High to low</button>
           <input id="usQ" placeholder="Search US holdings" autocomplete="off" aria-label="Search US holdings">
           <button type="button" class="linklike" id="usReset" hidden>Clear filters</button>
@@ -440,13 +440,14 @@
         <label class="pf-sel">Invested<select id="pfInv"><option value="0">Any</option><option value="25000">₹25 K+</option><option value="50000">₹50 K+</option><option value="100000">₹1 L+</option><option value="300000">₹3 L+</option><option value="500000">₹5 L+</option><option value="1000000">₹10 L+</option><option value="-50000">Under ₹50 K</option></select></label>
         <label class="pf-sel">P/L %<select id="pfPct"><option value="">Any</option><option value="50:">+50% or more</option><option value="20:">+20% or more</option><option value="0:20">0 to +20%</option><option value="-10:0">0 to −10%</option><option value="-20:-10">−10% to −20%</option><option value=":-20">−20% or worse</option></select></label>
         <label class="pf-sel">P/L ₹<select id="pfAbs"><option value="">Any</option><option value="100000:">+₹1 L or more</option><option value="25000:">+₹25 K or more</option><option value=":-25000">−₹25 K or worse</option><option value=":-100000">−₹1 L or worse</option></select></label>
-        <label class="pf-sel">Sort<select id="pfSort"><option value="value">Current value</option><option value="invested">Invested</option><option value="pnl">P/L ₹</option><option value="pnlPct">P/L %</option><option value="day">Day change %</option><option value="weight">% of total</option><option value="name">Name A–Z</option></select></label>
+        <label class="pf-sel">Sort<select id="pfSort"><option value="value">Current value</option><option value="invested">Invested</option><option value="pnl">P/L ₹</option><option value="pnlPct">P/L %</option><option value="day">Day change %</option><option value="weight">Weight</option><option value="name">Name A–Z</option></select></label>
         <button type="button" class="ghost pf-dir" id="pfDir" title="Reverse the order">↓ High to low</button>
         <input id="pfQ" placeholder="Search holdings" autocomplete="off" aria-label="Search holdings">
         <button type="button" class="linklike" id="pfReset" hidden>Clear filters</button>
       </section>
       <p class="pf-sum" id="pfSum"></p>
-      <section class="table-wrap"><table><thead><tr><th data-sk="name">Stock</th><th>Qty</th><th>Avg cost</th><th>Price</th><th class="num" data-sk="invested">Invested</th><th class="num" data-sk="value">Current value</th><th class="num" data-sk="pnl">P/L</th><th>P/E</th><th class="m-hide">Sector P/E</th><th data-sk="weight">% of total</th><th>Verdict</th><th>Valuation</th><th class="m-hide">Fair value (base)</th><th class="m-hide">Buy zone</th><th class="m-hide">Status</th><th></th></tr></thead><tbody id="pfRows"></tbody></table></section>
+      <div class="pf-weights" id="pfWeights" hidden></div>
+      <section class="table-wrap"><table><thead><tr><th data-sk="name">Stock</th><th data-sk="weight" title="Share of the current value of the holdings shown in this tab">Weight</th><th>Qty</th><th>Avg cost</th><th>Price</th><th class="num" data-sk="invested">Invested</th><th class="num" data-sk="value">Current value</th><th class="num" data-sk="pnl">P/L</th><th>P/E</th><th class="m-hide">Sector P/E</th><th>Verdict</th><th>Valuation</th><th class="m-hide">Fair value (base)</th><th class="m-hide">Buy zone</th><th class="m-hide">Status</th><th></th></tr></thead><tbody id="pfRows"></tbody></table></section>
       <p class="hint" id="pfNote"></p>
       <details id="pfSetup" class="pf-setup"><summary><strong>Add or sync holdings</strong> <span class="hint">Kite, Angel One, Dhan, Groww, INDmoney CSV · add holdings to the watchlist</span></summary>
       <section class="report-grid two">
@@ -658,7 +659,6 @@
   <script src="tax.js"></script>
   <script src="model.js"></script>
   <script src="swing.js"></script>
-  <script src="us.js"></script>
   <script src="features.js"></script>
   <script src="mf.js"></script>
   <script src="indices.js"></script>

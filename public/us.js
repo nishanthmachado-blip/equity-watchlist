@@ -235,7 +235,7 @@
     try { await api("/api/us/list", { add: [sym] }); list = "mine"; window.toast?.(`✓ ${esc(sym)} added. Reading its SEC filings…`, { kind: "ok", ms: 3000 }); await load(); }
     catch (e) { window.toast?.(esc(e.message), { kind: "warn" }); }
   }
-  document.addEventListener("DOMContentLoaded", () => {
+  const usInit = () => {
     if (!$("#usView")) return;
     $("#viewUs").onclick = () => setView("us");
     $("#usHoldImport").onclick = () => holdImport();
@@ -289,5 +289,8 @@
     });
     $("#usDrop").addEventListener("mousedown", e => { const b = e.target.closest("[data-i]"); if (b) { e.preventDefault(); addSym(results[Number(b.dataset.i)].symbol); } });
     q.addEventListener("blur", () => setTimeout(() => { results = []; drawDrop(); }, 150));
-  });
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", usInit); else usInit(); // loaded on demand (app.js LAZY_VIEWS)
+  window.featureOpen = window.featureOpen || {};
+  window.featureOpen.us = () => window.openUs();
 })();

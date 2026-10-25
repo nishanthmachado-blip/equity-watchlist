@@ -86,7 +86,7 @@ body.standalone .tabbar{bottom:max(10px,env(safe-area-inset-bottom))!important}
   main .idx-table tbody>tr>td:nth-child(2)::before{display:none}
   main .idx-table tbody>tr>td:first-child::before{content:"Select";display:block}
   /* holdings: P/L stands out */
-  #pfRows td:nth-child(7) b,#pfRows td:nth-child(7){font-size:15px}
+  #pfRows td:nth-child(8) b,#pfRows td:nth-child(8){font-size:15px}
   .pl-pct{display:inline;margin-left:4px}
 
   /* ---- dialogs: bottom sheets ---- */
@@ -133,6 +133,6 @@ body.standalone .tabbar{bottom:max(10px,env(safe-area-inset-bottom))!important}
   main .table-wrap:not(.m-keep) tr.idx-held{border-left:5px solid var(--good)!important}
   /* holdings card: value and P/L right under the name */
   #pfRows>tr>td:first-child{order:-3}
-  #pfRows>tr>td:nth-child(6),#pfRows>tr>td:nth-child(7){order:-2}
-  #pfRows>tr>td:nth-child(6) ,#pfRows>tr>td:nth-child(7){font-size:16px;font-weight:700}
+  #pfRows>tr>td:nth-child(2),#pfRows>tr>td:nth-child(7),#pfRows>tr>td:nth-child(8){order:-2}
+  #pfRows>tr>td:nth-child(7) ,#pfRows>tr>td:nth-child(8){font-size:16px;font-weight:700}
 }

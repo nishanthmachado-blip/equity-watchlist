@@ -1,5 +1,15 @@
 # Equity Watchlist MVP
 
+## v5.49.0: Weight in My holdings
+
+- **Weight column** right after the stock name: each holding's share of the current value, with a bar scaled to the biggest holding. It is worked out per tab, so "All accounts" and each account have their own weights. Holdings at 10% or more show in amber. Click the header (or Sort → Weight) to rank by it.
+- **Concentration summary** above the table:
+  - the biggest holding, Top 5 and Top 10 share, and how many stocks make up 80% of the value
+  - weight by sector
+  - a warning when a stock is 10%+ or a sector is 30%+ of the portfolio
+- On phones the weight shows next to the value and P/L at the top of each card.
+- Speed: the US stocks screen now loads when you first open it. The first page load drops from 899 KB to 862 KB compressed (budget 900 KB).
+
 ## v5.48.0: What to do now
 
 New screen at the top of the menu (Main → 🚦 What to do now). It gives one call per stock across your holdings, ❤ favourites and Long-term theme stocks, so you don't have to piece it together from Focus list, Holdings clean-up, Swing and Themes.

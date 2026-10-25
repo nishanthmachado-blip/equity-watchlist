@@ -566,7 +566,7 @@ function applyHeader(v){
   document.title=v==="home"?"Equity Watchlist":`${h[1]} · Equity Watchlist`;
 }
 // screens whose script loads the first time they are opened (keeps the first page load small)
-const LAZY_VIEWS={review:"review.js",longterm:"longterm.js",fundreview:"mfreview.js",buckets:"buckets.js",expenses:"expenses.js",fire:"fire.js",decide:"decide.js"};const lazyLoading={};
+const LAZY_VIEWS={review:"review.js",longterm:"longterm.js",fundreview:"mfreview.js",buckets:"buckets.js",expenses:"expenses.js",fire:"fire.js",decide:"decide.js",us:"us.js"};const lazyLoading={};
 function loadViewScript(v){if(lazyLoading[v])return;lazyLoading[v]=true;if(!document.getElementById("screensCss")){const l=document.createElement("link");l.id="screensCss";l.rel="stylesheet";l.href="screens.css";document.head.appendChild(l);}const s=document.createElement("script");s.src=LAZY_VIEWS[v];s.onload=()=>{if(currentViewIs(v))window.featureOpen?.[v]?.();};s.onerror=()=>{lazyLoading[v]=false;window.toast?.("Could not load this screen: check the connection and try again.",{kind:"bad"});};document.head.appendChild(s);}
 function currentViewIs(v){const sec=document.querySelector(`[data-feature-view="${v}"]`);return !!sec&&!sec.hidden;}
 function setView(view){
@@ -599,7 +599,7 @@ function setView(view){
   $("#viewModel").classList.toggle("active",v==="model");
   $("#viewUs").classList.toggle("active",v==="us");
   if(v==="model")window.openModel?.();
-  if(v==="us")window.openUs?.();
+
   $("#viewTax").classList.toggle("active",v==="tax");
   if(v==="tax")window.openTax?.();
   try{window.history.replaceState(null,"",v==="home"?location.pathname:`#${v}`)}catch{}
