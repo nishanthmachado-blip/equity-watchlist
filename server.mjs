@@ -73,6 +73,7 @@ import { sanitizeMenu } from "./menuprefs.mjs";
 import { firePlan, sanitizeFirePlan } from "./fire.mjs";
 import { swingIncome, INCOME_DEFAULTS } from "./swingincome.mjs";
 import { buildSplit, sanitizeInvestPlan, DEFAULT_INVEST_PLAN, investKey } from "./investplan.mjs";
+import { exportRows, toCsvAll, toSheets, parseImport, spendKey } from "./expensesio.mjs";
 import { defaultRate as growthRate, matchContributions, projectLines } from "./bucketgrowth.mjs";
 import { decide as nowCall, marketMood } from "./nowcall.mjs";
 import { addMarketDay, movers as marketMovers, indexChanges } from "./movers.mjs";
@@ -4118,9 +4119,16 @@ async function appHandler(req, res, url) {
           res.writeHead(200, { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="Money-Map-${month}.xlsx"`, "Cache-Control": "no-store" });
           return res.end(buildMoneyMap(d));
         }
-        if (req.method === "GET" && op === "export.csv") { const st = await expenseStore(); res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": "attachment; filename=\"expenses.csv\"", "Cache-Control": "no-store" }); return res.end(expensesCsv(st.months)); }
+        if (req.method === "GET" && (op === "export.csv" || op === "export.xlsx")) { // round-trip format: CSV (one file, Section column) or Excel (Spends / Budget / Income / Settle up)
+          const st = await expenseStore(), scope = url.searchParams.get("scope") || "all", m0 = monthOf(url.searchParams.get("month") || istDay().slice(0, 7));
+          const fy = (() => { const [y, mo] = m0.split("-").map(Number), start = mo >= 4 ? y : y - 1; return Array.from({ length: 12 }, (_, i) => { const mm = ((3 + i) % 12) + 1; return `${start + (3 + i >= 12 ? 1 : 0)}-${String(mm).padStart(2, "0")}`; }); })();
+          const keys = scope === "month" ? [m0] : scope === "fy" ? fy : Object.keys(st.months), rows = exportRows(st.months, keys, { investKey });
+          const tag = scope === "month" ? m0 : scope === "fy" ? `FY${fy[0].slice(0, 4)}-${fy[11].slice(2, 4)}` : "all";
+          if (op === "export.csv") { res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="expenses-${tag}.csv"`, "Cache-Control": "no-store" }); return res.end("\ufeff" + toCsvAll(rows)); }
+          res.writeHead(200, { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="expenses-${tag}.xlsx"`, "Cache-Control": "no-store" }); return res.end(buildXlsx(toSheets(rows)));
+        }
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown expense operation." });
-        const b = await readBody(req), month = monthOf(b.month); let notice = null;
+        const b = await readBody(req), month = monthOf(b.month); let notice = null, skipWrite = false, preview = null;
         await withUserLock(async () => {
           const raw = await readJson(expensesFile(), {}), st = { months: raw.months || {}, modes: Array.isArray(raw.modes) && raw.modes.length ? raw.modes : [...DEFAULT_MODES], learned: raw.learned || {}, budgets: raw.budgets || {}, template: raw.template || null, people: Array.isArray(raw.people) ? raw.people : null };
           const M = () => (st.months[month] ||= newMonth(st.months[Object.keys(st.months).filter(k => k < month).sort().at(-1)] || null, st.template));
@@ -4156,6 +4164,32 @@ async function appHandler(req, res, url) {
           else if (op === "settle-delete") { const m = M(); m.settlements = (m.settlements || []).filter(z => z.id !== b.id); }
           else if (op === "people") { st.people = [...new Set((Array.isArray(b.people) ? b.people : []).map(x => String(x).replace(/[<>]/g, "").trim().slice(0, 30)).filter(Boolean))].slice(0, 12); notice = st.people.length ? `Settle up with: ${st.people.join(", ")}.` : "Back to automatic: payment methods that are names."; if (!st.people.length) st.people = null; }
           else if (op === "invest-plan") { if (b.reset) { delete raw.investPlan; notice = "Invest plan back to the suggested lines."; } else { raw.investPlan = sanitizeInvestPlan(b.plan || {}); notice = "Invest plan saved."; } }
+          else if (op === "import") { // a spreadsheet in the export format (or a plain list of spends): add, or replace the months it covers
+            const buf = Buffer.from(String(b.data || ""), "base64"); if (!buf.length) throw new Error("Choose a file."); if (buf.length > 10e6) throw new Error("File is larger than 10 MB.");
+            const parsed = parseImport(readSheetFile(buf, String(b.name || "")));
+            if (!parsed.counts.length) throw new Error(parsed.errors.length ? `Nothing could be read: ${parsed.errors.slice(0, 3).join("; ")}` : "No rows found. The file needs a header row with Date, Item, Amount (or the Section / Month columns from an export).");
+            const replace = b.mode === "replace", res0 = [];
+            for (const [k, x] of Object.entries(parsed.months).sort()) {
+              if (!st.months[k]) st.months[k] = x.budget.length || x.income.length ? { income: [], plan: [], entries: [] } : newMonth(st.months[Object.keys(st.months).filter(z => z < k).sort().at(-1)] || null, st.template);
+              const m = st.months[k], r = { month: k, added: 0, dup: 0, bad: 0, budget: 0, income: 0, settle: 0 };
+              if (replace) { if (x.spends.length) m.entries = []; if (x.budget.length) { m.plan = []; m.invested = {}; } if (x.income.length) m.income = []; if (x.settle.length) m.settlements = []; }
+              const have = new Set((m.entries || []).map(spendKey));
+              for (const e of x.spends) {
+                const mode = e.mode || "Not given"; if (!st.modes.includes(mode)) st.modes.push(mode);
+                try { const ent = sanitizeSpend({ ...e, mode }, { month: k, modes: st.modes, learned: st.learned }), key = spendKey(ent); if (have.has(key)) { r.dup++; continue; } have.add(key); if (m.entries.length >= 2000) throw new Error("full"); m.entries.push(ent); r.added++; } catch { r.bad++; }
+              }
+              m.entries.sort((a, z) => a.date.localeCompare(z.date));
+              for (const p of x.budget) { const line = sanitizePlanLine(p), old = m.plan.find(z => z.name.toLowerCase() === line.name.toLowerCase()); if (old) Object.assign(old, { amount: line.amount, bank: line.bank, type: line.type, done: line.done }); else m.plan.push(line); if (line.type === "invest" && p.actual !== null) (m.invested ||= {})[investKey(line.name)] = { done: true, actual: p.actual, at: new Date().toISOString() }; r.budget++; }
+              for (const i of x.income) { const inc = sanitizeIncome(i), old = m.income.find(z => z.name.toLowerCase() === inc.name.toLowerCase()); if (old) old.amount = inc.amount; else m.income.push(inc); r.income++; }
+              const sk = z => `${z.date}|${z.person.toLowerCase()}|${z.amount}|${z.dir}`, hs = new Set((m.settlements || []).map(sk));
+              for (const x2 of x.settle) { try { const y = sanitizeSettlement(x2, { month: k }); if (hs.has(sk(y))) continue; (m.settlements ||= []).push(y); hs.add(sk(y)); r.settle++; } catch { /* skipped */ } }
+              res0.push(r);
+            }
+            const tot = res0.reduce((a, r) => ({ added: a.added + r.added, dup: a.dup + r.dup, bad: a.bad + r.bad, budget: a.budget + r.budget, income: a.income + r.income, settle: a.settle + r.settle }), { added: 0, dup: 0, bad: 0, budget: 0, income: 0, settle: 0 });
+            preview = { months: res0, total: tot, errors: parsed.errors, kind: parsed.kind, mode: replace ? "replace" : "add" };
+            if (b.dryRun) skipWrite = true;
+            else notice = `Imported ${res0.length} month${res0.length === 1 ? "" : "s"}: ${tot.added} spend${tot.added === 1 ? "" : "s"}${tot.dup ? ` (${tot.dup} already there, skipped)` : ""}${tot.budget ? `, ${tot.budget} budget lines` : ""}${tot.income ? `, ${tot.income} income lines` : ""}${tot.settle ? `, ${tot.settle} payments` : ""}${tot.bad + parsed.errors.length ? `; ${tot.bad + parsed.errors.length} rows could not be read` : ""}.`;
+          }
           else if (op === "invest-mark") { // tick an investment as done and / or record what actually went in
             const m = M(), name = String(b.name || "").replace(/[<>]/g, "").trim().slice(0, 50); if (!name) throw new Error("Which investment?");
             const k = investKey(name), cur = (m.invested ||= {})[k] || {};
@@ -4174,9 +4208,9 @@ async function appHandler(req, res, url) {
           }
           else if (op === "month-delete") { delete st.months[month]; notice = `${month} deleted.`; }
           else throw new Error("Unknown expense operation.");
-          await writeJson(expensesFile(), { ...raw, ...st });
+          if (!skipWrite) await writeJson(expensesFile(), { ...raw, ...st });
         });
-        return reply(res, 200, await view(month, notice));
+        return reply(res, 200, { ...(await view(month, notice)), ...(preview ? { importPreview: preview } : {}) });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname === "/api/mf/review" && req.method === "GET") return reply(res, 200, await mfReview());

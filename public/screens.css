@@ -258,3 +258,4 @@ table.ex-ip{min-width:820px!important}.ex-ip input,.ex-ip select{margin:0!import
 .ex-invsum>div.act{border-color:#0ea5e9}.ex-invsum>div.act.ok{border-color:#1f9d55;background:rgba(31,157,85,.07)}.ex-invsum>div small{font-size:11px;color:var(--muted)}
 .ex-inv .table-wrap{max-height:none}.ex-invact{width:130px}
 .ex-invt tr.ex-done td{opacity:1!important;text-decoration:none!important}.ex-invt tr.ex-done td:not(:first-child){color:var(--muted)}
+.ui-dlg table.ex-imp{min-width:0!important;width:100%!important;display:table}.ex-imp th,.ex-imp td{padding:8px!important;white-space:nowrap}

@@ -110,7 +110,7 @@
       <section class="report-card"><h3>Month by month</h3><div class="ex-chart">${r.rows.map(x => `<div class="ex-col${x.has ? "" : " empty"}" title="${esc(monName(x.month))}: budget ${inr(x.plannedTotal)}, daily spends ${inr(x.spent)}, saved ${inr(x.saved)}"><div class="ex-colbars"><i class="b" style="height:${x.plannedTotal / max * 100}%"></i><i class="s" style="height:${x.spent / max * 100}%"></i></div><span>${mm(x.month)}</span></div>`).join("")}</div><p class="hint"><i class="ex-key b"></i> budgeted &nbsp; <i class="ex-key s"></i> day-to-day spends</p></section>
       <section class="report-card"><h3>Where it went: category by month</h3><div class="table-wrap"><table class="ex-year"><thead><tr><th>Category</th>${r.months.map(k => `<th class="num">${mm(k)}</th>`).join("")}<th class="num">Total</th><th class="num">%</th></tr></thead><tbody>${r.categories.map(c => `<tr><td>${c.icon} ${esc(c.key)}</td>${c.perMonth.map(v => `<td class="num">${v ? inr(v) : '<span class="hint">·</span>'}</td>`).join("")}<td class="num"><b>${inr(c.amount)}</b></td><td class="num">${c.pct}%</td></tr>`).join("")}<tr class="ex-tot"><td>Total</td>${r.rows.map(x => `<td class="num">${x.spent ? inr(x.spent) : ""}</td>`).join("")}<td class="num"><b>${inr(r.totals.spent)}</b></td><td></td></tr></tbody></table></div></section>
       <div class="ex-grid2"><section class="report-card"><h3>Top categories</h3>${bars(r.categories.slice(0, 10), r.totals.spent, x => `${x.icon} ${esc(x.key)}`)}</section><section class="report-card"><h3>Paid by</h3>${bars(r.byMode, r.totals.spent, x => esc(x.key))}</section></div>
-      <p class="hint"><a href="/api/expenses/export.csv" download>⬇ Download every spend (CSV)</a></p>`;
+      <p class="hint"><button type="button" class="linklike" data-ex="export">⬇ Export to CSV or Excel</button> · <button type="button" class="linklike" data-ex="import">⬆ Import a file</button></p>`;
   }
   // ---- dialogs ----
   async function editPlan() {
@@ -152,6 +152,32 @@
       collect: box => { const v = n => box.querySelector(`[name=${n}]`).value; return { person, dir: box.querySelector("[name=dir]:checked").value, amount: v("amount"), date: v("date"), note: v("note") }; } });
     if (out) post("settle-add", out);
   }
+  async function exportFile() {
+    const out = await window.ui.dialog({ title: "Export expenses", icon: "⬇", okText: "Download",
+      message: "The same format Import reads: edit it in Excel or Google Sheets (add rows, fix amounts) and import it back.",
+      bodyHtml: `<h4>Which months</h4><label class="ui-opt"><input type="radio" name="scope" value="month" checked><span><b>${esc(monName(month))}</b></span></label><label class="ui-opt"><input type="radio" name="scope" value="fy"><span><b>This financial year</b><small>April to March</small></span></label><label class="ui-opt"><input type="radio" name="scope" value="all"><span><b>Everything</b></span></label>
+        <h4>Format</h4><label class="ui-opt"><input type="radio" name="fmt" value="xlsx" checked><span><b>Excel (.xlsx)</b><small>Four sheets: Spends, Budget, Income, Settle up</small></span></label><label class="ui-opt"><input type="radio" name="fmt" value="csv"><span><b>CSV</b><small>One file; a Section column says Spend / Budget / Income / Payment</small></span></label>`,
+      collect: box => ({ scope: box.querySelector("[name=scope]:checked").value, fmt: box.querySelector("[name=fmt]:checked").value }) });
+    if (!out) return;
+    const a = document.createElement("a"); a.href = `/api/expenses/export.${out.fmt}?scope=${out.scope}&month=${month}`; a.download = ""; document.body.append(a); a.click(); a.remove();
+  }
+  async function importFile() {
+    const pick = await window.ui.dialog({ title: "Import expenses", icon: "⬆", okText: "Check the file",
+      message: "A file from Export (Excel or CSV), or your own sheet with a header row: Date, Item, Amount, Paid by, Category, Note. Dates like 05-10-2026 or 2026-10-05.",
+      bodyHtml: `<label class="ui-field"><span>File (.xlsx, .xls, .csv)</span><input class="ui-input" type="file" name="file" accept=".csv,.xlsx,.xls,.txt"></label>
+        <label class="ui-opt"><input type="radio" name="mode" value="add" checked><span><b>Add to what's there</b><small>Spends already in the app (same date, item, amount and paid by) are skipped; budget and income lines with the same name are updated.</small></span></label>
+        <label class="ui-opt"><input type="radio" name="mode" value="replace"><span><b>Replace the months in the file</b><small>For each month in the file, its spends / budget / income / payments are replaced by the file's.</small></span></label>
+        <p class="hint"><a href="/api/expenses/export.xlsx?scope=month&month=${month}" download>Download this month as a template</a></p>`,
+      collect: async box => { const f = box.querySelector("[name=file]").files[0]; if (!f) throw new Error("Choose a file."); if (f.size > 10e6) throw new Error("File is larger than 10 MB."); const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.onerror = () => rej(new Error("Could not read the file.")); r.readAsDataURL(f); }); return { data, name: f.name, mode: box.querySelector("[name=mode]:checked").value }; } });
+    if (!pick) return;
+    let pv; try { pv = (await api("/api/expenses/import", { month, ...pick, dryRun: true })).importPreview; } catch (e) { window.toast?.(esc(e.message), { kind: "bad", ms: 8000 }); return; }
+    const t = pv.total;
+    const ok = await window.ui.dialog({ title: pick.mode === "replace" ? "Replace these months?" : "Add these?", icon: "⬆", okText: pick.mode === "replace" ? "Replace" : "Import", danger: pick.mode === "replace", wide: true,
+      bodyHtml: `<div class="table-wrap"><table class="ex-imp"><thead><tr><th>Month</th><th class="num">New spends</th><th class="num">Already there</th><th class="num">Budget</th><th class="num">Income</th><th class="num">Payments</th></tr></thead><tbody>${pv.months.map(r => `<tr><td>${esc(monName(r.month))}</td><td class="num">${r.added}</td><td class="num">${r.dup || ""}</td><td class="num">${r.budget || ""}</td><td class="num">${r.income || ""}</td><td class="num">${r.settle || ""}</td></tr>`).join("")}<tr class="ex-tot"><td>Total</td><td class="num">${t.added}</td><td class="num">${t.dup || ""}</td><td class="num">${t.budget || ""}</td><td class="num">${t.income || ""}</td><td class="num">${t.settle || ""}</td></tr></tbody></table></div>
+        ${pv.errors.length || t.bad ? `<p class="bk-act warn">⚠️ ${pv.errors.length + t.bad} row${pv.errors.length + t.bad === 1 ? "" : "s"} could not be read and will be skipped${pv.errors.length ? `:<br>${pv.errors.slice(0, 8).map(esc).join("<br>")}${pv.errors.length > 8 ? "<br>…" : ""}` : "."}</p>` : ""}` });
+    if (!ok) return;
+    if (await post("import", pick)) { const ms = pv.months.map(r => r.month); if (ms.length === 1 && ms[0] !== month) { month = ms[0]; remember(); load(); } }
+  }
   async function moneyMap() {
     const out = await window.ui.dialog({ title: `Money Map: ${monName(month)}`, icon: "⬇", okText: "Download",
       message: "One page: responsible and bonus spending, monthly investments and your current portfolio (from Net worth), in your Money Map layout. The orange totals are live formulas, and a Details sheet shows where each number came from.",
@@ -175,7 +201,7 @@
       const nav = e.target.closest("[data-mnav]"); if (nav) { month = shiftM(month, Number(nav.dataset.mnav)); remember(); load(); return; }
       const t = e.target.closest("[data-tab]"); if (t) { tab = t.dataset.tab; load(); return; }
       const b = e.target.closest("[data-ex]");
-      if (b) { const k = b.dataset.ex; if (k === "moneymap") { moneyMap(); return; } if (k === "inv-edit") { editInvest(); return; } if (k === "inv-apply") { applyInvest(); return; } if (k === "start") post("start", {}); else if (k === "apply-std") { if (await window.ui.confirm({ title: `Reset ${monName(month)} to your standard budget?`, message: "This month's budget lines and income are replaced by the standard ones (nothing ticked as done). Daily spends are not touched.", okText: "Reset" })) post("start", { applyStandard: true }); } else if (k === "paste") paste(); else if (k === "plan") editPlan(); else if (k === "settings") settings(); else if (k === "today") { month = ist().slice(0, 7); remember(); load(); } return; }
+      if (b) { const k = b.dataset.ex; if (k === "moneymap") { moneyMap(); return; } if (k === "inv-edit") { editInvest(); return; } if (k === "export") { exportFile(); return; } if (k === "import") { importFile(); return; } if (k === "inv-apply") { applyInvest(); return; } if (k === "start") post("start", {}); else if (k === "apply-std") { if (await window.ui.confirm({ title: `Reset ${monName(month)} to your standard budget?`, message: "This month's budget lines and income are replaced by the standard ones (nothing ticked as done). Daily spends are not touched.", okText: "Reset" })) post("start", { applyStandard: true }); } else if (k === "paste") paste(); else if (k === "plan") editPlan(); else if (k === "settings") settings(); else if (k === "today") { month = ist().slice(0, 7); remember(); load(); } return; }
       const sd = e.target.closest("[data-sdel]"); if (sd) { if (await window.ui.confirm({ title: "Delete this payment?", okText: "Delete", danger: true })) post("settle-delete", { id: sd.dataset.sdel }, "Payment deleted."); return; }
       const st = e.target.closest("[data-settle]"); if (st) { recordPayment(st.dataset.settle, st.dataset.amt ? Number(st.dataset.amt) : null, st.dataset.dir || null); return; }
       const ed = e.target.closest("[data-edit]"); if (ed) { editEntry(d.data.entries.find(x => x.id === ed.dataset.edit)); return; }

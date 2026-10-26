@@ -1,5 +1,19 @@
 # Equity Watchlist MVP
 
+## v5.57.0: Expenses export & import (CSV / Excel)
+
+- **⬇ Export** in Monthly expenses: this month, this financial year or everything.
+  - **Excel:** four sheets: Spends, Budget, Income, Settle up.
+  - **CSV:** one file with a Section column: Spend / Budget / Income / Payment.
+  - Includes done ticks, actual invested amounts, shared spends ("Shared with", "Who owes", "Their part") and payments.
+- **⬆ Import** reads the same format back, or any plain sheet with a header row: Date, Item, Amount, Paid by, Category, Note.
+  - Dates: 05-10-2026, 05/10/2026, 2026-10-05, 5 Oct 2026 or Excel dates.
+  - Files: .xlsx, .xls or .csv.
+  - **Add** (default): spends already in the app (same date, item, amount, paid by) are skipped; budget and income lines with the same name are updated.
+  - **Replace:** each month in the file is replaced by the file's rows.
+  - A preview shows new and duplicate rows per month, and rows that couldn't be read, before anything is saved.
+  - New payment methods are added; categories are guessed when blank; a name in "Paid by" (e.g. Sophia) counts in Settle up as usual.
+
 ## v5.56.0: Invest plan — done ticks and actual amounts
 
 - **✓ Done column** on every Invest plan line (and on budget investment lines not in the plan). It stays in step with the Budget's done tick, both ways.
