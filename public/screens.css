@@ -306,5 +306,8 @@ table.pn-table{min-width:0!important;width:100%;font-size:13px}table.pn-table td
 .pn-sub{margin:14px 0 6px}.pn-months{display:flex;gap:6px;align-items:flex-end;overflow-x:auto;padding:4px 0}
 .pn-mo{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:44px;font-size:11px}.pn-mo i{display:block;width:22px;border-radius:4px 4px 0 0}.pn-mo i.up{background:#1f9d55}.pn-mo i.dn{background:#c0392b}.pn-mo span{color:var(--muted)}
 .pn-filter{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px}.pn-filter .ui-input{width:auto;min-width:130px}
-.chip.pn-stcg{background:#fff4e0;color:#9a5b00}.chip.pn-ltcg{background:#e3f6ea;color:#17703d}.chip.pn-intraday{background:#e8eefc;color:#2747a8}.chip.pn-no{background:#fde8e8;color:#a12a2a}
+.chip.pn-stcg{background:#fff4e0;color:#9a5b00}.chip.pn-ltcg{background:#e3f6ea;color:#17703d}.chip.pn-intraday{background:#e8eefc;color:#2747a8}.chip.pn-nobuyfound,.chip.pn-no{background:#fde8e8;color:#a12a2a}
 @media (max-width:640px){.pn-trades th:nth-child(3),.pn-trades td:nth-child(3),.pn-trades th:nth-child(5),.pn-trades td:nth-child(5){display:none}}
+.pn-taxbr{width:100%;min-width:0!important;margin:6px 0;font-size:13px}.pn-taxbr td{padding:4px 2px!important;border:0}.pn-slab{font-size:13px;display:flex;gap:6px;align-items:center}.pn-slab select{width:auto}
+.pn-srcs{margin:10px 0;border:1px dashed var(--line);border-radius:12px;padding:8px 12px}.pn-srcs summary{cursor:pointer;font-weight:600}.pn-srcs ul{margin:6px 0;padding-left:18px;font-size:13px}.pn-srcs li{margin:4px 0}
+.chip.pn-otherst,.chip.pn-otherlt{background:#efe8fb;color:#5b3aa8}

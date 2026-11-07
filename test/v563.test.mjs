@@ -72,7 +72,7 @@ test("combined P&L: accounts of one holder share the exemption; another holder g
   assert.deepEqual([me.netLt, me.netSt, me.tax.netSt, me.tax.netLt, me.tax.exemptUsed], [180000, -1000, 0, 179000, 125000]); // the STCG loss offsets LTCG
   assert.equal(me.tax.tax, Math.round((179000 - 125000) * 0.125));
   assert.deepEqual([wife.netLt, wife.tax.tax], [10000, 0]);
-  assert.ok(v.warnings.some(w => w.id === "angel:A1" && /no trades on file/.test(w.text)));
+  assert.ok(v.warnings.some(w => w.id === "angel:A1" && /nothing on file yet/.test(w.text)));
   const dhanRow = v.rows.find(r => r.id === "dhan:D1");
   assert.ok(dhanRow.charges > 12 && dhanRow.chargesEst > 0); // the sell came with charges, its buy didn't
   assert.equal(v.trades.length, 4);

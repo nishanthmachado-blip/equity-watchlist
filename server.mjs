@@ -36,6 +36,7 @@ import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, withRecurring, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
 import { TAX_RULES, parseTradebook, mergeTrades, taxView, fyOf } from "./tax.mjs";
 import { pnlView } from "./pnl.mjs";
+import { parseTaxReport, reportTotals } from "./taxreport.mjs";
 import { reviewHoldings } from "./cleanup.mjs";
 import { BUCKETS, sanitizeBucketPlan, bucketView } from "./buckets.mjs";
 import { moneyMapData, buildMoneyMap } from "./moneymap.mjs";
@@ -1197,13 +1198,33 @@ async function taxPage(account = "all") {
 
 // ---- Combined P&L across all brokers (pnl.mjs): per account, per holder (PAN), per month, trade by trade ----
 const taxHoldersFile = () => userFile("tax-holders.json");
+const taxReportsFile = () => userFile("tax-reports.json");
+// A broker's tax P&L report → which of your accounts it belongs to: Zerodha by client id, INDmoney by its account.
+async function importTaxReport(rep, filename) {
+  const accounts = await accountsList();
+  let account = rep.clientId && accounts.find(a => a.id.toUpperCase() === rep.clientId)?.id;
+  if (!account && rep.source === "indmoney") account = accounts.find(a => /^indmoney:/i.test(a.id))?.id || "indmoney";
+  account ||= rep.clientId || rep.source;
+  const entry = { ...rep, id: `tr${Date.now().toString(36)}`, account, file: String(filename || "").slice(0, 80), importedAt: new Date().toISOString() };
+  return withUserLock(async () => {
+    const st = await readJson(taxReportsFile(), { reports: [] });
+    const replaced = st.reports.filter(r => r.account === account && r.fy === rep.fy && r.source === rep.source).length;
+    st.reports = [...st.reports.filter(r => !(r.account === account && r.fy === rep.fy && r.source === rep.source)), entry].slice(-40);
+    await writeJson(taxReportsFile(), st);
+    return { broker: rep.broker, account, fy: rep.fy, to: rep.to, sales: rep.rows.length, totals: reportTotals(rep), other: rep.other, replaced: replaced > 0, skipped: rep.skipped };
+  });
+}
 async function pnlPage(fyLabel = null) {
-  const [st, accounts, hold, master] = await Promise.all([readJson(taxFile(), { trades: [] }), accountsList(), readJson(taxHoldersFile(), { holders: {} }), scripMaster()]);
+  const [st, accounts, hold, master, reps] = await Promise.all([readJson(taxFile(), { trades: [] }), accountsList(), readJson(taxHoldersFile(), { holders: {} }), scripMaster(), readJson(taxReportsFile(), { reports: [] })]);
   const single = accounts.length === 1 ? accounts[0].id : null, byIsin = new Map(master.list.filter(m => m.isin).map(m => [m.isin, m]));
   const names = new Map(), trades = (st.trades || []).map(t => { const m = t.isin && byIsin.get(t.isin); if (m) names.set(t.key, m.name); return { ...t, account: t.account || single || "", symbol: m ? m.symbol : t.symbol }; });
   const unrealised = {};
   await Promise.all(accounts.map(async a => { const hs = await holdingsOf(a.id); unrealised[a.id] = hs.reduce((x, h) => x + (Number.isFinite(h.price) && Number.isFinite(h.avgPrice) ? (h.price - h.avgPrice) * h.qty : 0), 0); }));
-  const v = pnlView({ trades, accounts, holders: hold.holders || {}, unrealised, names, fy: fyLabel, today: istDay() });
+  const holders = { ...(hold.holders || {}) };
+  // a report from someone else's PAN (a family member's account) gets their first name as the holder, until you rename it
+  const mainPan = reps.reports.map(r => r.panKey).filter(Boolean).sort((a, z, l = reps.reports) => l.filter(r => r.panKey === z).length - l.filter(r => r.panKey === a).length)[0];
+  for (const r of reps.reports) if (!holders[r.account] && r.panKey && r.panKey !== mainPan && r.holderName) holders[r.account] = r.holderName;
+  const v = pnlView({ trades, accounts, holders, unrealised, names, reports: reps.reports, slabRate: Number.isFinite(hold.slabRate) ? hold.slabRate : 0.3, fy: fyLabel, today: istDay() });
   const dhanAcc = accounts.filter(a => /^dhan:/.test(a.id));
   return { ...v, holderMap: hold.holders || {}, dhan: { accounts: dhanAcc.map(a => a.id), lastSync: hold.dhanSync || null }, capture: hold.capture || null, kiteAccounts: accounts.filter(a => !/:/.test(a.id)).length };
 }
@@ -1211,12 +1232,12 @@ async function sendPnlExport(res, fyLabel) {
   const v = await pnlPage(fyLabel), M = { type: "money", width: 14 };
   const accCols = [{ header: "Account", key: "label", width: 28 }, { header: "Broker", key: "broker", width: 10 }, { header: "Holder", key: "holder", width: 12 }, { header: "Sales", key: "trades", type: "int", width: 8 },
     { header: "Intraday", key: "intraday", ...M }, { header: "STCG gains", key: "stGain", ...M }, { header: "STCG losses", key: "stLoss", ...M }, { header: "LTCG gains", key: "ltGain", ...M }, { header: "LTCG losses", key: "ltLoss", ...M },
-    { header: "Realised P&L", key: "gross", ...M }, { header: "Charges", key: "charges", ...M }, { header: "Net after charges", key: "net", ...M }, { header: "Unrealised now", key: "unrealised", ...M }];
+    { header: "Other assets ST", key: "neSt", ...M }, { header: "Other assets LT", key: "neLt", ...M }, { header: "Realised P&L", key: "gross", ...M }, { header: "Charges", key: "charges", ...M }, { header: "Net after charges", key: "net", ...M }, { header: "Unrealised now", key: "unrealised", ...M }];
   const sheets = [
     { name: `P&L by account ${v.fy.label.slice(3)}`, columns: accCols, rows: v.rows, totals: { label: "All brokers", trades: v.total.trades, intraday: v.total.intraday, stGain: v.total.stGain, stLoss: v.total.stLoss, ltGain: v.total.ltGain, ltLoss: v.total.ltLoss, gross: v.total.gross, charges: v.total.charges, net: v.total.net, unrealised: v.total.unrealised },
       notes: [`${v.fy.label}: ${v.fy.from} to ${v.fy.to}. FIFO within each demat account; a buy and sell of a stock on the same day in one account is intraday.`, "Charges: Dhan's own figures where synced from Dhan, otherwise estimated from Zerodha's published rates.", "Check against each broker's tax P&L before filing. Not tax advice."] },
-    { name: "Tax by holder", columns: [{ header: "Holder (PAN)", key: "name", width: 16 }, { header: "Net STCG", key: "netSt", ...M }, { header: "Net LTCG", key: "netLt", ...M }, { header: "LTCG exemption used", key: "exemptUsed", ...M }, { header: "Estimated tax (STCG + LTCG)", key: "tax", width: 24, type: "money" }, { header: "Intraday (slab rate)", key: "intraday", width: 18, type: "money" }],
-      rows: v.holders.map(h => ({ ...h, exemptUsed: h.tax.exemptUsed, tax: h.tax.tax })), notes: [`STCG ${v.rules.stRate * 100}%, LTCG ${v.rules.ltRate * 100}% above ₹${v.rules.ltExemption.toLocaleString("en-IN")} per holder per year, before surcharge and cess. Intraday profit is taxed at the slab rate.`] },
+    { name: "Tax by holder", columns: [{ header: "Holder (PAN)", key: "name", width: 16 }, { header: "Net STCG", key: "netSt", ...M }, { header: "Net LTCG", key: "netLt", ...M }, { header: "LTCG exemption used", key: "exemptUsed", ...M }, { header: "Capital gains tax", key: "cgt", width: 18, type: "money" }, { header: "Intraday", key: "intraday", width: 12, type: "money" }, { header: "Dividends", key: "div", width: 12, type: "money" }, { header: "F&O", key: "fno", width: 10, type: "money" }, { header: "Tax at slab rate", key: "slabTax", width: 16, type: "money" }, { header: "Estimated tax", key: "tax", width: 16, type: "money" }, { header: "Losses to carry forward", key: "carry", width: 20, type: "money" }],
+      rows: v.holders.map(h => ({ ...h, netSt: h.tax.netSt, netLt: h.tax.netLt, exemptUsed: h.tax.exemptUsed, cgt: h.tax.capitalGainsTax, div: h.other.dividends, fno: h.other.fno, slabTax: h.tax.slabTax, tax: h.tax.tax, carry: h.tax.carryForward })), notes: [`STCG ${v.rules.stRate * 100}%, LTCG ${v.rules.ltRate * 100}% above ₹${v.rules.ltExemption.toLocaleString("en-IN")} per holder per year (listed equity); other assets short term at your slab rate (${v.slabRate * 100}%), long term 12.5%. Intraday, F&O, dividends and interest at the slab rate. Before surcharge and cess.`, ...v.notes] },
     { name: "Trades", columns: [{ header: "Sell date", key: "sellDate", type: "date", width: 12 }, { header: "Account", key: "accountLabel", width: 24 }, { header: "Symbol", key: "symbol", width: 13 }, { header: "Stock", key: "name", width: 26 }, { header: "Qty", key: "qty", type: "int", width: 7 },
       { header: "Buy date", key: "buyDate", type: "date", width: 12 }, { header: "Buy price", key: "buy", type: "money", width: 11 }, { header: "Sell price", key: "sell", type: "money", width: 11 }, { header: "Gain / loss", key: "gain", ...M }, { header: "Term", key: "term", width: 11 }, { header: "Days", key: "days", type: "int", width: 7 }, { header: "Charges", key: "charges", type: "money", width: 10 }],
       rows: v.trades },
@@ -3908,8 +3929,11 @@ async function appHandler(req, res, url) {
         if (req.method === "GET" && !op) return reply(res, 200, await taxPage(acct));
         if (req.method === "GET" && op === "pnl") return reply(res, 200, await pnlPage(url.searchParams.get("fy")));
         if (req.method === "GET" && op === "pnl.xlsx") return sendPnlExport(res, url.searchParams.get("fy"));
+        if (req.method === "POST" && op === "report-delete") { const b = await readBody(req); await withUserLock(async () => { const st = await readJson(taxReportsFile(), { reports: [] }); st.reports = st.reports.filter(r => r.id !== b.id); await writeJson(taxReportsFile(), st); }); return reply(res, 200, await pnlPage(b.fy || null)); }
+        if (req.method === "POST" && op === "slab") { const b = await readBody(req), r = Number(b.slabRate); if (![0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3].includes(r)) throw new Error("Pick a slab rate."); await withUserLock(async () => { const h = await readJson(taxHoldersFile(), { holders: {} }); h.slabRate = r; await writeJson(taxHoldersFile(), h); }); return reply(res, 200, await pnlPage(b.fy || null)); }
         if (req.method === "POST" && op === "holders") {
           const b = await readBody(req), accs = new Set((await accountsList()).map(a => a.id)), h = await readJson(taxHoldersFile(), { holders: {} });
+          for (const r of (await readJson(taxReportsFile(), { reports: [] })).reports) accs.add(r.account);
           h.holders = Object.fromEntries(Object.entries(b.holders || {}).filter(([k]) => accs.has(k)).map(([k, v]) => [k, String(v || "").replace(/[<>]/g, "").trim().slice(0, 30)]).filter(([, v]) => v));
           await writeJson(taxHoldersFile(), h); return reply(res, 200, await pnlPage(b.fy || null));
         }
@@ -3921,6 +3945,8 @@ async function appHandler(req, res, url) {
           let tables;
           if (b.data) { const buf = Buffer.from(String(b.data), "base64"); if (buf.length > 20e6) throw new Error("File is larger than 20 MB."); tables = readSheetFile(buf, b.filename || ""); }
           else tables = [{ rows: parseDelimited(String(b.text || "")) }];
+          const rep = parseTaxReport(tables);
+          if (rep) { if (!rep.rows.length && !Object.values(rep.other).some(Boolean)) throw new Error(`No sales found in this ${rep.broker} tax report.`); const r = await importTaxReport(rep, b.filename); return reply(res, 200, { ...(await taxPage(b.account && b.account !== "all" ? String(b.account).slice(0, 40) : "all")), report: r }); }
           const parsed = tables.map(t => parseTradebook(t.rows)).sort((a, z) => z.trades.length - a.trades.length)[0];
           if (!parsed?.trades.length) throw new Error(parsed?.note || "No trades found in that file.");
           const tagAs = b.account && b.account !== "all" ? String(b.account).slice(0, 40) : null; // which account (PAN) these trades belong to

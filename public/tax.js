@@ -60,7 +60,9 @@
     if (!f) return; if (f.size > 20e6) { $("#txStatus").textContent = "File is larger than 20 MB."; return; }
     const st = $("#txStatus"); st.textContent = `Reading ${f.name}…`;
     const data = await new Promise((ok, no) => { const rd = new FileReader(); rd.onload = () => ok(String(rd.result).split(",")[1]); rd.onerror = no; rd.readAsDataURL(f); });
-    try { tx = await api("/api/tax/import", { filename: f.name, data, account }); account = tx.account || account; render(); pnl(); st.textContent = `${f.name}: ${tx.imported.rows} trades read, ${tx.imported.added} new${tx.imported.skipped?.fno ? `, ${tx.imported.skipped.fno} F&O rows skipped` : ""}.`; window.toast?.(`✓ Tradebook imported: ${tx.imported.added} new trades.`, { kind: "ok" }); }
+    try { tx = await api("/api/tax/import", { filename: f.name, data, account }); account = tx.account || account; render(); pnl();
+      if (tx.report) { const r = tx.report; st.textContent = `${f.name}: ${r.broker} tax P&L, ${r.fy}, ${r.sales} sales up to ${r.to}${r.replaced ? " (replaced the earlier one)" : ""}.`; window.toast?.(`✓ ${esc(r.broker)} tax P&L imported: ${r.sales} sales.`, { kind: "ok" }); }
+      else { st.textContent = `${f.name}: ${tx.imported.rows} trades read, ${tx.imported.added} new${tx.imported.skipped?.fno ? `, ${tx.imported.skipped.fno} F&O rows skipped` : ""}.`; window.toast?.(`✓ Tradebook imported: ${tx.imported.added} new trades.`, { kind: "ok" }); } }
     catch (e) { st.textContent = e.message; }
   }
   document.addEventListener("DOMContentLoaded", () => {

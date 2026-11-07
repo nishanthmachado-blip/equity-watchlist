@@ -1,5 +1,19 @@
 # Equity Watchlist MVP
 
+## v5.66.0: import brokers' tax P&L reports
+
+- **⬆ Import tax P&L report** (Tax view, or the same Import button as tradebooks): the app recognises
+  - **Zerodha** Console → Reports → Tax P&L (xlsx): every section (intraday, short and long term, debt ETF, non-equity, mutual funds), grandfathered taxable profit, per-trade charges, dividends, interest and F&O profit.
+  - **INDmoney** → Reports → Tax report (xlsx): Indian stocks, ETFs, mutual funds (all brokers), US stocks (in ₹), dividends, intraday and F&O.
+- **The broker's figures are used as they are** (its FIFO, grandfathering, expenses) for that account up to the report's last day. Sales after that come from trades on file (the daily pick-up). A newer report for the same account and year replaces the older one.
+- **No double counting:** INDmoney's report covers mutual funds at every broker. A fund sold on the same day in both reports counts once; the screen says how many were matched.
+- **Fuller tax rules** in Tax by person:
+  - Other assets (debt and gold ETFs, debt funds, US stocks): short term at your slab rate, long term at 12.5% with no exemption.
+  - Set-off: short-term losses reduce short-term gains (slab-rate ones first), then long-term gains. Long-term losses only reduce long-term gains, and what's left is shown as carried forward.
+  - Intraday, F&O, dividends and interest are added to your income at **your slab rate** (a new setting, 0–30%).
+- **Privacy:** the PAN and full name in these files are never stored. The PAN becomes a one-way key, so reports of the same person group together, and a family member's report gets their own first name as the holder. Folio numbers are dropped.
+- The Excel for your CA adds the other-asset columns and a fuller tax-by-person sheet.
+
 ## v5.65.0: opportunity-fund ready list, automatic daily trade pick-up
 
 - **Opportunity fund → 🛒 Ready list for the next step:** shows what you'll buy when Nifty reaches the next step (e.g. −10%), before the fall happens: your core fund and the Top 5 from What to do now, with amounts (or % shares if the fund size isn't set), today's price and buy zone. If there are no stocks yet, it explains where they come from (holdings, ♥ favourites and theme stocks in their buy zone).
