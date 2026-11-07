@@ -11,4 +11,7 @@ let failed = false;
 try { eslint(["-c", "scripts/eslint.server.json", "--rule", "no-unused-vars: off", "*.mjs"]); } catch { failed = true; }
 try { eslint(["-c", "scripts/eslint.browser.json", "--global", "ui,openStockSheet", tmp]); } catch { failed = true; }
 try { eslint(["-c", "scripts/eslint.browser.json", "--env", "serviceworker", "public/login.js", "public/sw.js"]); } catch { failed = true; }
+// screens loaded on demand (not in index.html): each on its own, with the page's globals available
+const lazy = fs.readdirSync(pub).filter(f => f.endsWith(".js") && !order.includes(f) && !["login.js", "sw.js"].includes(f)).map(f => `public/${f}`);
+if (lazy.length) try { eslint(["-c", "scripts/eslint.browser.json", "--global", "ui,openStockSheet,setView,api,esc,toast,Chart", ...lazy]); } catch { failed = true; }
 console.log(failed ? "lint: problems found" : "lint: no undefined names"); process.exit(failed ? 1 : 0);

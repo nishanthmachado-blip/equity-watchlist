@@ -1,5 +1,30 @@
 # Equity Watchlist MVP
 
+## v5.68.2: click a figure to see its sales
+
+- **Tax view → P&L across all your brokers:** click any figure in an account's row (sales, intraday, short term, long term, other assets, realised, charges, net) to jump to **Every sale** filtered to that account and type. The heading shows the filter, with **show all** to clear it. The "All brokers" row works the same way across accounts. The type filter gains **All sales** and **Other assets**.
+- Click **Unrealised** to see the open positions behind it: from the broker's report where it lists them (Dhan's P&L report), else it goes to My holdings.
+- **Lint now also checks the screens that load on demand** (Tax P&L, Swing book, Opportunity fund…), not only the scripts loaded at start. It caught a duplicate name in this release before it shipped.
+
+## v5.68.1: Dhan P&L Report
+
+- **Dhan → Reports → P&L Report (.xls)** now imports. Unlike the "Realised P&L" file, it states its date range and lists open positions.
+  - **Realised per stock:** the cost of what was sold is taken as the sale minus Dhan's realised P&L (its FIFO). The segment's charges are shared across the stocks, so the net matches Dhan's.
+  - **Open positions** (quantity, average price, closing rate, unrealised P&L) now set the **Unrealised** figure for the Dhan account in the Tax view, from the file instead of synced holdings. They also appear as open positions in the Swing book (at today's price when known, else the file's closing rate) when no buy trades for that account are on file.
+  - Importing it replaces an earlier Dhan report for the same year. Name, UCC, phone and email are not stored.
+
+## v5.68.0: Swing book (brokers)
+
+- **New screen: 📗 Swing book (brokers)**, next to Swing trading. It's built only from your brokers' records: imported tax P&L reports (Zerodha, INDmoney, Dhan, used as they are), tradebooks, Dhan's trade history, the daily pick-up, and trades you add here. The old Swing trading journal is left as it is and not read; it will be retired later.
+  - **Cards:** swing P&L for the year (before and after charges), win rate, average win and loss, profit factor, average hold, best and worst trade, tax on these trades, and open swing positions.
+  - **Month by month** bars. Dhan's dateless report is counted in the totals but not in a month.
+  - **📂 Open swing positions:** shares bought in the last 12 months that the trades on file show you still hold, at today's price, with the date each turns long term.
+  - **✅ Closed swing trades:** every short-term and intraday sale of stocks and ETFs. You can filter by account, wins, losses, intraday or stock. Long-term sales, mutual funds, debt ETFs and US stocks are left out.
+  - **By account** P&L and win rate.
+  - **⬆ Import tax P&L or tradebook** right here. **+ Add a trade** for a fill the broker's file doesn't have yet: it goes into the same tradebook the Tax view uses, so both always agree, and you can remove it later.
+- **Tax view:** "Unrealised" is marked * as the one figure not from your files. It is what each account holds now (synced from the broker) at today's price, and it's not part of tax. Nothing in the Tax view comes from the swing journal.
+- Perf baseline refreshed for the new `/api/swingbook`.
+
 ## v5.67.0: swing journal matched to your brokers
 
 - **Tax comes from your brokers, never from the journal you type.** The **🧾 Tax to pay** strip, the payments dialog, the long-term exemption left in "if sold now" and hold-or-sell, and Holdings clean-up now use the combined P&L of your brokers (tax P&L reports and trades on file), with cess. The journal's own estimate is only used while nothing from a broker is on file. The payments dialog also shows what the journal alone would have said.

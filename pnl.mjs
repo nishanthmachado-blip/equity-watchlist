@@ -89,7 +89,10 @@ export function pnlView({ trades = [], accounts = [], holders = {}, unrealised =
   const rows = ids.map(id => {
     const a = known.get(id), s = span.get(id) || null, rep = repOf.get(id) || null;
     return { id, label: a?.label || (rep ? `${rep.broker}${rep.clientId ? ` ${rep.clientId}` : ""}` : id || "Not linked to an account"), broker: a?.broker || rep?.broker || "", holder: id ? holderOf(id) : ME, ...finish(byAcc.get(id) || blank()),
-      unrealised: Number.isFinite(unrealised[id]) ? r0(unrealised[id]) : null, tradesOnFile: s?.n || 0, from: s?.from || null, to: s?.to || null, fromApi: !!s?.api,
+      // a report with open positions (Dhan's P&L report) gives the unrealised figure from the file itself
+      unrealised: rep?.open?.length ? r0(rep.open.reduce((x, o) => x + (o.unrealised || 0), 0)) : Number.isFinite(unrealised[id]) ? r0(unrealised[id]) : null,
+      open: rep?.open?.length ? rep.open.map(o => ({ name: o.name, isin: o.isin, qty: o.qty, avg: o.avg, close: o.close, unrealised: o.unrealised, pct: o.pct })) : null,
+      unrealisedFrom: rep?.open?.length ? { broker: rep.broker, asOf: rep.openAsOf } : Number.isFinite(unrealised[id]) ? "holdings" : null, tradesOnFile: s?.n || 0, from: s?.from || null, to: s?.to || null, fromApi: !!s?.api,
       report: rep ? { broker: rep.broker, to: rep.to, file: rep.file || null, importedAt: rep.importedAt || null } : null, unmatched: computed.filter(r => r.unmatched && (r.account || "") === id).length };
   }).filter(r => r.tradesOnFile || r.unrealised !== null || r.report);
   // other income from the reports (dividends, interest, F&O), per holder

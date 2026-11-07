@@ -30,7 +30,7 @@ export function detectTaxReport(tables = []) {
   const names = tables.map(t => clean(t.name).toLowerCase()), text = t => t.rows.slice(0, 12).map(r => r.map(clean).join(" ")).join(" ");
   if (names.some(n => n.startsWith("tradewise exits")) || tables.some(t => /taxpnl statement|tradewise exits from/i.test(text(t)))) return "zerodha";
   if (names.includes("ltcg") && names.includes("stcg") && tables.some(t => /client pan:|tax year:/i.test(text(t)))) return "indmoney";
-  if (tables.some(t => /realised profit and loss report/i.test(text(t)) && t.rows.some(r => r.map(clean).includes("Security Name") && r.map(clean).some(c => /^realised p&l$/i.test(c))))) return "dhan";
+  if (tables.some(t => /profit and loss report/i.test(text(t)) && t.rows.some(r => r.map(clean).includes("Security Name") && r.map(clean).some(c => /^realised p&l$/i.test(c))))) return "dhan";
   return null;
 }
 
@@ -123,25 +123,36 @@ export function parseIndmoneyTax(tables) {
 // whole segment are shared across the stocks by turnover. Without buy dates the term isn't known: the combined view
 // works it out from your Dhan trades on file, else counts it as short term (you can mark a stock long term).
 export function parseDhanPnl(tables, { today = new Date().toISOString().slice(0, 10) } = {}) {
+  // two Dhan layouts: "Realised P&L" (Qty. per stock, generated-on date) and "P&L Report" (buy / sell / open quantity,
+  // the report's date range, and open positions with their unrealised P&L at the closing rate)
   const t = tables.find(x => x.rows.some(r => r.map(clean).includes("Security Name"))) || tables[0];
-  const rows = [], skipped = { fno: 0, other: 0 }; let seg = null, H = null, generated = null, charges = null, turnover = 0;
+  const rows = [], open = [], skipped = { fno: 0, other: 0 }; let seg = null, H = null, generated = null, span = null, charges = null, turnover = 0;
   for (const r of t.rows) {
-    const c = r.map(clean), filled = c.filter(Boolean), first = filled[0] || "";
-    const g = filled.join(" ").match(/generated on (\d{2})-(\d{2})-(\d{4})/i); if (g) generated = `${g[3]}-${g[2]}-${g[1]}`;
+    const c = r.map(clean), filled = c.filter(Boolean), first = filled[0] || "", line = filled.join(" ");
+    const g = line.match(/generated on (\d{2})-(\d{2})-(\d{4})/i); if (g) generated = `${g[3]}-${g[2]}-${g[1]}`;
+    const sp = line.match(/from (\d{2})\/(\d{2})\/(\d{4}) to (\d{2})\/(\d{2})\/(\d{4})/i); if (sp) span = { from: `${sp[3]}-${sp[2]}-${sp[1]}`, to: `${sp[6]}-${sp[5]}-${sp[4]}` };
     if (/^equity$/i.test(c[0]) && charges === null) { const hi = t.rows.find(x => x.map(clean).includes("Total Charges")); const ci = hi ? hi.map(clean).indexOf("Total Charges") : -1; charges = ci >= 0 ? num(c[ci]) : null; }
     if (filled.length === 1 && /segment$/i.test(first)) { seg = /^equity/i.test(first) ? "eq" : "other"; H = null; continue; }
     if (c.includes("Security Name")) { H = c; continue; }
     if (!H || !seg || !/^\d+$/.test(c[0])) continue;
     if (seg !== "eq") { skipped.fno++; continue; }
-    const col = n => H.indexOf(n), buyValue = num(c[col("Buy Value")]), sellValue = num(c[col("Sell Value")]), gain = num(c[col("Realised P&L")]);
-    if (sellValue === null || gain === null) continue;
-    turnover += (buyValue || 0) + sellValue;
-    rows.push({ bucket: "eqSt", kind: "stock", name: c[col("Security Name")], symbol: null, isin: isIsin(c[col("ISIN")]) ? c[col("ISIN")] : null, buyDate: null, sellDate: null, qty: num(c[col("Qty.")]), buyValue, sellValue, gain, taxable: gain, charges: 0, stt: null, termUnknown: true });
+    const col = n => H.indexOf(n), v = n => (col(n) >= 0 ? num(c[col(n)]) : null);
+    const name = c[col("Security Name")], isin = isIsin(c[col("ISIN")]) ? c[col("ISIN")] : null, kind = /\betf\b|bees\)?$/i.test(name) ? "etf" : "stock";
+    const sellQty = v("Sell Qty.") ?? v("Qty."), sellValue = v("Sell Value"), gain = v("Realised P&L");
+    if (sellQty > 0 && sellValue !== null && gain !== null) {
+      // cost of what was sold: the sale minus Dhan's realised P&L (its FIFO), not the buy value of every share bought
+      const buyValue = col("Sell Qty.") >= 0 ? r2(sellValue - gain) : v("Buy Value");
+      turnover += (buyValue || 0) + sellValue;
+      rows.push({ bucket: "eqSt", kind, name, symbol: null, isin, buyDate: null, sellDate: null, qty: sellQty, buyValue, sellValue, gain, taxable: gain, charges: 0, stt: null, termUnknown: true });
+    }
+    const oq = v("Open Qty.");
+    if (oq > 0) open.push({ name, isin, kind, qty: oq, avg: r2(v("Open Avg. Price") || 0), close: v("Closing Rate"), unrealised: v("Unrealised P&L"), pct: v("Unrealised P&L %") });
   }
   for (const x of rows) x.charges = charges && turnover ? r2(charges * ((x.buyValue || 0) + x.sellValue) / turnover) : 0;
-  const to = generated || today, fy = fyOf(to);
+  const to = span?.to || generated || today, fy = fyOf(span?.from || to);
   for (const x of rows) x.sellDate = to;
-  return { broker: "Dhan", source: "dhan", clientId: null, holderName: null, panKey: null, fy: fy.label, from: fy.from, to, coverage: { stocks: "own", mf: "own" }, rows, other: { dividends: 0, interest: 0, fno: 0 }, skipped, noDates: true };
+  return { broker: "Dhan", source: "dhan", clientId: null, holderName: null, panKey: null, fy: fy.label, from: span?.from || fy.from, to, coverage: { stocks: "own", mf: "own" }, rows, open, openAsOf: open.length ? to : null,
+    other: { dividends: 0, interest: 0, fno: 0 }, skipped, noDates: true, datesKnown: !!span };
 }
 const roundAll = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, r2(v || 0)]));
 

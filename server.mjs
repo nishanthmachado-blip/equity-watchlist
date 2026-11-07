@@ -34,7 +34,8 @@ import { mergeSuggestions } from "./search.mjs";
 import { sanitizePlan, buildPlan, sanitizeGoal, goalPlan } from "./divplan.mjs";
 import { rankFocus } from "./focus.mjs";
 import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, withRecurring, buildNetworth, addSnapshot, changeSince, matchFund, lookThrough, sanitizeGoal as sanitizeNwGoal, goalStatus } from "./networth.mjs";
-import { TAX_RULES, parseTradebook, mergeTrades, taxView, fyOf } from "./tax.mjs";
+import { TAX_RULES, parseTradebook, mergeTrades, taxView, fyOf, fifo } from "./tax.mjs";
+import { swingBook, sanitizeManualTrade } from "./swingbook.mjs";
 import { pnlView } from "./pnl.mjs";
 import { parseTaxReport, reportTotals } from "./taxreport.mjs";
 import { reconcileSwing, applyBrokerFix, tradeFromBroker } from "./swingrecon.mjs";
@@ -1447,6 +1448,23 @@ async function yahooSearch(q) {
 
 // ---- Swing trading: live prices (Kite quotes → Yahoo → saved prices), positions, swing watchlist, alerts ----
 const swingFile = () => userFile("swing.json");
+// ---- Swing book (swingbook.mjs): swing trading from your brokers' records only, never the hand-typed journal ----
+async function swingBookPage(fyLabel = null) {
+  const [v, st, accounts, master, stocks, hold] = await Promise.all([pnlPage(fyLabel), readJson(taxFile(), { trades: [] }), accountsList(), scripMaster(), readWatchlist(), readJson(taxHoldersFile(), {})]);
+  const single = accounts.length === 1 ? accounts[0].id : null, byIsin = new Map(master.list.filter(m => m.isin).map(m => [m.isin, m]));
+  const names = new Map(), trades = (st.trades || []).map(t => { const m = t.isin && byIsin.get(t.isin); if (m) names.set(t.key, m.name); return { ...t, account: t.account || single || "", symbol: m ? m.symbol : t.symbol }; });
+  const lots = [...fifo(trades).lots].flatMap(([key, ls]) => ls.map(l => ({ ...l, key })));
+  const wl = new Map(stocks.map(x => [symOf(x), x]));
+  const price = sym => { const s2 = String(sym || "").toUpperCase(); return livePriceCache.get(`NSE:${s2}`)?.price ?? quoteCache.get(`NSE:${s2}`)?.price ?? wl.get(s2)?.price ?? null; };
+  const labels = new Map([...accounts.map(a => [a.id, a.label]), ...v.rows.map(r => [r.id, r.label])]);
+  const covered = new Map(v.reports.map(r => [r.account, r.to]));
+  const reps = (await readJson(taxReportsFile(), { reports: [] })).reports.filter(r => r.fy === v.fy.label && r.open?.length);
+  const reportOpen = reps.map(r => ({ account: r.account, accountLabel: labels.get(r.account) || r.broker, broker: r.broker, asOf: r.openAsOf, positions: r.open }));
+  const book = swingBook({ sales: v.trades, lots, reportOpen, symbolOf: i => byIsin.get(i)?.symbol || null, price, labels, names, covered, fy: v.fy, today: istDay(), slabRate: v.slabRate });
+  const manual = trades.filter(t => t.src === "manual").sort((a, b) => b.date.localeCompare(a.date)).slice(0, 200).map(t => ({ tradeId: t.tradeId, date: t.date, side: t.side, symbol: t.symbol, qty: t.qty, price: t.price, account: t.account, accountLabel: labels.get(t.account) || t.account }));
+  return { ...book, fys: v.fys, accountsList: [...labels].map(([id, label]) => ({ id, label })).filter(a => a.id), manual, hasBroker: v.rows.some(r => r.trades) || lots.length > 0, reports: v.reports.map(r => ({ broker: r.broker, accountLabel: r.accountLabel, to: r.to })) };
+}
+
 // ---- Swing journal ↔ broker (swingrecon.mjs): the journal's sales checked against the broker's records ----
 async function swingRecon(fyLabel = null) {
   const [v, st, master] = await Promise.all([pnlPage(fyLabel), readJson(swingFile(), {}), scripMaster()]);
@@ -3992,6 +4010,24 @@ async function appHandler(req, res, url) {
       const { goals } = await readBody(req); if (!Array.isArray(goals) || goals.length > 30) return reply(res, 400, { message: "goals must be a list (30 max)" });
       const clean = goals.map(g => ({ symbol: String(g.symbol || "").toUpperCase().replace(/[^A-Z0-9.&-]/g, "").slice(0, 20), market: g.market === "US" ? "US" : "IN", target: Math.max(1, Math.round(Number(g.target) || 0)), current: Number.isFinite(Number(g.current)) ? Math.max(0, Number(g.current)) : null, note: String(g.note || "").slice(0, 80) })).filter(g => g.symbol && g.target > 0);
       await writeJson(userFile("share-goals.json"), { goals: clean }); return reply(res, 200, { goals: clean });
+    }
+    if (url.pathname.startsWith("/api/swingbook")) {
+      const op = url.pathname.slice("/api/swingbook".length).replace(/^\//, "");
+      try {
+        if (req.method === "GET" && !op) return reply(res, 200, await swingBookPage(url.searchParams.get("fy")));
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown swing book operation." });
+        const b = await readBody(req); dropPnlMemo();
+        if (op === "trade") { // a trade you add by hand: into the tradebook, so the Tax view and this page both use it
+          const t = sanitizeManualTrade(b, istDay());
+          await withUserLock(async () => { const st = await readJson(taxFile(), { trades: [], imports: [] }); st.trades = mergeTrades(st.trades, [t]); await writeJson(taxFile(), st); });
+          dropPnlMemo(); return reply(res, 200, { ...(await swingBookPage(b.fy || null)), notice: `Added: ${t.side} ${t.qty} ${t.symbol} at ₹${t.price.toLocaleString("en-IN")} on ${t.date}.` });
+        }
+        if (op === "trade-delete") {
+          await withUserLock(async () => { const st = await readJson(taxFile(), { trades: [] }); const n = st.trades.length; st.trades = st.trades.filter(t => !(t.src === "manual" && t.tradeId === b.tradeId)); if (st.trades.length === n) throw new Error("Only trades you added by hand can be removed here."); await writeJson(taxFile(), st); });
+          dropPnlMemo(); return reply(res, 200, { ...(await swingBookPage(b.fy || null)), notice: "Trade removed." });
+        }
+        return reply(res, 404, { message: "Unknown swing book operation." });
+      } catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname.startsWith("/api/tax")) {
       const op = url.pathname.slice("/api/tax".length).replace(/^\//, "");
