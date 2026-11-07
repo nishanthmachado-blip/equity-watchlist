@@ -24,7 +24,7 @@ export function parseTradebook(rows) {
   for (let i = 0; i < Math.min(rows.length, 30); i++) {
     const h = rows[i].map(x => String(x || "").trim().toLowerCase());
     const f = re => h.findIndex(x => re.test(x));
-    const cols = { symbol: f(/^(symbol|tradingsymbol|trading symbol|scrip|stock|instrument$|instrument name|security|scheme|fund|custom ?symbol|name$|company)/), isin: f(/^isin/), date: f(/^(trade_?date|date|order_execution_time|transaction date|exchange ?time|trade time)/), type: f(/^(trade_?type|type|buy\/sell|b\/s|side|transaction ?type|action)/), qty: f(/^(quantity|qty|units|traded ?qty|traded ?quantity)/), price: f(/^(price|trade ?price|traded ?price|rate|nav|avg\.? ?price)/), segment: f(/^(segment|exchange ?segment)/), product: f(/^(product|product ?type)/) };
+    const cols = { symbol: f(/^(symbol|tradingsymbol|trading symbol|scrip|stock|instrument$|instrument name|security|scheme|fund|custom ?symbol|name$|company)/), isin: f(/^isin/), date: f(/^(trade_?date|date|order_execution_time|transaction date|exchange ?time|trade time)/), type: f(/^(trade_?type|type|buy\/sell|b\/s|side|transaction ?type|action)/), qty: f(/^(quantity|qty|units|traded ?qty|traded ?quantity)/), price: f(/^(price|trade ?price|traded ?price|rate|nav|avg\.? ?price)/), segment: f(/^(segment|exchange ?segment)/), product: f(/^(product|product ?type)/), tradeId: f(/^(trade_?id|exchange ?trade ?id)$/) };
     if ((cols.symbol >= 0 || cols.isin >= 0) && cols.date >= 0 && cols.type >= 0 && cols.qty >= 0 && cols.price >= 0) { hi = i; c = cols; break; }
   }
   if (hi < 0) return { trades: [], note: "No tradebook columns found. Zerodha: Console → Reports → Tradebook (Equity), download CSV. Dhan: connect it on Integrations and use ⟳ Get Dhan trades, or download the trade history from web.dhan.co. Any CSV with symbol or ISIN, date, buy/sell, quantity and price works." };
@@ -38,17 +38,29 @@ export function parseTradebook(rows) {
     const isin = c.isin >= 0 ? String(r[c.isin] || "").trim().toUpperCase() : "";
     if (!side || !date || !(qty > 0) || !(price >= 0) || (!symbol && !isin)) { if (r.some(x => String(x || "").trim())) skipped.bad++; continue; }
     const prod = c.product >= 0 ? String(r[c.product] || "").trim().toUpperCase() : "";
-    trades.push({ key: isin || symbol, symbol: symbol || null, isin: isin || null, date, side, qty, price, ...(/^(MIS|INTRADAY|I)$/.test(prod) ? { product: "MIS" } : {}) });
+    const tid = c.tradeId >= 0 ? String(r[c.tradeId] || "").trim() : "";
+    trades.push({ key: isin || symbol, symbol: symbol || null, isin: isin || null, date, side, qty, price, ...(tid ? { tradeId: tid } : {}), ...(/^(MIS|INTRADAY|I)$/.test(prod) ? { product: "MIS" } : {}) });
   }
   return { trades, skipped, note: null };
 }
 // Merge new trades into saved ones without double-counting the same row (re-importing the same file is safe).
 export function mergeTrades(saved = [], incoming = []) {
   const sig = t => `${t.account || ""}|${t.key}|${t.date}|${t.side}|${t.qty}|${t.price}`; // the same trade in two accounts is two trades
+  const out = [...saved], ids = new Set(saved.filter(t => t.tradeId).map(t => `${t.account || ""}|${t.tradeId}`));
+  // trades with an exchange trade id (Zerodha tradebook, Kite / Dhan capture): the id decides; one also matches a saved
+  // trade without an id that has the same details (an older import of the same fill)
+  const noId = new Map(); for (const t of saved) if (!t.tradeId) noId.set(sig(t), (noId.get(sig(t)) || 0) + 1);
+  const plain = [];
+  for (const t of incoming) {
+    if (!t.tradeId) { plain.push(t); continue; }
+    const id = `${t.account || ""}|${t.tradeId}`; if (ids.has(id)) continue;
+    const k = sig(t); if (noId.get(k) > 0) { noId.set(k, noId.get(k) - 1); continue; }
+    ids.add(id); out.push(t);
+  }
+  // trades without an id: count identical rows, so re-importing the same file adds nothing
   const counts = new Map(); for (const t of saved) counts.set(sig(t), (counts.get(sig(t)) || 0) + 1);
-  const inc = new Map(); for (const t of incoming) inc.set(sig(t), (inc.get(sig(t)) || 0) + 1);
-  const out = [...saved];
-  for (const [k, n] of inc) { const have = counts.get(k) || 0; const t = incoming.find(x => sig(x) === k); for (let i = have; i < n; i++) out.push(t); }
+  const inc = new Map(); for (const t of plain) inc.set(sig(t), (inc.get(sig(t)) || 0) + 1);
+  for (const [k, n] of inc) { const have = counts.get(k) || 0; const t = plain.find(x => sig(x) === k); for (let i = have; i < n; i++) out.push(t); }
   return out.sort((a, b) => a.date.localeCompare(b.date) || (a.side === "buy" ? -1 : 1));
 }
 

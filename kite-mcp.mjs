@@ -17,7 +17,7 @@ import { dfs as fs } from "./storage.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const READ_ONLY_TOOLS = Object.freeze(["login", "get_profile", "get_holdings", "get_mf_holdings", "get_positions", "get_margins", "get_quotes", "get_ltp", "get_ohlc", "get_historical_data", "search_instruments"]);
+export const READ_ONLY_TOOLS = Object.freeze(["login", "get_profile", "get_holdings", "get_mf_holdings", "get_positions", "get_margins", "get_quotes", "get_ltp", "get_ohlc", "get_historical_data", "search_instruments", "get_trades"]); // get_trades: today's executed trades (read-only)
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PROTOCOL = "2025-06-18";
 
@@ -65,6 +65,21 @@ export function extractLoginUrl(text) {
 const unwrap = j => Array.isArray(j) ? j : (j && typeof j === "object" ? (j.holdings || j.data || j.result || j.items || j) : j);
 const n = v => { const x = Number(v); return Number.isFinite(x) ? x : null; };
 const r2 = v => v === null ? null : Math.round(v * 100) / 100;
+// get_trades → tradebook trades (cash equity only). Kite returns only today's trades; the server saves them every day.
+export function normalizeKiteTrades(json) {
+  const list = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
+  const out = [];
+  for (const t of list) {
+    if (!t || !/^(NSE|BSE)$/.test(String(t.exchange || "NSE"))) continue;
+    const side = /^BUY/i.test(t.transaction_type) ? "buy" : /^SELL/i.test(t.transaction_type) ? "sell" : null;
+    const date = String(t.fill_timestamp || t.exchange_timestamp || t.order_timestamp || "").match(/\d{4}-\d{2}-\d{2}/)?.[0];
+    const qty = Number(t.quantity ?? t.filled_quantity), price = Number(t.average_price ?? t.price);
+    const symbol = String(t.tradingsymbol || "").trim().toUpperCase().replace(/-(EQ|BE)$/, "");
+    if (!side || !date || !(qty > 0) || !(price > 0) || !symbol || /\d{2}(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)|FUT$|(CE|PE)$/.test(symbol)) continue;
+    out.push({ key: symbol, symbol, isin: null, date, side, qty, price, tradeId: t.trade_id ? String(t.trade_id) : null, ...(t.product === "MIS" ? { product: "MIS" } : {}), src: "kite-api" });
+  }
+  return out;
+}
 export function normalizeHoldings(json) {
   const list = unwrap(json);
   if (!Array.isArray(list)) throw new KiteError("Unrecognised holdings response from Kite MCP.");
@@ -192,6 +207,7 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
       catch (e) { return { enabled: true, url, connected: false, loginRequired: !!e.loginRequired, error: e.loginRequired ? null : e.message }; }
     },
     async holdings() { const { json, text } = await callTool("get_holdings"); if (json === null) throw new KiteError(`Unrecognised holdings response: ${text.slice(0, 120)}`); return normalizeHoldings(json); },
+    async trades() { const { json, text } = await callTool("get_trades"); if (json === null) { if (/no trades|\[\s*\]/i.test(text)) return []; throw new KiteError(`Unrecognised trades response: ${text.slice(0, 120)}`); } return normalizeKiteTrades(json); },
     async mfHoldings() { const { json, text } = await callTool("get_mf_holdings"); if (json === null) { if (/no (mutual fund |mf )?holdings|\[\s*\]/i.test(text)) return []; throw new KiteError(`Unrecognised mutual fund holdings response: ${text.slice(0, 120)}`); } return normalizeMfHoldings(json); },
     async ltp(symbols, exchange = "NSE") {
       const instruments = [...new Set(symbols.map(s => String(s).toUpperCase()))].map(s => `${exchange}:${s}`);

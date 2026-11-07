@@ -52,15 +52,20 @@ export function oppView({ plan = OPP_DEFAULTS, state = {}, nifty = null, picks =
   const dueTotal = tiers.filter(t => t.reached).reduce((a, t) => a + (t.amount || 0), 0), due = pot !== null ? Math.max(0, Math.min(left, dueTotal - deployed)) : 0;
   const next = tiers.find(t => !t.reached) || null;
   // where today's amount goes: the core fund, and the best long-term buys split equally
-  const top = picks.slice(0, P.picks), coreAmt = top.length ? r0(due * P.core / 100) : due, each = top.length ? r0((due - coreAmt) / top.length) : 0;
-  const plan2 = due > 0 ? [{ where: P.coreName, amount: coreAmt, why: "Core fund: the simplest way to buy the whole market lower" }, ...top.map(p => ({ where: p.name, symbol: p.symbol, amount: each, price: p.price, zoneHigh: p.zoneHigh, why: p.action }))].filter(x => x.amount > 0) : [];
+  const top = picks.slice(0, P.picks);
+  const split = amt => { const coreAmt = top.length ? r0(amt * P.core / 100) : amt, each = top.length ? r0((amt - coreAmt) / top.length) : 0;
+    return [{ where: P.coreName, amount: coreAmt, why: "Core fund: the simplest way to buy the whole market lower" }, ...top.map(p => ({ where: p.name, symbol: p.symbol, amount: each, price: p.price, zoneHigh: p.zoneHigh, why: p.action }))]; };
+  const plan2 = due > 0 ? split(due).filter(x => x.amount > 0) : [];
+  // shopping list kept ready for the next step, so you know what you'll buy before the fall comes
+  const nxt = tiers.find(t => !t.reached) || null;
+  const ready = !plan2.length && nxt ? { off: nxt.off, level: nxt.level, amount: nxt.amount, away: nxt.away, list: (nxt.amount !== null ? split(nxt.amount) : split(0)).map(x => ({ ...x, amount: nxt.amount !== null ? x.amount : null, sharePct: x.symbol ? (top.length ? r1((100 - P.core) / top.length) : 0) : (top.length ? P.core : 100) })) } : null;
   const tips = [];
   if (pot === null) tips.push({ tone: "info", text: "Set how much you keep aside for market falls. A common size is 10–15% of your equity, or 6–12 months of your SIPs, kept in an arbitrage or liquid fund." });
   if (!nifty) tips.push({ tone: "warn", text: "Nifty history isn't there yet: it comes with the daily swing scan (Swing → Scan)." });
   if (nifty && nifty.off < (P.tiers[0]?.off || 10) && pot !== null) tips.push({ tone: "ok", text: `Nothing to do: Nifty is ${nifty.off}% below its 1-year high, the first step is at −${P.tiers[0].off}% (Nifty about ${tiers[0].level?.toLocaleString("en-IN")} on NIFTYBEES). Keep your SIPs going; this money waits in arbitrage.` });
   if (due > 0) tips.push({ tone: "warn", text: `Nifty is ${nifty.off}% below its high: put ₹${due.toLocaleString("en-IN")} to work now. Spread it over 2–3 days if you like; don't wait for a lower price than the next step.` });
   if (pot !== null && left === 0) tips.push({ tone: "info", text: "The fund is fully invested for this fall. Refill it from swing profits or part of each month's surplus, so it's ready for the next one." });
-  return { plan: P, nifty, tiers, next, pot, deployed, left, due, deploy: plan2, deployments: [...deps].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 50), cycleStart, tips, today };
+  return { plan: P, nifty, tiers, next, pot, deployed, left, due, deploy: plan2, ready, picksCount: top.length, deployments: [...deps].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 50), cycleStart, tips, today };
 }
 
 // what changed since the last check: new steps reached (alerts) and a finished cycle (reset)

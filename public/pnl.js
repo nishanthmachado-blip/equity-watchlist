@@ -15,10 +15,11 @@
     const T = d.total, box = $("#txPnl"); if (!box) return;
     const fyOpts = d.fys.map(f => `<option${f === d.fy.label ? " selected" : ""}>${esc(f)}</option>`).join("");
     const head = `<div class="nw-head pn-head"><h3>📊 P&L across all your brokers</h3><div class="pn-tools"><select class="ui-input" id="pnFy" aria-label="Financial year">${fyOpts}</select>
-      ${d.dhan.accounts.length ? `<button type="button" class="ghost" id="pnDhan"${busy ? " disabled" : ""}>${busy ? "Getting trades…" : "⟳ Get Dhan trades"}</button>` : ""}
+      ${d.dhan.accounts.length || d.kiteAccounts ? `<button type="button" class="ghost" id="pnDhan"${busy ? " disabled" : ""} title="Zerodha: today's trades (Kite gives only today). Dhan: everything since last April.">${busy ? "Getting trades…" : "⟳ Get trades from brokers"}</button>` : ""}
       <a class="ghost btnlike" href="/api/tax/pnl.xlsx?fy=${encodeURIComponent(d.fy.label)}" download>⬇ Excel for your CA</a></div></div>`;
     if (!d.rows.length) { box.innerHTML = `<section class="report-card pn">${head}<p class="hint">No trades or synced holdings yet. Import each broker's tradebook below (Zerodha: Console → Reports → Tradebook), or connect Dhan on Integrations and use ⟳ Get Dhan trades.</p></section>`; return; }
-    const cards = `<div class="pn-cards">
+    const C = d.capture, capLine = `<p class="hint pn-cap">🔄 ${C ? `Last automatic pick-up ${esc(new Date(C.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}: ${[...C.kite.map(k => k.error ? `Zerodha ⚠ ${esc(k.error)}` : `Zerodha ${k.rows} trade${k.rows === 1 ? "" : "s"}`), C.dhan?.error ? `Dhan ⚠ ${esc(C.dhan.error)}` : C.dhan ? `Dhan ${C.dhan.added} new` : null].filter(Boolean).join(" · ") || "no broker connected"}.` : "Not run yet."} Every weekday after 3:45 pm, today's trades are picked up from Zerodha (if you logged in that day) and Dhan. Older Zerodha trades: import the Console tradebook once.</p>`;
+    const cards = capLine + `<div class="pn-cards">
       <div><span>Realised P&L · ${esc(d.fy.label)}</span><strong class="${cls(T.gross)}">${sgn(T.gross)}</strong><small>${T.trades} sale${T.trades === 1 ? "" : "s"} across ${d.rows.filter(r => r.trades).length} account${d.rows.filter(r => r.trades).length === 1 ? "" : "s"}</small></div>
       <div><span>After charges</span><strong class="${cls(T.net)}">${sgn(T.net)}</strong><small>charges ${inr(T.charges)}${T.chargesEst ? ` (${inr(T.chargesEst)} estimated)` : ""}</small></div>
       <div><span>Short term (STCG)</span><strong class="${cls(T.netSt)}">${sgn(T.netSt)}</strong><small>gains ${inr(T.stGain)} · losses ${inr(T.stLoss)}</small></div>
@@ -56,7 +57,12 @@
     if (t.closest("#pnMore")) { more = true; return render(); }
     if (t.closest("#pnDhan")) {
       busy = true; render();
-      try { d = await api("/api/tax/dhan-sync", { fy }); window.toast?.(`✓ Dhan: ${d.synced.rows} trades read, ${d.synced.added} new.`, { kind: "ok" }); window.openTax?.(); }
+      try {
+        d = await api("/api/tax/capture", { fy, full: true }); const c = d.captured, msg = [];
+        for (const k of c.kite) msg.push(k.error ? `Zerodha ${k.account || k.slot}: ${k.error}` : `Zerodha ${k.account}: ${k.rows} trades today`);
+        if (c.dhan?.error) msg.push(`Dhan: ${c.dhan.error}`); else if (c.dhan) msg.push(`Dhan: ${c.dhan.rows} trades read, ${c.dhan.added} new`);
+        window.toast?.(esc(msg.join(" · ") || "No broker connected for trades. Connect Zerodha or Dhan on Integrations."), { kind: c.kite.some(k => k.error) || c.dhan?.error ? "bad" : "ok", ms: 6000 }); window.openTax?.();
+      }
       catch (err) { window.toast?.(esc(err.message), { kind: "bad" }); }
       busy = false; return render();
     }

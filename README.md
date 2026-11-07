@@ -1,5 +1,17 @@
 # Equity Watchlist MVP
 
+## v5.65.0: opportunity-fund ready list, automatic daily trade pick-up
+
+- **Opportunity fund → 🛒 Ready list for the next step:** shows what you'll buy when Nifty reaches the next step (e.g. −10%), before the fall happens: your core fund and the Top 5 from What to do now, with amounts (or % shares if the fund size isn't set), today's price and buy zone. If there are no stocks yet, it explains where they come from (holdings, ♥ favourites and theme stocks in their buy zone).
+- **Trades picked up automatically:** every weekday after 3:45 pm, today's trades are saved from every logged-in Zerodha account (Kite's read-only `get_trades`, which only gives today's trades) and the last week of Dhan trades. The P&L card shows when this last ran and any problem (e.g. "Zerodha login needed today").
+  - **⟳ Get trades from brokers** runs it now; for Dhan it reads everything since last April.
+  - Zerodha trades before today still need the Console tradebook, imported once.
+- **No double counting:** trades are matched by the exchange's trade ID, so a trade picked up from Kite and the same trade in a later Console tradebook count once. Older imports without IDs are matched by their details.
+
+## v5.64.1: stock card fix
+
+- **Are FIIs and DIIs buying?** The summary lines (e.g. "FIIs raised their stake…") showed as overlapping text at the left edge. They used the same style name as the Swing income chart's dashed target line. They have their own style now, and the chart's line style only applies inside that chart.
+
 ## v5.64.0: cup and handle, momentum, idea alerts
 
 - **Swing ideas: ☕ Cup and handle.** The scan looks for a rounded 12–35% dip over 6 weeks to 7 months that has come back to within 5% of the old high, then a short, shallow handle (1–5 weeks, in the upper half of the cup). The stock must also be above its 200-DMA.

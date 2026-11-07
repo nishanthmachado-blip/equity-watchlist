@@ -1205,7 +1205,7 @@ async function pnlPage(fyLabel = null) {
   await Promise.all(accounts.map(async a => { const hs = await holdingsOf(a.id); unrealised[a.id] = hs.reduce((x, h) => x + (Number.isFinite(h.price) && Number.isFinite(h.avgPrice) ? (h.price - h.avgPrice) * h.qty : 0), 0); }));
   const v = pnlView({ trades, accounts, holders: hold.holders || {}, unrealised, names, fy: fyLabel, today: istDay() });
   const dhanAcc = accounts.filter(a => /^dhan:/.test(a.id));
-  return { ...v, holderMap: hold.holders || {}, dhan: { accounts: dhanAcc.map(a => a.id), lastSync: hold.dhanSync || null } };
+  return { ...v, holderMap: hold.holders || {}, dhan: { accounts: dhanAcc.map(a => a.id), lastSync: hold.dhanSync || null }, capture: hold.capture || null, kiteAccounts: accounts.filter(a => !/:/.test(a.id)).length };
 }
 async function sendPnlExport(res, fyLabel) {
   const v = await pnlPage(fyLabel), M = { type: "money", width: 14 };
@@ -1245,6 +1245,38 @@ async function syncDhanTrades(fromDay = null) {
   const h = await readJson(taxHoldersFile(), { holders: {} }); h.dhanSync = { at: new Date().toISOString(), account, from: from0, rows: got.length, added: st.trades.length - before }; await writeJson(taxHoldersFile(), h);
   return { account, rows: got.length, added: st.trades.length - before };
 }
+
+// Today's trades from every connected broker, saved into the tradebook: Zerodha (Kite get_trades: today only, so this
+// runs every weekday after the close) and Dhan (the last week, or from last April when asked). Read-only calls.
+async function captureBrokerTrades({ dhanFrom = null } = {}) {
+  const res = { at: new Date().toISOString(), day: istDay(), kite: [], dhan: null };
+  const master = await scripMaster(), isinOf = new Map(master.list.filter(m => m.isin).map(m => [m.symbol, m.isin]));
+  const got = [];
+  for (const slot of await kiteSlotList()) {
+    const kc = await kiteFor(slot.id); if (!kc.config.enabled || !(await kc.hasSession())) continue;
+    try {
+      const prof = await kc.profile(); if (!prof?.userId) continue;
+      const t = (await kc.trades()).map(x => { const isin = isinOf.get(x.symbol) || null; return { ...x, isin, key: isin || x.key, account: prof.userId }; });
+      got.push(...t); res.kite.push({ account: prof.userId, rows: t.length });
+    } catch (e) { res.kite.push({ slot: slot.id, error: e.loginRequired ? "Zerodha login needed today (Integrations → Log in)" : String(e.message).slice(0, 120) }); }
+  }
+  if (got.length) {
+    const st = await readJson(taxFile(), { trades: [], imports: [] }), before = st.trades.length;
+    st.trades = mergeTrades(st.trades, got);
+    if (st.trades.length > before) st.imports = [...(st.imports || []), { at: res.at, file: `Zerodha trades of ${res.day}`, rows: got.length, added: st.trades.length - before, from: res.day, to: res.day }].slice(-30);
+    await writeJson(taxFile(), st); res.kiteAdded = st.trades.length - before;
+  }
+  try { await brokers.dhan.profile(); res.dhan = await syncDhanTrades(dhanFrom || new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10)); }
+  catch (e) { res.dhan = e.loginRequired || /log ?in/i.test(e.message) ? null : { error: String(e.message).slice(0, 120) }; }
+  await withUserLock(async () => { const h = await readJson(taxHoldersFile(), { holders: {} }); h.capture = res; await writeJson(taxHoldersFile(), h); });
+  return res;
+}
+// every weekday after 15:45 IST, once a day per login
+setInterval(() => {
+  const t = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts().reduce((a, p) => ({ ...a, [p.type]: p.value }), {});
+  if (["Sat", "Sun"].includes(t.weekday) || Number(t.hour) * 60 + Number(t.minute) < 945) return;
+  forEachUser(async () => { const h = await readJson(taxHoldersFile(), {}); if (h.capture?.day === istDay()) return; await captureBrokerTrades().catch(e => console.log(`[trades] ${e.message}`)); }).catch(() => {});
+}, 20 * 60e3).unref();
 
 // ---- Returns (XIRR) vs the index, dividends received, forward dividend calendar ----
 // Index history: our NSE end-of-day files, topped up for older years from Yahoo (shared cache, weekly).
@@ -3881,6 +3913,7 @@ async function appHandler(req, res, url) {
           h.holders = Object.fromEntries(Object.entries(b.holders || {}).filter(([k]) => accs.has(k)).map(([k, v]) => [k, String(v || "").replace(/[<>]/g, "").trim().slice(0, 30)]).filter(([, v]) => v));
           await writeJson(taxHoldersFile(), h); return reply(res, 200, await pnlPage(b.fy || null));
         }
+        if (req.method === "POST" && op === "capture") { const b = await readBody(req); const r = await captureBrokerTrades({ dhanFrom: b.full ? `${Number(fyOf(istDay()).from.slice(0, 4)) - 1}-04-01` : null }); return reply(res, 200, { ...(await pnlPage(b.fy || null)), captured: r }); }
         if (req.method === "POST" && op === "dhan-sync") { const b = await readBody(req); const r = await syncDhanTrades(b.from || null); return reply(res, 200, { ...(await pnlPage(b.fy || null)), synced: r }); }
         if (req.method !== "POST") return reply(res, 404, { message: "Unknown tax operation." });
         const b = await readBody(req), st = await readJson(taxFile(), { trades: [], imports: [] });
