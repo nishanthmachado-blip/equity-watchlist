@@ -290,6 +290,23 @@ export async function fetchScreener(stock, fetchImpl = fetch) {
   return out;
 }
 
+// The raw company page (consolidated, else standalone) for the company-info panel: About, key points, shareholding.
+export async function fetchScreenerHtml(symbol, fetchImpl = fetch) {
+  const sym = String(symbol || "").toUpperCase(); if (!/^[A-Z0-9&-]+$/.test(sym)) throw new Error("bad symbol");
+  const cd = screenerCooldown(); if (cd) throw new ScreenerBlocked(cd);
+  const get = async url => {
+    const r = await sFetch(fetchImpl, url, { headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9" }, signal: AbortSignal.timeout(screenerConfig.timeoutMs) });
+    if (r.status === 429 || r.status === 403) { const until = sb.block(`HTTP ${r.status}`); throw new ScreenerBlocked(until, `HTTP ${r.status}`); }
+    return r;
+  };
+  const base = `${SCREENER_BASE()}/company/${encodeURIComponent(sym)}/`;
+  let r = await get(base + "consolidated/");
+  if (r.ok) { const html = await r.text(); if (hasFigures(html) || /class=["'][^"']*\babout\b/.test(html)) return html; r = await get(base); }
+  else if (r.status === 404) r = await get(base);
+  if (r.status === 404) throw new Error(`Screener has no page for ${sym}.`);
+  if (!r.ok) throw new Error(`Screener HTTP ${r.status}`);
+  return r.text();
+}
 // On demand for the stock card: ids (cached by the caller, else read from the company page), peer table and price chart.
 export async function fetchScreenerExtras(stock, { ids = null, want = ["peers", "chart"], fetchImpl = fetch } = {}) {
   const sym = (stock.marketSymbol || stock.ticker || "").toUpperCase();

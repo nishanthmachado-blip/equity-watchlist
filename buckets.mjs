@@ -61,7 +61,7 @@ export function sanitizeBucketPlan(b = {}, prev = {}) {
 export function bucketView(lines = [], plan = sanitizeBucketPlan(), { spend = null, liabilities = 0 } = {}) {
   const rows = lines.filter(l => l.kind !== "liability" && l.value > 0).map(l => {
     const auto = defaultBucket(l), bucket = plan.assign[l.id] || auto;
-    return { id: l.id, name: l.name, category: l.category, fundCategory: l.fundCategory || null, value: r0(l.value), bucket, auto, moved: !!plan.assign[l.id] && plan.assign[l.id] !== auto, goal: plan.goalOf[l.id] || null };
+    return { id: l.id, name: l.name, category: l.category, fundCategory: l.fundCategory || null, value: r0(l.value), bucket, auto, moved: !!plan.assign[l.id] && plan.assign[l.id] !== auto, goal: plan.goalOf[l.id] || null, recurring: l.recurring?.monthly ? { monthly: l.recurring.monthly, day: l.recurring.day } : null };
   });
   const inBuckets = rows.filter(r => r.bucket !== "none"), total = inBuckets.reduce((a, r) => a + r.value, 0);
   const buckets = BUCKETS.map(b => {

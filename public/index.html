@@ -9,6 +9,7 @@
       <p class="side-label">Main</p>
       <button id="viewHome" class="viewTab active" title="Value a stock"><span class="ico" aria-hidden="true">🔎</span><span class="lbl">Value a stock</span></button>
       <button id="viewDecide" class="viewTab" data-goto="decide" title="What to do now"><span class="ico" aria-hidden="true">🚦</span><span class="lbl">What to do now</span></button>
+      <button id="viewOpportunity" class="viewTab" data-goto="opportunity" title="Opportunity fund"><span class="ico" aria-hidden="true">📉</span><span class="lbl">Opportunity fund</span></button>
       <button id="viewFavs" class="viewTab" data-goto="favs" title="Favourites"><span class="ico" aria-hidden="true">❤️</span><span class="lbl">Favourites</span></button>
       <button id="viewLists" class="viewTab" title="Watchlists"><span class="ico" aria-hidden="true">⭐</span><span class="lbl">Watchlists</span></button>
       <button id="viewMarket" class="viewTab" title="Market today"><span class="ico" aria-hidden="true">📈</span><span class="lbl">Market today</span></button>
@@ -198,13 +199,13 @@
       <section class="table-wrap"><table class="sw-table sw-watch"><thead><tr><th>Stock</th><th class="num">LTP</th><th class="num">Buy below</th><th class="num">Distance</th><th class="num">Amount</th><th>Signal</th><th></th></tr></thead><tbody id="swWatchRows"></tbody></table></section>
       <section class="report-card sw-ideas" id="swIdeasBox">
         <div class="nw-head"><h3>💡 Swing ideas <span class="hint">new setups from daily charts</span></h3><span class="hint" id="swIdeasStatus"></span></div>
-        <div class="toolbar sw-ideas-tools"><label class="hint">Setup <select class="ui-input" id="swIdeasSetup"><option value="">All setups</option><option value="high52">🏔 52-week high breakout (above 200-DMA)</option><option value="pullback">↘↗ Pullback in an uptrend</option><option value="breakout">🚀 Breakout on volume</option><option value="bounce">🪃 Oversold bounce</option><option value="value">💎 Value stock turning up</option></select></label>
+        <div class="toolbar sw-ideas-tools"><label class="hint">Setup <select class="ui-input" id="swIdeasSetup"><option value="">All setups</option><option value="cup">☕ Cup and handle</option><option value="momentum">📈 Momentum above 200-DMA</option><option value="high52">🏔 52-week high breakout (above 200-DMA)</option><option value="pullback">↘↗ Pullback in an uptrend</option><option value="breakout">🚀 Breakout on volume</option><option value="bounce">🪃 Oversold bounce</option><option value="value">💎 Value stock turning up</option></select></label>
           <label class="hint">From <select class="ui-input" id="swIdeasSrc"><option value="">Market + my lists</option><option value="mine">Only my watchlists</option></select></label>
-          <button type="button" class="ghost" id="swIdeasScan">⟳ Scan now</button></div>
+          <button type="button" class="ghost" id="swIdeasScan">⟳ Scan now</button><button type="button" class="ghost" id="swIdeasAlert">🔔 Alert me</button></div>
         <div id="swIdeas" class="sw-ideas-grid"></div>
         <details class="sw-track" id="swTrack" hidden><summary>📈 <b>Scanner track record</b> <span class="hint" id="swTrackSum"></span></summary><div id="swTrackBody"></div></details>
         <details class="sw-track sw-bt" id="swBt"><summary>🧪 <b>Backtest a setup</b> <span class="hint" id="swBtSum">how would it have done on your stocks over 5 years?</span></summary><div id="swBtBody"><p class="hint">Loading…</p></div></details>
-        <p class="vs-fine">Rule-based setups from daily prices: <b>pullback</b> (uptrend that dipped to its 20/50-day average, RSI 38–55), <b>breakout</b> (close above the 55-day high on 1.5× volume, not stretched), <b>oversold bounce</b> (above the 200-day average, RSI ≤ 35) and <b>value turning up</b> (the app's buy zone + price back above its 20-day average). Score adds trend, strength vs Nifty, risk:reward, valuation and liquidity. Size = no more than your max per trade, and a stop-out costs at most your risk % of swing cash. A screen to find candidates, not advice: check the chart and news before you buy, and always use the stop.</p>
+        <p class="vs-fine">Rule-based setups from daily prices: <b>cup and handle</b> (a rounded 12–35% dip over 6 weeks to 7 months, back near the old high, then a short shallow handle; buy above the handle's high, target = the cup's depth), <b>momentum</b> (5%+ above a rising 200-DMA, up 10%+ in 3 months and beating Nifty, near its 20-day average), <b>pullback</b> (uptrend that dipped to its 20/50-day average, RSI 38–55), <b>breakout</b> (close above the 55-day high on 1.5× volume, not stretched), <b>oversold bounce</b> (above the 200-day average, RSI ≤ 35) and <b>value turning up</b> (the app's buy zone + price back above its 20-day average). Score adds trend, strength vs Nifty, risk:reward, valuation and liquidity. Size = no more than your max per trade, and a stop-out costs at most your risk % of swing cash. A screen to find candidates, not advice: check the chart and news before you buy, and always use the stop.</p>
       </section>
       <section class="report-card sw-scorecard" id="swScore" hidden><div class="nw-head"><h3>Swing scorecard</h3><span class="hint">from your closed trades</span></div><div id="swScoreBody"></div></section>
       <details class="report-card sw-closed sw-ledgerbox" id="swLedgerBox" open><summary><b>📒 Ledger: every buy and sell, by date</b> <span class="hint" id="swLedgerSum"></span></summary><div id="swLedgerBody"></div></details>
@@ -238,6 +239,10 @@
     <section id="bkView" data-feature-view="buckets" hidden>
       <section class="toolbar"><span class="hint">Your net worth in four buckets: safety, short term, long-term growth and retirement. Click a bucket to jump to it.</span><button type="button" class="ghost" data-bk-settings>⚙ Settings</button><button type="button" class="ghost" id="bkReload">⟳ Refresh</button></section>
       <div id="bkSum"></div><div id="bkBody"><p class="hint">Loading…</p></div><div id="bkNotes"></div>
+    </section>
+    <section id="opView" data-feature-view="opportunity" hidden>
+      <section class="toolbar"><span class="hint">Cash kept in an arbitrage fund for market falls, invested in steps as Nifty drops from its high. You get an alert when a step is reached.</span><button type="button" class="ghost" id="opReload">⟳ Refresh</button></section>
+      <div id="opBody"><p class="hint">Loading…</p></div>
     </section>
     <section id="dcView" data-feature-view="decide" hidden>
       <section class="toolbar"><span class="hint">Your holdings, favourites and Long-term theme stocks in one place: what to buy for the long term, what is only a swing trade, what to wait for, and what to trim.</span><button type="button" class="ghost" id="dcReload">⟳ Refresh</button></section>
@@ -344,10 +349,11 @@
       <p class="vs-fine">Annual (10-K) figures from the latest fiscal year; companies filing 20-F (most foreign ADRs) are not covered. Banks and insurers are valued on earnings only. Set SEC_USER_AGENT on the server (your name and email) as SEC asks.</p>
     </section>
     <section id="taxView" hidden>
-      <p class="hint">Long- vs short-term gains on what you hold and what you sold this financial year, from your Zerodha Console tradebook (first in, first out, like the tax rules). Listed shares and equity funds: <b>long term after 12 months</b>, taxed 12.5% above ₹1.25 lakh a year; short term taxed 20% (Finance Act 2024 rates, unchanged in Budget 2026). An estimate to plan with, not tax advice: confirm with your CA or Console's Tax P&amp;L.</p>
+      <p class="hint">Long- vs short-term gains on what you hold and what you sold this financial year, from your brokers' trades: Zerodha Console tradebooks, Dhan (fetched from Dhan) or any broker's CSV (first in, first out, like the tax rules). Listed shares and equity funds: <b>long term after 12 months</b>, taxed 12.5% above ₹1.25 lakh a year; short term taxed 20% (Finance Act 2024 rates, unchanged in Budget 2026). An estimate to plan with, not tax advice: confirm with your CA or Console's Tax P&amp;L.</p>
       <section class="toolbar"><button type="button" class="primary" id="txPick">⬆ Import tradebook (CSV / Excel)</button><button type="button" class="ghost" id="txClear">Clear tradebook</button><input type="file" id="txFile" accept=".csv,.xlsx,.xls,.txt" hidden><span id="txStatus" class="hint" role="status"></span></section>
       <div id="txAcct" class="tx-acct"></div>
       <div id="txImports"></div>
+      <div id="txPnl"></div>
       <div id="txEmpty" class="fd-empty"><div class="fd-empty-ico">🧾</div><h2>Import your tradebook to see your tax position</h2>
         <p>Zerodha Console → <b>Reports → Tradebook</b> → segment <b>Equity</b> → pick a date range from your first purchase (one financial year at a time) → <b>Download CSV</b>. Repeat for each year, and for segment <b>Mutual funds</b> if you hold Coin funds. Drop the files here.</p>
         <p class="hint">The file stays in your private account folder. Holdings bought before 31 Jan 2018 use your actual price (the grandfathering rule is not applied).</p>

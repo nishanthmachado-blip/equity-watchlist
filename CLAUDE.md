@@ -23,3 +23,4 @@ Personal Indian-equity research app: Node ESM server (`server.mjs`, per-user dat
 - Side-menu arrangement (`navorder.js`, `/api/ui/menu`, `menu.json`) is per login. New menu buttons need an `id` and `class="viewTab"`; they land in their default group for users who already arranged the menu.
 - FIRE planner (`fire.mjs`, `/api/fire`, `fire.json`) is per login and, like expenses and buckets, never goes to Ask AI.
 - `decide.mjs` is the Ask AI hold-or-sell helper; the "What to do now" screen is `nowcall.mjs` + `public/decide.js` (`/api/decide`). Check a module name is free before creating one.
+- Combined P&L (`pnl.mjs`, `/api/tax/pnl`, `public/pnl.js` lazy-loaded from tax.js) reads the per-user `tradebook.json`; holder names per account in `tax-holders.json`. `tax.mjs` `fifo()` is per account (`t.account`) and splits same-day buy+sell as intraday. Dhan trades come from read-only `GET /v2/trades` (path params go in `query` so the route allow-list still matches).

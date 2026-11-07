@@ -62,7 +62,7 @@ export function decide(items = [], { market = marketMood([]), cash = null } = {}
     const rank = lane === "buy" ? (quality * (weak ? 0.5 : 0.45) + value * (weak ? 0.25 : 0.4) + (resilience ?? 50) * (weak ? 0.25 : 0.15)) : null;
     return { symbol: it.symbol, name: it.name || r?.company || it.symbol, sources: it.sources || [], sector: r?.sector || r?.industry || null, price, quality, value, view: r?.view || null, verdict: r?.verdict?.label || null,
       zoneLow, zoneHigh, awayPct, fair: r?.fairValue?.base ?? null, trend, offHigh, rs3m: rs, resilience, held: it.held || null, lane, action, why: [...new Set(why)].slice(0, 4), against: [...new Set(against)].slice(0, 3),
-      swing: it.swing ? { label: it.swing.label, score: it.swing.score, entry: it.swing.entry, stop: it.swing.stop, t1: it.swing.t1, riskPct: it.swing.riskPct, t1Pct: it.swing.t1Pct } : null, rank: rank === null ? null : Math.round(rank) };
+      move: it.move || null, swing: it.swing ? { setup: it.swing.setup || null, label: it.swing.label, score: it.swing.score, entry: it.swing.entry, stop: it.swing.stop, t1: it.swing.t1, riskPct: it.swing.riskPct, t1Pct: it.swing.t1Pct } : null, rank: rank === null ? null : Math.round(rank) };
   });
   // Top 5: best long-term buys, at most 2 per sector so one sector's fall can't sink all five
   const top = [], perSector = new Map();
@@ -85,4 +85,37 @@ export function decide(items = [], { market = marketMood([]), cash = null } = {}
   if (weak && counts.swing) tips.push("Swing trades in a weak market fail more often: keep position sizes small and respect the stop.");
   if (rows.filter(r => r.quality === null).length > rows.length / 3) tips.push("Many stocks have no fundamentals yet, so they can't be judged: open them once (or refresh the watchlist) to fetch the numbers.");
   return { market, rows, top, next, counts, split, tips, rules: DECIDE };
+}
+
+// ---- Market-move playbook: what to do after a sharp rally or fall, from your own list ----
+// closes: daily closes oldest first (plus today's live price if it is newer); returns % change over 1, 2 and 5 sessions
+export function moveOf(closes = []) {
+  const c = closes.filter(v => fin(v) && v > 0), n = c.length; if (n < 3) return null;
+  const ch = k => (n > k ? r1((c[n - 1] / c[n - 1 - k] - 1) * 100) : null);
+  return { d1: ch(1), d2: ch(2), d5: ch(5) };
+}
+export function playbook(rows = [], market = null) {
+  const m = market?.move || null, up = !!m && ((m.d2 ?? 0) >= 2 || (m.d5 ?? 0) >= 3.5), down = !!m && ((m.d2 ?? 0) <= -2 || (m.d5 ?? 0) <= -3.5);
+  const kind = up ? "rally" : down ? "fall" : "normal", nd5 = m?.d5 ?? 0;
+  const pick = (list, n = 6) => list.slice(0, n).map(r => ({ symbol: r.symbol, name: r.name, price: r.price, d2: r.move?.d2 ?? null, d5: r.move?.d5 ?? null, zoneHigh: r.zoneHigh, awayPct: r.awayPct, quality: r.quality, held: !!r.held, pnlPct: r.held?.pnlPct ?? null, swing: r.swing, action: r.action }));
+  // 1. swing: breakouts and 52-week highs with volume ride a rally best
+  const breakouts = pick(rows.filter(r => r.swing && r.swing.score >= 50 && ["breakout", "high52", "pullback"].includes(r.swing.setup)).sort((a, b) => (b.swing.score - a.swing.score)));
+  // 2. long term: good businesses still at a fair price that haven't run with the market
+  const laggards = pick(rows.filter(r => (r.lane === "buy" || (r.lane === "wait" && r.awayPct !== null && r.awayPct <= 5)) && (r.move?.d5 ?? 0) <= nd5 + 1).sort((a, b) => (b.rank ?? b.quality ?? 0) - (a.rank ?? a.quality ?? 0)));
+  // 3. book some profit: holdings that are now expensive (well above the buy zone) after a good run
+  const book = pick(rows.filter(r => r.held && ((r.awayPct ?? 0) >= 25 || (r.value !== null && r.value <= 20)) && ((r.held.pnlPct ?? 0) >= 20 || (r.move?.d5 ?? 0) >= 6)).sort((a, b) => (b.awayPct ?? 0) - (a.awayPct ?? 0)));
+  // 4. don't chase: stocks you like that just jumped further from their buy zone
+  const chase = pick(rows.filter(r => r.lane === "wait" && (r.move?.d5 ?? 0) >= 4).sort((a, b) => (b.move?.d5 ?? 0) - (a.move?.d5 ?? 0)));
+  const money = kind === "rally" ? [
+    "Keep your SIPs exactly as they are: they buy every month whatever the market does.",
+    "New lump sums: only into the 'still at a fair price' list below, a third now; the rest waits in your arbitrage / opportunity fund.",
+    "Swing: take only breakouts on volume, at a smaller size, with the stop set the day you buy; book part at the first target.",
+    "Holdings that got expensive: book 20–30% and keep the rest running; move the money to the opportunity fund for the next dip."
+  ] : kind === "fall" ? [
+    "Keep your SIPs going: falls are when they do their best work.",
+    "Check the Opportunity fund: if a step has been reached, invest that amount as planned.",
+    "Long-term buys at fair prices (below) are on sale: buy in parts.",
+    "Swing: avoid new breakouts until Nifty holds its 20-day average again; respect your stops."
+  ] : ["No sharp market move: follow the Top 5 and your monthly plan as usual."];
+  return { kind, move: m, breakouts, laggards, book, chase, money };
 }

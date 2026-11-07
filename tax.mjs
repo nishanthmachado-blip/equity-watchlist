@@ -24,20 +24,21 @@ export function parseTradebook(rows) {
   for (let i = 0; i < Math.min(rows.length, 30); i++) {
     const h = rows[i].map(x => String(x || "").trim().toLowerCase());
     const f = re => h.findIndex(x => re.test(x));
-    const cols = { symbol: f(/^(symbol|tradingsymbol|scrip|stock|instrument|scheme|fund)/), isin: f(/^isin/), date: f(/^(trade_?date|date|order_execution_time|transaction date)/), type: f(/^(trade_?type|type|buy\/sell|side|transaction type|action)/), qty: f(/^(quantity|qty|units)/), price: f(/^(price|trade price|rate|nav)/), segment: f(/^segment/) };
+    const cols = { symbol: f(/^(symbol|tradingsymbol|trading symbol|scrip|stock|instrument$|instrument name|security|scheme|fund|custom ?symbol|name$|company)/), isin: f(/^isin/), date: f(/^(trade_?date|date|order_execution_time|transaction date|exchange ?time|trade time)/), type: f(/^(trade_?type|type|buy\/sell|b\/s|side|transaction ?type|action)/), qty: f(/^(quantity|qty|units|traded ?qty|traded ?quantity)/), price: f(/^(price|trade ?price|traded ?price|rate|nav|avg\.? ?price)/), segment: f(/^(segment|exchange ?segment)/), product: f(/^(product|product ?type)/) };
     if ((cols.symbol >= 0 || cols.isin >= 0) && cols.date >= 0 && cols.type >= 0 && cols.qty >= 0 && cols.price >= 0) { hi = i; c = cols; break; }
   }
-  if (hi < 0) return { trades: [], note: "No tradebook columns found. Use Zerodha Console → Reports → Tradebook (Equity and Mutual funds) and download CSV." };
+  if (hi < 0) return { trades: [], note: "No tradebook columns found. Zerodha: Console → Reports → Tradebook (Equity), download CSV. Dhan: connect it on Integrations and use ⟳ Get Dhan trades, or download the trade history from web.dhan.co. Any CSV with symbol or ISIN, date, buy/sell, quantity and price works." };
   const trades = [], skipped = { fno: 0, bad: 0 };
   for (const r of rows.slice(hi + 1)) {
     const seg = c.segment >= 0 ? String(r[c.segment] || "").toUpperCase() : "";
-    if (/FO|CDS|MCX|COM/.test(seg)) { skipped.fno++; continue; }
+    if (/FO|FNO|CDS|CUR|MCX|COM/.test(seg)) { skipped.fno++; continue; }
     const type = String(r[c.type] || "").trim().toLowerCase(), date = dayOf(r[c.date]), qty = num(r[c.qty]), price = num(r[c.price]);
     const side = /^(b|buy|purchase)/.test(type) ? "buy" : /^(s|sell|redemption|redeem)/.test(type) ? "sell" : null;
     const symbol = c.symbol >= 0 ? String(r[c.symbol] || "").trim().toUpperCase().replace(/-(EQ|BE|BZ|SM|ST)$/, "") : "";
     const isin = c.isin >= 0 ? String(r[c.isin] || "").trim().toUpperCase() : "";
     if (!side || !date || !(qty > 0) || !(price >= 0) || (!symbol && !isin)) { if (r.some(x => String(x || "").trim())) skipped.bad++; continue; }
-    trades.push({ key: isin || symbol, symbol: symbol || null, isin: isin || null, date, side, qty, price });
+    const prod = c.product >= 0 ? String(r[c.product] || "").trim().toUpperCase() : "";
+    trades.push({ key: isin || symbol, symbol: symbol || null, isin: isin || null, date, side, qty, price, ...(/^(MIS|INTRADAY|I)$/.test(prod) ? { product: "MIS" } : {}) });
   }
   return { trades, skipped, note: null };
 }
@@ -51,20 +52,36 @@ export function mergeTrades(saved = [], incoming = []) {
   return out.sort((a, b) => a.date.localeCompare(b.date) || (a.side === "buy" ? -1 : 1));
 }
 
-// FIFO: open lots per instrument and gains realised by each sell.
+// FIFO per demat account (the tax rule: oldest shares in that account go first) and gains realised by each sell.
+// A buy and a sell of the same stock on the same day in one account are intraday (speculative business income, taxed
+// at your slab rate, losses offset only other intraday gains): they are matched with each other first, at the day's
+// average prices. Lots of one stock from all accounts are returned together (for the holdings table).
 export function fifo(trades) {
-  const lots = new Map(), realised = [];
-  for (const t of [...trades].sort((a, b) => a.date.localeCompare(b.date) || (a.side === "buy" ? -1 : 1))) {
-    const q = lots.get(t.key) || []; lots.set(t.key, q);
-    if (t.side === "buy") { q.push({ date: t.date, qty: t.qty, price: t.price, symbol: t.symbol, isin: t.isin }); continue; }
-    let left = t.qty;
+  const books = new Map(), realised = [], groups = new Map();
+  for (const t of trades) { const g = `${t.account || ""}\u0000${t.key}\u0000${t.date}`; (groups.get(g) || groups.set(g, []).get(g)).push(t); }
+  const order = [...groups.entries()].sort((a, b) => a[1][0].date.localeCompare(b[1][0].date));
+  for (const [, day] of order) {
+    const t0 = day[0], bk = `${t0.account || ""}\u0000${t0.key}`, q = books.get(bk) || []; books.set(bk, q);
+    const buys = day.filter(t => t.side === "buy"), sells = day.filter(t => t.side === "sell");
+    const bq = buys.reduce((a, t) => a + t.qty, 0), sq = sells.reduce((a, t) => a + t.qty, 0);
+    const bAvg = bq ? buys.reduce((a, t) => a + t.qty * t.price, 0) / bq : 0, sAvg = sq ? sells.reduce((a, t) => a + t.qty * t.price, 0) / sq : 0;
+    const charges = day.reduce((a, t) => a + (Number.isFinite(t.charges) ? t.charges : 0), 0), known = day.every(t => Number.isFinite(t.charges));
+    const sym = day.find(t => t.symbol)?.symbol || null, isin = day.find(t => t.isin)?.isin || null, acc = t0.account || null;
+    const intra = Math.min(bq, sq), share = q2 => (bq + sq ? (q2 / (bq + sq)) : 0);
+    if (intra > 1e-9) realised.push({ key: t0.key, account: acc, symbol: sym, isin, buyDate: t0.date, sellDate: t0.date, qty: intra, buy: bAvg, sell: sAvg, gain: (sAvg - bAvg) * intra, long: false, intraday: true, charges: known ? charges * share(2 * intra) : null });
+    if (bq - intra > 1e-9) q.push({ date: t0.date, qty: bq - intra, price: bAvg, symbol: sym, isin, account: acc, charges: known ? charges * share(bq - intra) / (bq - intra) : null });
+    let left = sq - intra; const sellCh = known ? charges * share(sq - intra) : null;
     while (left > 1e-9 && q.length) {
       const lot = q[0], used = Math.min(lot.qty, left);
-      realised.push({ key: t.key, symbol: t.symbol || lot.symbol, isin: t.isin || lot.isin, buyDate: lot.date, sellDate: t.date, qty: used, buy: lot.price, sell: t.price, gain: (t.price - lot.price) * used, long: isLong(lot.date, t.date) });
+      realised.push({ key: t0.key, account: acc, symbol: sym || lot.symbol, isin: isin || lot.isin, buyDate: lot.date, sellDate: t0.date, qty: used, buy: lot.price, sell: sAvg, gain: (sAvg - lot.price) * used, long: isLong(lot.date, t0.date),
+        charges: sellCh !== null && lot.charges !== null ? sellCh * used / (sq - intra) + lot.charges * used : null });
       lot.qty -= used; left -= used; if (lot.qty <= 1e-9) q.shift();
     }
-    if (left > 1e-9) realised.push({ key: t.key, symbol: t.symbol, isin: t.isin, buyDate: null, sellDate: t.date, qty: left, buy: null, sell: t.price, gain: null, long: null, unmatched: true });
+    if (left > 1e-9) realised.push({ key: t0.key, account: acc, symbol: sym, isin, buyDate: null, sellDate: t0.date, qty: left, buy: null, sell: sAvg, gain: null, long: null, unmatched: true, charges: null });
   }
+  const lots = new Map();
+  for (const [bk, q] of books) { const key = bk.split("\u0000")[1], all = lots.get(key) || []; all.push(...q); lots.set(key, all); }
+  for (const q of lots.values()) q.sort((a, b) => a.date.localeCompare(b.date));
   return { lots, realised };
 }
 
@@ -81,7 +98,8 @@ export function taxFor({ stGain = 0, stLoss = 0, ltGain = 0, ltLoss = 0 }) {
 export function taxView({ trades = [], holdings = [], today }) {
   const fy = fyOf(today), { lots, realised } = fifo(trades);
   const symToKey = new Map(); for (const t of trades) if (t.symbol && !symToKey.has(t.symbol)) symToKey.set(t.symbol, t.key);
-  const thisYear = realised.filter(r => r.sellDate >= fy.from && r.sellDate <= fy.to && !r.unmatched);
+  const fyAll = realised.filter(r => r.sellDate >= fy.from && r.sellDate <= fy.to && !r.unmatched), thisYear = fyAll.filter(r => !r.intraday);
+  const intraday = Math.round(fyAll.filter(r => r.intraday).reduce((a, r) => a + r.gain, 0));
   const sumIf = f => thisYear.filter(f).reduce((a, r) => a + r.gain, 0);
   const realisedFy = { stGain: sumIf(r => !r.long && r.gain > 0), stLoss: -sumIf(r => !r.long && r.gain < 0), ltGain: sumIf(r => r.long && r.gain > 0), ltLoss: -sumIf(r => r.long && r.gain < 0) };
   const taxNow = taxFor(realisedFy);
@@ -135,7 +153,7 @@ export function taxView({ trades = [], holdings = [], today }) {
   const sum = k => rows.reduce((a, r) => a + r[k], 0);
   return {
     rules: TAX_RULES, fy, today, tradeCount: trades.length,
-    realised: { ...Object.fromEntries(Object.entries(realisedFy).map(([k, v]) => [k, Math.round(v)])), ...taxNow, trades: thisYear.length, unmatchedSells: realised.filter(r => r.unmatched && r.sellDate >= fy.from).length },
+    realised: { ...Object.fromEntries(Object.entries(realisedFy).map(([k, v]) => [k, Math.round(v)])), ...taxNow, trades: thisYear.length, intraday, intradayTrades: fyAll.length - thisYear.length, unmatchedSells: realised.filter(r => r.unmatched && r.sellDate >= fy.from).length },
     unrealised: { lt: Math.round(sum("ltGain")), st: Math.round(sum("stGain")), unknown: Math.round(sum("unknownGain")), mismatches: rows.filter(r => r.mismatch).length },
     rows: rows.sort((a, b) => b.value - a.value),
     ideas: { harvestGains, harvestGainsTotal: Math.round(harvestGains.reduce((a, x) => a + x.gain, 0)), taxSavedLater: Math.round(harvestGains.reduce((a, x) => a + x.gain, 0) * TAX_RULES.ltRate), harvestLosses: harvestLosses.slice(0, 15), waitToSell }

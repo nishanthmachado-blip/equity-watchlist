@@ -498,6 +498,30 @@ export function editHeldBuy(p, { date, price, newQty, newPrice, newDate, remove 
   return { position: setLots(p, all.map(l => ({ qty: l.qty, price: l.price, date: String(l.at).slice(0, 10) })), now), costChange: r2(newCost - oldCost), keepAt: all };
 }
 // Edit a sale's price / date (a typo when recording it): P/L follows; returns the change in money received.
+// Fix the price / date of a buy that was already sold (a typo when you added it): every closed trade holding shares from
+// that buy (same day, same price) gets the new lot price; its average buy price, P/L and holding period follow.
+// Quantities stay (they were sold); to change those, reopen the trade. Returns the trades and the change in cost.
+export function editSoldBuy(closed = [], { symbol, date, price, newPrice, newDate }, now = new Date()) {
+  const np = parsePrice(newPrice); if (!(np > 0)) throw new Error("Enter the buy price.");
+  const day = String(date || "").slice(0, 10), pr = Number(price), nd = newDate ? String(newDate).slice(0, 10) : day;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nd)) throw new Error("Pick the date you bought.");
+  if (nd > String(now.toISOString()).slice(0, 10)) throw new Error("The buy date can't be in the future.");
+  const match = l => String(l.at || "").slice(0, 10) === day && Math.abs(l.price - pr) < 0.005;
+  let costChange = 0, touched = 0; const ids = [];
+  const trades = closed.map(t => {
+    if (t.symbol !== symbol) return t;
+    const lots = Array.isArray(t.lots) && t.lots.length ? t.lots : [{ qty: t.qty, price: t.buyAvg, at: t.openedAt || t.closedAt }];
+    if (!lots.some(match)) return t;
+    if (nd > String(t.closedAt).slice(0, 10)) throw new Error(`The buy date can't be after the sale (${String(t.closedAt).slice(0, 10)}).`);
+    const at = nd === day ? null : tradeDate(nd, now);
+    const next = lots.map(l => { if (!match(l)) return { ...l }; costChange += (np - l.price) * l.qty; return { ...l, price: r2(np), ...(at ? { at } : {}) }; }).sort(byAt);
+    const buyAvg = r2(next.reduce((a, l) => a + l.qty * l.price, 0) / next.reduce((a, l) => a + l.qty, 0));
+    touched++; ids.push(t.id);
+    return { ...t, lots: next, buyAvg, openedAt: next[0].at, pnl: r2((t.sellPrice - buyAvg) * t.qty), pnlPct: r2((t.sellPrice / buyAvg - 1) * 100), editedAt: now.toISOString() };
+  });
+  if (!touched) throw new Error("That buy is no longer in your closed trades.");
+  return { trades, costChange: r2(costChange), touched, ids };
+}
 export function editSale(t, { newPrice, newDate }, now = new Date()) {
   const np = parsePrice(newPrice); if (!(np > 0)) throw new Error("Enter the sale price.");
   const closedAt = newDate && String(newDate).slice(0, 10) !== String(t.closedAt).slice(0, 10) ? tradeDate(newDate, now) : t.closedAt;

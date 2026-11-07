@@ -259,3 +259,52 @@ table.ex-ip{min-width:820px!important}.ex-ip input,.ex-ip select{margin:0!import
 .ex-inv .table-wrap{max-height:none}.ex-invact{width:130px}
 .ex-invt tr.ex-done td{opacity:1!important;text-decoration:none!important}.ex-invt tr.ex-done td:not(:first-child){color:var(--muted)}
 .ui-dlg table.ex-imp{min-width:0!important;width:100%!important;display:table}.ex-imp th,.ex-imp td{padding:8px!important;white-space:nowrap}
+
+/* ---------- Stock card: company info (stockinfo.js) ---------- */
+.si-box{margin-top:14px;display:grid;gap:12px}
+.si-sec{border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:var(--card-bg,#fff)}
+.si-sec h3{margin:0 0 8px;font-size:15px}.si-sec p{margin:4px 0;line-height:1.55}
+.si-sub{font-weight:700;font-size:12.5px;color:var(--muted);margin:10px 0 4px!important}
+.si-list{list-style:none;margin:0;padding:0}.si-list li{padding:6px 0;border-bottom:1px dashed var(--line);font-size:13.5px;line-height:1.45}.si-list li:last-child{border:0}
+.si-list li b{margin-right:6px;white-space:nowrap}.si-list li.si-order{background:rgba(31,157,85,.06)}
+.si-more summary{cursor:pointer;font-weight:600;font-size:13px;margin-top:6px}.si-more ul{margin:6px 0 0;padding-left:18px;font-size:13.5px;line-height:1.55}
+table.si-shp{min-width:560px!important}.si-shp th{text-transform:none!important;letter-spacing:0!important}.si-shp td,.si-shp th{padding:7px 8px!important}
+.si-line{font-size:13.5px}
+.si-funds{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:4px 14px}.si-funds li{display:flex;gap:8px;align-items:baseline;font-size:13px;border-bottom:1px dashed var(--line);padding:4px 0}.si-funds li span{flex:1}.si-funds small{color:var(--muted)}
+.si-press{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}.si-press h5{margin:4px 0;font-size:12.5px}.si-press ul{margin:0;padding-left:18px;font-size:13.5px;line-height:1.55}
+
+/* ---------- Opportunity fund (opportunity.js) ---------- */
+.op-head{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.op-big{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--line);border-radius:12px}.op-big span{font-size:12px;color:var(--muted);font-weight:600}.op-big strong{font-size:24px}.op-big small{font-size:12px;color:var(--muted)}
+.op-big.due{border-color:#d97706;background:rgba(217,119,6,.08)}
+.op-gauge{grid-column:1/-1;padding:22px 8px 18px}
+.op-track{position:relative;height:10px;border-radius:6px;background:linear-gradient(90deg,#d1fae5,#fde68a 45%,#fecaca)}
+.op-mark{position:absolute;top:-6px;width:2px;height:22px;background:#64748b;transform:translateX(-1px)}.op-mark b{position:absolute;top:24px;left:50%;transform:translateX(-50%);font-size:11px;white-space:nowrap;font-weight:700;color:var(--muted)}
+.op-mark.hit{background:#c0392b}.op-mark.hit b{color:#c0392b}
+.op-now{position:absolute;top:-9px;width:14px;height:28px;border-radius:7px;background:var(--navy,#1f2460);transform:translateX(-7px);box-shadow:0 0 0 3px #fff}.op-now em{position:absolute;bottom:32px;left:50%;transform:translateX(-50%);font-style:normal;font-size:11.5px;font-weight:800;white-space:nowrap}
+table.op-table{min-width:560px!important}.op-table th{text-transform:none!important;letter-spacing:0!important}.op-table tr.op-hit td{background:rgba(192,57,43,.06)}.op-table tr.op-old td{opacity:.6}
+.op-list{list-style:none;margin:0;padding:0}.op-list li{display:flex;gap:12px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)}.op-list li>div{flex:1}.op-list strong{font-size:16px;white-space:nowrap}
+.op-deploy{border-color:#d97706}
+.op-set summary{cursor:pointer;display:flex;gap:10px;flex-wrap:wrap;align-items:baseline}
+.op-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px;margin:12px 0}.op-form .ui-field{margin:0}
+.op-btns{display:flex;gap:8px;flex-wrap:wrap}
+/* What to do now: market-move playbook */
+.pb.rally{border-color:#1f9d55}.pb.fall{border-color:#c0392b}
+.pb-money{margin:6px 0 10px;padding-left:20px;line-height:1.6;font-size:13.5px}
+.pb-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px}
+.pb-col{border:1px solid var(--line);border-radius:12px;padding:10px 12px}.pb-col h4{margin:0 0 2px;font-size:14px}.pb-col>p{margin:0 0 6px;font-size:12px}
+.pb-col ul{list-style:none;margin:0;padding:0}.pb-col li{padding:6px 0;border-bottom:1px dashed var(--line);cursor:pointer;font-size:13.5px}.pb-col li:last-child{border:0}
+.pb-why{font-size:12px;color:var(--muted);margin-top:2px}.pb-calm{margin:4px 0 10px}
+/* Tax view: P&L across all brokers */
+.pn{margin:12px 0 16px}.pn-head{flex-wrap:wrap;gap:8px}.pn-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.pn-tools select{width:auto;min-width:120px}
+.pn-tools a.btnlike{background:var(--btn-bg);border:1px solid var(--btn-border);color:var(--ink);padding:6px 12px;font-size:12px;border-radius:999px;text-decoration:none;font-weight:600}
+.pn-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:10px 0 12px}
+.pn-cards>div{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}.pn-cards span{font-size:12px;color:var(--muted)}.pn-cards strong{font-size:20px}.pn-cards small{font-size:11.5px;color:var(--muted)}
+table.pn-table{min-width:0!important;width:100%;font-size:13px}table.pn-table td,table.pn-table th{padding:7px 8px!important}.pn-total td{border-top:2px solid var(--line);background:var(--pill-bg)}
+.pn-tax{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin:12px 0}.pn-holder{border:1px solid var(--line);border-radius:12px;padding:10px 12px}.pn-holder h4{margin:0 0 6px}.pn-holder p{margin:3px 0;font-size:13.5px}
+.pn-who{border:1px dashed var(--line);border-radius:12px;padding:10px 12px}.pn-who summary{cursor:pointer;font-weight:600}.pn-who .ui-field{margin:6px 0}
+.pn-sub{margin:14px 0 6px}.pn-months{display:flex;gap:6px;align-items:flex-end;overflow-x:auto;padding:4px 0}
+.pn-mo{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:44px;font-size:11px}.pn-mo i{display:block;width:22px;border-radius:4px 4px 0 0}.pn-mo i.up{background:#1f9d55}.pn-mo i.dn{background:#c0392b}.pn-mo span{color:var(--muted)}
+.pn-filter{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px}.pn-filter .ui-input{width:auto;min-width:130px}
+.chip.pn-stcg{background:#fff4e0;color:#9a5b00}.chip.pn-ltcg{background:#e3f6ea;color:#17703d}.chip.pn-intraday{background:#e8eefc;color:#2747a8}.chip.pn-no{background:#fde8e8;color:#a12a2a}
+@media (max-width:640px){.pn-trades th:nth-child(3),.pn-trades td:nth-child(3),.pn-trades th:nth-child(5),.pn-trades td:nth-child(5){display:none}}

@@ -66,7 +66,7 @@
     $("#nwRows").innerHTML = lines.length ? lines.map(l => {
       const c = catOf(l.category), gain = Number.isFinite(l.invested) && l.invested > 0 ? l.value - l.invested : null;
       return `<tr class="${l.kind}" data-id="${esc(l.id)}">
-        <td><div class="company">${esc(l.name)}</div><div class="ticker">${c.icon} ${esc(c.label)}${l.owner ? ` · ${esc(l.owner)}` : ""}${l.note ? ` · ${esc(l.note)}` : ""}</div></td>
+        <td><div class="company">${esc(l.name)}</div><div class="ticker">${c.icon} ${esc(c.label)}${l.owner ? ` · ${esc(l.owner)}` : ""}${l.note ? ` · ${esc(l.note)}` : ""}${l.recurring?.monthly ? ` · <span class="nw-recchip" title="Added by itself on day ${l.recurring.day} of every month${l.auto?.months ? `; ${full(l.auto.added)} added so far${l.auto.interest ? ` + ${full(l.auto.interest)} interest` : ""}` : ""}">↻ +${short(l.recurring.monthly)}/mo</span>` : ""}</div></td>
         <td class="num">${l.kind === "liability" ? "−" : ""}${full(l.value)}</td>
         <td class="num">${Number.isFinite(l.invested) ? full(l.invested) : "—"}</td>
         <td class="num ${gain === null ? "" : gain >= 0 ? "buy" : "avoid"}">${gain === null ? "—" : `${signed(gain)} <small>${Math.round(gain / l.invested * 1000) / 10}%</small>`}</td>
@@ -128,6 +128,12 @@
         <label class="ui-field"><span>Name</span><input class="ui-input" name="name" placeholder="e.g. EPF (employer), SBI PPF, Flat in Whitefield" value="${esc(item?.name || "")}"></label>
         <label class="ui-field"><span data-vlabel>Current value (₹)</span><input class="ui-input" name="value" inputmode="decimal" placeholder="e.g. 850000" value="${item?.value ?? ""}" autofocus></label>
         <label class="ui-field" data-asset-only><span>Amount invested (₹, optional)</span><input class="ui-input" name="invested" inputmode="decimal" placeholder="what you put in, for gain %" value="${item?.invested ?? ""}"></label>
+        <fieldset class="nw-rec" data-asset-only><legend>↻ Adds every month (EPF, PPF, RD, VPF…)</legend>
+          <label class="ui-field"><span>Monthly contribution (₹)</span><input class="ui-input" name="monthly" inputmode="decimal" placeholder="e.g. 37000 · empty = none" value="${item?.recurring?.monthly ?? ""}"></label>
+          <label class="ui-field"><span>On day of the month</span><input class="ui-input" name="day" inputmode="numeric" placeholder="1" value="${item?.recurring?.day ?? ""}"></label>
+          <label class="ui-field"><span>Interest % a year</span><input class="ui-input" name="rate" inputmode="decimal" data-rate-ph placeholder="typical" value="${item?.recurring?.rate ?? ""}"></label>
+          ${item?.auto?.months ? `<p class="ui-hint">Includes ${full(item.auto.added)} added on its own over ${item.auto.months} month${item.auto.months === 1 ? "" : "s"}${item.auto.interest ? ` and ${full(item.auto.interest)} interest` : ""} since ${esc(new Date(item.auto.since).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }))}. Saving restarts from the value above, so you can correct it from your passbook any time.</p>` : '<p class="ui-hint">The value above is today\'s balance; from next month the contribution (and interest) is added by itself, and Bucket strategy / Till you retire use it. Correct the value from your passbook any time.</p>'}
+        </fieldset>
         <label class="ui-field"><span>Owner (optional)</span><input class="ui-input" name="owner" placeholder="e.g. Self, Spouse, Joint" value="${esc(item?.owner || "")}"></label>
         <label class="ui-field"><span>Note (optional)</span><input class="ui-input" name="note" placeholder="e.g. UAN 1234…, matures 2031" value="${esc(item?.note || "")}"></label>
         <label class="ui-field" data-mf-only><span>X-ray portfolio (for the look-through)</span><select class="ui-input" name="fundId">${fundOpts(item?.fundId)}</select></label>
@@ -136,7 +142,8 @@
         const sel = box.querySelector("[name=category]");
         const sync = () => {
           const id = sel.value, liab = isLiab(id), c = catOf(id);
-          box.querySelector("[data-asset-only]").hidden = liab; box.querySelector("[data-mf-only]").hidden = id !== "mf";
+          box.querySelectorAll("[data-asset-only]").forEach(x => { x.hidden = liab; }); box.querySelector("[data-mf-only]").hidden = id !== "mf";
+          box.querySelector("[data-rate-ph]").placeholder = { epf: "8.25 (typical)", ppf: "7.1 (typical)", nps: "10 (typical)", fd: "7 (typical)", bonds: "7.5 (typical)" }[id] || "0";
           box.querySelector("[data-vlabel]").textContent = liab ? "Outstanding amount (₹)" : "Current value (₹)";
           box.querySelector("[data-hint]").textContent = c.hint || (id === "epf" ? "Use the balance on the EPFO passbook (employee + employer share)." : id === "nps" ? "Use the current value from your NPS statement (CRA app)." : id === "ppf" ? "Use the balance in your PPF passbook / net banking." : liab ? "Enter what you still owe today." : "");
         };
@@ -144,7 +151,7 @@
       },
       collect: async box => {
         const v = n => box.querySelector(`[name=${n}]`).value;
-        const out = await api("/api/networth/item", { id: item?.id, category: v("category"), name: v("name"), value: v("value"), invested: isLiab(v("category")) ? null : v("invested"), owner: v("owner"), note: v("note"), fundId: v("category") === "mf" ? v("fundId") : null });
+        const out = await api("/api/networth/item", { id: item?.id, category: v("category"), name: v("name"), value: v("value"), invested: isLiab(v("category")) ? null : v("invested"), owner: v("owner"), note: v("note"), fundId: v("category") === "mf" ? v("fundId") : null, ...(isLiab(v("category")) ? {} : { monthly: v("monthly"), day: v("day"), rate: v("rate") }) });
         return out;
       }
     });

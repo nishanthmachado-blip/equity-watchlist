@@ -265,11 +265,17 @@
           ${row("Source · data age", `${esc(r.source || "—")} · ${r.ageDays === null || r.ageDays === undefined ? "—" : r.ageDays + "d"}${r.stale ? " ⚠ stale" : ""}`)}`}</div>
       </div>
       <div id="vsExtras" class="vs-extras"><p class="hint">Loading dividend, trend and peer data…</p></div>
+      <div id="vsInfo" class="si-box"></div>
       <div class="toolbar" style="margin:16px 0 0"><button type="button" class="ghost" id="vsListBtn"></button><button type="button" class="ghost" id="vsRefetch">Refresh data</button><button type="button" class="ghost" id="vsOpenTable">Open in Valuation table</button><button type="button" class="ghost ai-btn" data-ask-ai="Is ${esc(r.symbol)} a buy at today's price for me? Use its valuation, buy zone, trend and upcoming events, what I already hold, and say: buy now, wait for a level (which), or avoid. If buying, how much and where is the stop?" data-ask-sym="${esc(r.symbol)}" data-ask-where="Value a stock">✨ Ask AI: buy ${esc(r.symbol)}?</button></div>
       <p class="vs-fine">${r.etf ? "ETFs have no earnings: the zone is where the price has been cheapest against its own 200-day average over the past years (bottom 20%), and fair value is its typical (median) level. Not a forecast or investment advice." : ""}${r.etf ? "" : `Value = priced at or under ~1.15× the model's fair multiple. Growth = passes all growth, return-on-capital, balance-sheet and cash-flow gates. Buy = price within the model's buy zone. A rule-based screen from public data (Screener / Yahoo / NSE), not a forecast or investment advice; check the reasons and the data age.`}</p>
     </article>`;
     loadExtras(r.symbol);
     renderGrowthLens(r);
+    if (!r.etf) { // company details, news, FII / DII: script and styles load the first time a card opens
+      const go = () => window.loadStockInfo(r.symbol, r.company);
+      if (typeof window.loadStockInfo === "function") go();
+      else if (!document.getElementById("stockInfoJs")) { if (!document.getElementById("screensCss")) { const l = document.createElement("link"); l.id = "screensCss"; l.rel = "stylesheet"; l.href = "screens.css"; document.head.appendChild(l); } const sc = document.createElement("script"); sc.id = "stockInfoJs"; sc.src = "stockinfo.js"; sc.onload = go; document.head.appendChild(sc); }
+    }
     const lb = $("#vsListBtn"), paintListBtn = () => { const l = lists.find(x => x.id === editListId()), inL = !!(l && l.symbols.includes(symKey(r.symbol))); lb.textContent = inL ? `✓ In “${l.name}” (remove)` : `+ Add to “${l?.name || "watchlist"}”`; lb.dataset.in = inL ? "1" : ""; };
     paintListBtn();
     lb.onclick = async () => { lb.disabled = true; try { await post("/api/lists/members", { id: editListId(), [lb.dataset.in ? "remove" : "add"]: [symKey(r.symbol)] }); await loadLists(); redrawAll(); paintListBtn(); } catch (e) { lb.textContent = `Failed: ${e.message}`; } finally { lb.disabled = false; } };

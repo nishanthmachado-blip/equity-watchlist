@@ -28,7 +28,7 @@ export const INDMONEY_ROOT = "https://api.indstocks.com"; // INDmoney's Indian-s
 export const READ_ONLY_ROUTES = Object.freeze({
   angel: Object.freeze(["POST /rest/auth/angelbroking/user/v1/loginByPassword", "GET /rest/secure/angelbroking/user/v1/getProfile", "GET /rest/secure/angelbroking/portfolio/v1/getAllHolding",
     "POST /rest/secure/angelbroking/market/v1/quote/", "POST /rest/secure/angelbroking/historical/v1/getCandleData"]), // market data: read-only quotes and daily candles
-  dhan: Object.freeze(["POST /app/generateAccessToken", "GET /v2/profile", "GET /v2/holdings", "POST /v2/marketfeed/ltp"]),
+  dhan: Object.freeze(["POST /app/generateAccessToken", "GET /v2/profile", "GET /v2/holdings", "POST /v2/marketfeed/ltp", "GET /v2/trades"]), // /v2/trades/{from}/{to}/{page}: past trades (read-only)
   groww: Object.freeze(["POST /v1/token/api/access", "GET /v1/user/detail", "GET /v1/holdings/user", "GET /v1/live-data/ltp"]),
   indmoney: Object.freeze(["GET /user/profile", "GET /portfolio/holdings"])
 });
@@ -129,6 +129,22 @@ export function normalizeAngelHoldings(json) {
   if (!list) throw new BrokerError("Unrecognised holdings response from Angel One.");
   // `quantity` may or may not include unsettled T1 shares depending on the day; realised + T1 covers both cases.
   return keep(list.map(h => makeHolding({ symbol: h.tradingsymbol, exchange: h.exchange, isin: h.isin, qty: Math.max(num(h.quantity) || 0, (num(h.realisedquantity) || 0) + (num(h.t1quantity) || 0)), avg: h.averageprice, last: h.ltp, pnl: null, close: h.close })));
+}
+// Dhan /v2/trades rows → tradebook trades (equity cash segment only), with Dhan's own charges per trade.
+export function normalizeDhanTrades(list = []) {
+  const n = v => { const x = Number(v); return Number.isFinite(x) ? x : 0; }, out = [], seen = new Set();
+  for (const t of list) {
+    if (!t || (t.instrument && t.instrument !== "EQUITY") || !/_EQ$/.test(String(t.exchangeSegment || "NSE_EQ"))) continue;
+    const id = String(t.exchangeTradeId || ""), key0 = `${t.orderId}|${id}|${t.tradedQuantity}|${t.tradedPrice}`; if (seen.has(key0)) continue; seen.add(key0);
+    const side = /^BUY/i.test(t.transactionType) ? "buy" : /^SELL/i.test(t.transactionType) ? "sell" : null;
+    const date = String(t.exchangeTime || t.updateTime || t.createTime || "").match(/\d{4}-\d{2}-\d{2}/)?.[0];
+    const qty = n(t.tradedQuantity), price = n(t.tradedPrice), isin = String(t.isin || "").trim().toUpperCase() || null;
+    const symbol = String(t.tradingSymbol || t.customSymbol || "").trim().toUpperCase().replace(/-(EQ|BE)$/, "") || null;
+    if (!side || !date || !(qty > 0) || !(price > 0) || (!symbol && !isin)) continue;
+    const charges = Math.round((n(t.sebiTax) + n(t.stt) + n(t.brokerageCharges) + n(t.serviceTax) + n(t.exchangeTransactionCharges) + n(t.stampDuty)) * 100) / 100;
+    out.push({ key: isin || symbol, symbol, isin, date, side, qty, price, charges, ...(t.productType === "INTRADAY" ? { product: "MIS" } : {}), src: "dhan-api" });
+  }
+  return out;
 }
 export function normalizeDhanHoldings(json) {
   const list = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : null;
@@ -330,6 +346,18 @@ export function createBrokerClients({ env = process.env, fetchImpl = fetch, sess
         for (const seg of Object.values(j?.data || {})) for (const [id, q] of Object.entries(seg || {})) if (num(q?.last_price)) prices.set(`#${id}`, num(q.last_price));
         return { holdings: applyPrices(holdings, prices), priceNote: null };
       } catch (e) { return { holdings, priceNote: `Dhan returned no prices (${e.message}); the watchlist price is used where available. Live quotes need Dhan's Data API plan.` }; }
+    },
+    // Past trades (equity only) between two days, all pages. Dhan returns at most a page at a time; stop at an empty page.
+    async trades(from, to) {
+      const s = await dhanSession(); if (!s) throw needLogin("dhan");
+      const out = [];
+      for (let page = 0; page < 60; page++) {
+        const r = await request("dhan", "GET", R.dhan, "/v2/trades", { headers: dhanHeaders(s), query: `/${from}/${to}/${page}` });
+        if (!r.ok || r.json?.errorCode) { if (/no (trade|record|data)/i.test(brokerMessage(r.json, r.text) || "")) break; throw fail("dhan", r, { loginCodes: DHAN_LOGIN_CODES }); }
+        const list = Array.isArray(r.json) ? r.json : Array.isArray(r.json?.data) ? r.json.data : [];
+        if (!list.length) break; out.push(...list); if (list.length < 20) break;
+      }
+      return normalizeDhanTrades(out);
     },
     forget: () => setSession("dhan", null)
   };

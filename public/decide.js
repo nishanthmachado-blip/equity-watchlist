@@ -46,7 +46,18 @@
         <td><span class="dc-lane l-${r.lane}">${LANES[r.lane][0]} ${esc(LANES[r.lane][1])}</span></td><td class="kpi">${esc(r.action)}</td><td>${bar(r.quality, "q")}</td><td>${bar(r.value, "v")}</td><td class="range">${zone(r)}</td><td>${trend(r)}</td>
         <td class="kpi">${r.why.map(t => `<span class="fc-plus">+ ${esc(t)}</span>`).join(" ")} ${r.against.map(t => `<span class="fc-minus">− ${esc(t)}</span>`).join(" ")}</td></tr>`).join("")}</tbody></table></div></section>`;
     const notes = `<p class="vs-fine">How the call is made: <b>Quality</b> (0–100) scores returns on capital, growth, debt, cash conversion and promoter holding; ≥ ${d.rules.goodQuality} is a long-term keeper. <b>Value</b> compares the price with the fair value; ≥ ${d.rules.fairValue}, or within ${d.rules.nearZonePct}% of the buy zone, is a fair price. A good business at a fair price is a long-term buy; at a higher price, wait. A chart setup on a stock that isn't a keeper is a swing trade, not an investment. Trim / exit comes from Holdings clean-up. Trend and strength vs Nifty come from the daily swing scan${d.scanAt ? ` (last run ${new Date(d.scanAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })})` : ""}. Rule-based on saved data, not advice: check the latest results before you buy.</p>`;
-    $("#dcBody").innerHTML = head + tops + tips + table + notes;
+    const pb = d.playbook, mv = pb?.move, pct = v => (fin(v) ? `${v > 0 ? "+" : ""}${v}%` : "—");
+    const pbList = (title, hint, list, line) => `<div class="pb-col"><h4>${title}</h4><p class="hint">${hint}</p>${list.length ? `<ul>${list.map(r => `<li data-sym="${esc(r.symbol)}"><b>${esc(r.name)}</b> <span class="hint">${px(r.price)}${fin(r.d5) ? ` · ${pct(r.d5)} in 5 days` : ""}</span><div class="pb-why">${line(r)}</div></li>`).join("")}</ul>` : '<p class="hint">None in your list right now.</p>'}</div>`;
+    const play = pb && pb.kind !== "normal" ? `<section class="report-card pb ${pb.kind}"><h3>${pb.kind === "rally" ? "🚀 The market just ran up" : "📉 The market just fell"}: what to do <span class="hint">Nifty ${pct(mv?.d1)} today · ${pct(mv?.d2)} in 2 days · ${pct(mv?.d5)} in 5 days</span></h3>
+      <ol class="pb-money">${pb.money.map(t => `<li>${esc(t)}</li>`).join("")}</ol>
+      <div class="pb-grid">
+        ${pbList("🟢 Still at a fair price", "Good businesses that haven't run with the market: the place for new money", pb.laggards, r => esc(r.action || ""))}
+        ${pbList("⚡ Swing: breakouts", "Riding the move: smaller size, stop set on day one", pb.breakouts, r => r.swing ? `${esc(r.swing.label)}: entry ${px(r.swing.entry)}, stop ${px(r.swing.stop)}, target ${px(r.swing.t1)}` : "")}
+        ${pbList("💰 Book some profit", "Holdings now well above their buy zone: sell 20–30%, keep the rest", pb.book, r => `${fin(r.pnlPct) ? `up ${r.pnlPct}% on your cost · ` : ""}${fin(r.awayPct) && r.awayPct > 0 ? `${r.awayPct}% above the buy zone` : "priced high for its earnings"}`)}
+        ${pbList("✋ Don't chase", "Stocks you like that just jumped: wait for the price", pb.chase, r => fin(r.zoneHigh) ? `wait for ${px(r.zoneHigh)} or lower (${r.awayPct}% away)` : "wait for a better price")}
+      </div></section>`
+      : pb?.move ? `<p class="hint pb-calm">Nifty ${pct(mv.d2)} in 2 days, ${pct(mv.d5)} in 5 days: no sharp move. If the market runs up or falls fast, a playbook for that day appears here.</p>` : "";
+    $("#dcBody").innerHTML = head + play + tops + tips + table + notes;
   }
   const init = () => {
     const v = $("#dcView"); if (!v) return;

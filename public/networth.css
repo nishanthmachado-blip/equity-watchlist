@@ -211,7 +211,7 @@
 .sw-ideas-tools{align-items:center;gap:12px;margin:6px 0 12px}.sw-ideas-tools select{width:auto;min-width:170px;padding:7px 10px;font-size:13.5px}
 .sw-ideas-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
 .sw-idea{border:1px solid var(--line);border-radius:14px;padding:14px 14px 12px;background:var(--card-bg,#fff);display:flex;flex-direction:column;gap:10px;border-top:4px solid var(--ix,#2f6fed)}
-.sw-idea.s-breakout{border-top-color:#8b5cf6}.sw-idea.s-pullback{border-top-color:#2f6fed}.sw-idea.s-bounce{border-top-color:#f59e0b}.sw-idea.s-value{border-top-color:var(--good)}
+.sw-idea.s-breakout{border-top-color:#8b5cf6}.sw-idea.s-pullback{border-top-color:#2f6fed}.sw-idea.s-bounce{border-top-color:#f59e0b}.sw-idea.s-value{border-top-color:var(--good)}.ia-list{display:grid;gap:6px;margin:8px 0 12px}.sw-idea.s-cup{border-top-color:#b45309}.sw-idea.s-momentum{border-top-color:#0d9488}
 .sw-idea-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.sw-more{grid-column:1/-1;justify-self:center}
 .sw-score-pill{display:flex;flex-direction:column;align-items:center;min-width:52px;padding:4px 8px;border-radius:12px;background:var(--mute-bg)}.sw-score-pill b{font-size:20px;line-height:1.1}.sw-score-pill span{font-size:10.5px;color:var(--muted)}
 .sw-setup{font-weight:800;font-size:13.5px}
@@ -833,3 +833,10 @@ td.co-has-logo>.co-logo{left:10px;top:10px}
 .lp-fu{animation:lpUp 1.2s ease-out;border-radius:4px}.lp-fd{animation:lpDn 1.2s ease-out;border-radius:4px}
 .lp-up{color:var(--good,#1f9d55)}.lp-dn{color:var(--bad,#c0392b)}
 @media (prefers-reduced-motion:reduce){.lp-fu,.lp-fd{animation:none}}
+/* the chart library lays itself out with a <table>: keep the app's table / cell styles off it (they pushed the price axis out of view) */
+#chCanvas table,#chCanvas tr,#chCanvas td,#chCanvas th{padding:0!important;margin:0!important;border:0!important;background:transparent!important;min-width:0!important;max-width:none!important;border-spacing:0!important;line-height:normal!important;cursor:default;box-shadow:none!important}
+#chCanvas tbody tr:hover{background:transparent!important}
+.nw-rec{border:1px dashed var(--line);border-radius:12px;padding:8px 12px 4px;margin:4px 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px 12px;grid-column:1/-1}
+.nw-rec legend{font-size:12.5px;font-weight:700;padding:0 4px}.nw-rec .ui-hint{grid-column:1/-1;margin:2px 0 4px}
+.nw-recchip{color:var(--good,#1f9d55);font-weight:700;white-space:nowrap}
+.nw-form .nw-rec{grid-column:1/span 3!important;flex:1 1 100%;width:100%;box-sizing:border-box;grid-template-columns:repeat(3,minmax(0,1fr))}@media (max-width:560px){.nw-form .nw-rec{grid-template-columns:1fr}}

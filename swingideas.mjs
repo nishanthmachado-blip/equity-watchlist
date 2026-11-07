@@ -29,6 +29,39 @@ function atr(b, n = 14) {
   let a = tr.slice(0, n).reduce((s, x) => s + x, 0) / n; for (let i = n; i < tr.length; i++) a = (a * (n - 1) + tr[i]) / n; return a;
 }
 
+// Cup and handle (William O'Neil): after a run-up, a rounded 12–35% dip over 6 weeks to 7 months (the cup), a recovery
+// to within 5% of the old high, then a short, shallow pullback in the upper half of the cup (the handle, 1–5 weeks).
+// The buy point (pivot) is the handle's high. Returns the most recent cup that fits, or null.
+export function findCup(b) {
+  const n = b.length; if (n < 50) return null;
+  const H = i => b[i].h ?? b[i].c, L = i => b[i].l ?? b[i].c;
+  let best = null;
+  for (let li = Math.max(5, n - 180); li <= n - 35; li++) {
+    const lh = H(li); let peak = true;
+    for (let k = Math.max(0, li - 10); k <= Math.min(n - 1, li + 5); k++) if (k !== li && H(k) > lh) { peak = false; break; }
+    if (!peak) continue;
+    // the right rim: the highest point after the bottom, leaving 5–25 bars for the handle
+    let bi = li + 1; for (let k = li + 1; k < n - 5; k++) if (L(k) < L(bi)) bi = k;
+    const bottom = L(bi), depth = 1 - bottom / lh; if (depth < 0.12 || depth > 0.35) continue;
+    let ri = bi + 1; for (let k = bi + 1; k < n - 4; k++) if (H(k) >= H(ri)) ri = k;
+    if (ri >= n - 4) continue;
+    const rh = H(ri), cupLen = ri - li, handleLen = n - 1 - ri;
+    if (cupLen < 30 || cupLen > 160 || handleLen < 5 || handleLen > 25 || rh < lh * 0.95 || rh > lh * 1.05) continue;
+    const pos = (bi - li) / cupLen; if (pos < 0.2 || pos > 0.8) continue; // bottom roughly in the middle
+    let round = 0; for (let k = li; k <= ri; k++) if (L(k) <= bottom + 0.25 * (lh - bottom)) round++;
+    if (round < Math.max(8, cupLen * 0.3)) continue; // a U, not a V
+    // the handle: shallow and in the upper half of the cup; ideally on lighter volume
+    let hl = Infinity, hh = 0; for (let k = ri + 1; k < n; k++) { hl = Math.min(hl, L(k)); hh = Math.max(hh, H(k)); }
+    const handleDepth = 1 - hl / rh; if (handleDepth > 0.15 || handleDepth > depth * 0.6 || hl < bottom + 0.5 * (lh - bottom)) continue;
+    const pivot = Math.max(rh, ...b.slice(ri, n - 1).map((x, i) => H(ri + i)));
+    const vol = (from, to) => { const v = b.slice(from, to).map(x => x.v).filter(fin); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : null; };
+    const vCup = vol(li, ri + 1), vHandle = vol(ri + 1, n - 1);
+    best = { pivot: r2(pivot), left: r2(lh), bottom: r2(bottom), depthPct: r1(depth * 100), cupWeeks: Math.round(cupLen / 5), handleLow: r2(hl), handleDepthPct: r1(handleDepth * 100), handleDays: handleLen,
+      quietHandle: vCup && vHandle ? vHandle < vCup : null };
+  }
+  return best;
+}
+
 // One stock's indicator snapshot from ~1 year of daily bars ({ c, h, l, v } oldest first). niftyBars: same for the index.
 export function snapshot(bars, niftyBars = null) {
   const b = (bars || []).filter(x => x && fin(x.c) && x.c > 0);
@@ -42,7 +75,7 @@ export function snapshot(bars, niftyBars = null) {
     price: r2(price), prevClose: r2(prev), changePct: r2((price / prev - 1) * 100), bars: n,
     sma20: r2(sma(c, 20)), ema20: r2(e20s[n - 1]), sma50: r2(sma(c, 50)), sma200: r2(sma(c, 200)),
     rsi: r1(rsi(c)), rsiPrev: r1(rsi(c.slice(0, -1))), atr: r2(atr(b)),
-    v: 2, high52Prev: r2(hi(252, 1)), sma200Ago: r2(sma(c, 200, n - 20)), // 200-DMA 20 days ago: is it rising?
+    v: 3, high52Prev: r2(hi(252, 1)), sma200Ago: r2(sma(c, 200, n - 20)), // 200-DMA 20 days ago: is it rising?
     high20: r2(hi(20, 1)), low10: r2(lo(10)), low20: r2(lo(20)), high55: r2(hi(55, 1)), high52: r2(hi(252)), low52: r2(lo(252)),
     vol20: vol20 && Math.round(vol20), volRatio: vol20 && fin(volToday) ? r2(volToday / vol20) : null,
     turnoverCr: vol20 ? r2(vol20 * price / 1e7) : null,
@@ -50,6 +83,7 @@ export function snapshot(bars, niftyBars = null) {
     crossedAboveEma20: e20s.slice(-6).some((e, i, arr) => i > 0 && e && c[n - 6 + i - 1] < arr[i - 1] && c[n - 6 + i] > e) && price > e20s[n - 1]
   };
   s.atrPct = s.atr ? r2(s.atr / price * 100) : null;
+  s.cup = findCup(b);
   if (niftyBars?.length > 64) { const nc = niftyBars.filter(x => fin(x.c)).map(x => x.c), m = nc.length; s.niftyRet3m = r1((nc[m - 1] / nc[m - 64] - 1) * 100); if (fin(s.ret3m)) s.rs3m = r1(s.ret3m - s.niftyRet3m); }
   return s;
 }
@@ -59,7 +93,9 @@ const SETUP_INFO = {
   breakout: { label: "Breakout on volume", icon: "🚀", base: 60 },
   bounce: { label: "Oversold bounce", icon: "🪃", base: 48 },
   value: { label: "Value stock turning up", icon: "💎", base: 64 },
-  high52: { label: "52-week high breakout", icon: "🏔", base: 62 }
+  high52: { label: "52-week high breakout", icon: "🏔", base: 62 },
+  cup: { label: "Cup and handle", icon: "☕", base: 64 },
+  momentum: { label: "Momentum above 200-DMA", icon: "📈", base: 58 }
 };
 export { SETUP_INFO };
 
@@ -102,6 +138,23 @@ export function detectSetups(s, verdict = null) {
         `${r1((p / s.sma200 - 1) * 100)}% above a rising 200-day average (₹${s.sma200})`, `Volume ${s.volRatio}× the 20-day average · RSI ${s.rsi}`,
         "Stop under the breakout level: a close back below last year's high means it failed"]);
   }
+  // Cup and handle: breaking out of the handle (or within 3% under the buy point, to set an alert), above the 200-DMA
+  const C = s.cup;
+  if (C && fin(s.sma200) && p > s.sma200 && p >= C.pivot * 0.97 && p <= C.pivot * 1.05 && (p < C.pivot || s.volRatio >= 1.2)) {
+    const broke = p >= C.pivot, stop = Math.max(C.handleLow * 0.99, p - 2.5 * A), target = C.pivot * (1 + C.depthPct / 100); // the measured move: the cup's depth added to the pivot
+    plan("cup", stop, target, target * 1.08,
+      [broke ? `Broke out of the handle: above the buy point ₹${C.pivot}${fin(s.volRatio) ? ` on ${s.volRatio}× volume` : ""}` : `Handle forming ${r1((1 - p / C.pivot) * 100)}% under the buy point ₹${C.pivot}: buy only on a close above it`,
+        `Cup: ${C.depthPct}% deep over ${C.cupWeeks} weeks (₹${C.left} → ₹${C.bottom} → back near the high)`,
+        `Handle: ${C.handleDays} days, ${C.handleDepthPct}% pullback${C.quietHandle ? " on lighter volume" : ""}`, `Target: the cup's depth added to the buy point (₹${r2(target)}); stop under the handle low`]);
+    if (out.at(-1)?.setup === "cup") Object.assign(out.at(-1), { trigger: broke ? null : C.pivot, entryHigh: r2(Math.max(p, C.pivot) * 1.01) });
+  }
+  // Momentum: well above a rising 200-DMA, beating Nifty, near its high and not stretched from the 20-day average
+  if (up && fin(s.sma200) && p >= s.sma200 * 1.05 && (!fin(s.sma200Ago) || s.sma200 > s.sma200Ago) && fin(s.rs3m) && s.rs3m >= 5 && fin(s.ret3m) && s.ret3m >= 10 && fin(s.high52) && p >= s.high52 * 0.9 && fin(s.rsi) && s.rsi >= 55 && s.rsi <= 75 && fin(s.ema20) && p <= s.ema20 * 1.06 && p >= s.ema20 * 0.98) {
+    const stop = Math.max(Math.min(s.ema20 * 0.96, s.low10 * 0.99), p - 2.5 * A), r = p - Math.min(stop, p - 0.5 * A);
+    plan("momentum", stop, p + 2 * r, p + 3.5 * r,
+      [`${r1((p / s.sma200 - 1) * 100)}% above a rising 200-day average (₹${s.sma200}); 50-DMA above 200-DMA`, `Up ${s.ret3m}% in 3 months, ${s.rs3m}% better than Nifty`,
+        `Near its 20-day average (₹${s.ema20}), ${r1((1 - p / s.high52) * 100)}% under its 52-week high · RSI ${s.rsi}`, "Stop under the 20-day average / recent low: momentum is gone if it closes below"]);
+  }
   // Value stock turning up
   if (verdict?.inZone && verdict.key === "buy" && fin(verdict.fairBase) && verdict.fairBase > p && fin(s.ema20) && (s.crossedAboveEma20 || (s.rsiPrev < 40 && s.rsi > s.rsiPrev && p > s.ema20 * 0.99))) {
     const stop = Math.max(s.low20 * 0.98, p - 2.5 * A);
@@ -120,7 +173,8 @@ export function scoreIdea(idea, s, verdict = null) {
   sc += Math.max(0, Math.min(10, (idea.rr - 1.5) * 5));
   if (verdict?.key === "buy") { sc += 8; notes.push("Valuation: in its buy zone"); } else if (verdict?.key === "expensive") { sc -= 10; notes.push("Valuation: expensive"); }
   if (fin(s.turnoverCr) && s.turnoverCr < 5) { sc -= 15; notes.push(`Thinly traded (₹${s.turnoverCr} Cr a day)`); }
-  if (s.atrPct > 5) { sc -= 5; notes.push(`Volatile: moves ${s.atrPct}% a day on average`); }
+  if (idea.trigger) { sc -= 8; notes.push("Not triggered yet: set an alert at the buy point"); }
+    if (s.atrPct > 5) { sc -= 5; notes.push(`Volatile: moves ${s.atrPct}% a day on average`); }
   return { score: Math.round(Math.max(0, Math.min(100, sc))), notes };
 }
 

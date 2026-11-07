@@ -1,5 +1,85 @@
 # Equity Watchlist MVP
 
+## v5.64.0: cup and handle, momentum, idea alerts
+
+- **Swing ideas: ☕ Cup and handle.** The scan looks for a rounded 12–35% dip over 6 weeks to 7 months that has come back to within 5% of the old high, then a short, shallow handle (1–5 weeks, in the upper half of the cup). The stock must also be above its 200-DMA.
+  - The buy point is the handle's high. A breakout on volume becomes a trade plan; a stock within 3% under the buy point shows **Buy above ₹…** and scores lower until it breaks out.
+  - Stop: under the handle low. Target: the cup's depth added to the buy point.
+- **Swing ideas: 📈 Momentum above 200-DMA.** Stocks 5%+ above a rising 200-DMA, up 10%+ in 3 months and beating Nifty by 5%+, within 10% of the 52-week high and near the 20-day average (not stretched). Stop: under the 20-day average or the recent low.
+- Both setups can be picked in the Setup filter and tested in **Backtest a setup**.
+- **🔔 Alert me (Swing ideas):** after the daily scan, new ideas of the setups you pick (default: cup and handle, momentum) go to Alerts, and to Telegram if it's connected. You get at most one alert per stock and setup every 10 days, and only ideas above a minimum score.
+- Saved chart scans are refreshed once, so the new patterns are found.
+
+## v5.63.0: P&L across all brokers
+
+- **Tax view → 📊 P&L across all your brokers:** profit booked in a financial year from every account together (Zerodha, Dhan, family accounts). It shows:
+  - totals: realised, after charges, short term, long term, intraday and unrealised
+  - a table by account with an "All brokers" total
+  - tax per person (PAN): set-off and the ₹1.25 L exemption are applied once across all of that person's brokers
+  - month by month, and every sale, which you can filter by account, type or stock
+- **⟳ Get Dhan trades:** reads your Dhan trade history through Dhan's read-only `GET /v2/trades`. It starts from last April, with Dhan's own charges per trade. Running it again is safe.
+- **Zerodha:** import the Console tradebook as before. CSVs from other brokers are recognised too, including column names like Trading Symbol, Transaction Type, Traded Qty, Traded Price and Product Type. F&O rows are skipped.
+- **Correct matching:**
+  - FIFO now runs per demat account: a sale in Dhan uses Dhan's shares.
+  - A buy and sell of a stock on the same day in one account is counted as intraday, which is taxed at your slab rate, not as short-term gain.
+- **Whose accounts are these?** Name the person for each account so a spouse's or parent's account gets its own exemption.
+- **⬇ Excel for your CA:** four sheets: by account, tax by holder, trades, and by month.
+- Charges for trades without them (Zerodha tradebooks) are estimated from Zerodha's published rates. Grandfathering and F&O are not covered. Check against each broker's tax P&L before filing; this is not tax advice.
+- Perf baseline refreshed for the new `/api/tax/pnl` page.
+
+## v5.62.0: what to do when the market moves fast
+
+- **What to do now** gets a playbook for sharp moves. When Nifty is up 2% or more in 2 days (or 3.5% in 5 days), a "The market just ran up" card shows Nifty's 1, 2 and 5-day change, four steps for your money, and your stocks sorted into four groups:
+  - **Still at a fair price:** good businesses in or near their buy zone that didn't run with the market. This is where new money goes.
+  - **Swing: breakouts:** breakouts, 52-week highs and pullbacks with a swing score of 50 or more, each with an entry, a stop and a target.
+  - **Book some profit:** holdings now far above their buy zone after a big gain. Sell 20–30% and keep the rest.
+  - **Don't chase:** stocks you like that just jumped. Each one shows the price to wait for.
+- A sharp fall shows the mirror card, pointing to the Opportunity fund. On a normal day a single line says there's no sharp move.
+- Prices use the saved daily closes plus today's live price. Rule-based, not advice.
+
+## v5.61.0: Opportunity fund (dip-buying plan)
+
+- **New screen: Main → 📉 Opportunity fund.** Money kept aside in an arbitrage or liquid fund for market falls, invested in steps as Nifty (NIFTYBEES) falls from its 1-year high. By default that's 33% at −10%, 33% at −15% and 34% at −20%; the steps are editable.
+- **Shows:**
+  - how far Nifty is below its high (live when available), on a gauge with the steps
+  - the fund size, what's been invested this cycle and what's left
+  - **Invest now:** the amount due once a step is reached
+- **Where it goes:** 50% to your core fund (Parag Parikh Flexi Cap by default), the rest split equally across the Top picks from **What to do now**, with each stock's price and buy zone.
+  - **✓ Invested** records each line; there's also a log of everything put in.
+- **Alerts:** a notification (and Telegram, if set up) the first time each step is reached. The steps reset when Nifty is back within 3% of its high, or with "Start a new cycle".
+- Private to your login (`opportunity.json`). Perf baseline refreshed for the new `/api/opportunity`.
+
+## v5.60.0: Monthly contributions on Net worth lines (EPF, PPF, RD…)
+
+- **"↻ Adds every month"** on any hand-entered asset in Net worth: monthly contribution, day of the month, and interest % a year. When the interest box is empty, typical rates are used: EPF 8.25%, PPF 7.1%, NPS 10%, FD 7%, bonds 7.5%.
+- **The line grows by itself.** On each contribution day the amount is added and interest compounds monthly; the invested amount rises too. PPF stops at ₹1.5 L per financial year. The list shows "↻ +₹37,000/mo", and the edit form shows what was added and the interest since the value was entered.
+- **Correct it any time from your passbook:** saving a value restarts from that balance, so nothing is counted twice. The stored balance is never changed by the automatic additions; they're worked out when the page is read.
+- **Bucket strategy / Till you retire** take that monthly amount for the line automatically ("auto in Net worth"), unless you typed your own.
+
+## v5.59.0: Chart price axis, 1D charts without Angel candles, company info on the stock card
+
+- **Chart price axis is back.** The app's table and cell styles were also applied to the chart library's own internal layout, which pushed the right-hand price scale (and the last date) out of view. They no longer apply inside the chart.
+- **1D / 1W / 1M charts without Angel One candles.** When Angel One has no candles for a stock (or isn't connected), intraday charts now fall back to Yahoo's 5-minute, 15-minute or hourly bars (about 15 minutes late). Before, they showed "No price history". The footer says which source was used.
+- **Stock card: new company section** (loads on demand; public data, shared cache):
+  - 🏢 **What the company does:** Screener's About and key points.
+  - 📦 **Orders and filings:** order wins from the last year (with ₹ Cr values) and recent NSE announcements, with order-related ones marked and PDF links.
+  - 📰 **Latest news:** Google News headlines with source and age.
+  - 🏦 **Are FIIs and DIIs buying?** The quarterly shareholding table (Promoters / FIIs / DIIs / Government / Public, last 6 quarters, change on the quarter and the year), in plain words, plus the mutual funds in your Fund X-ray library that hold the stock.
+  - ⚖️ **Buying or selling pressure:**
+    - 20 / 50 / 200-day averages
+    - heavy-volume down vs up days in the last 5 weeks
+    - volume on down vs up days
+    - 3-month strength against Nifty
+    - the institutions' last quarterly move
+- `/api/stock/info?symbol=` never waits more than 1.5 s, and only the first time; after that it answers from cache and refreshes in the background. Perf baseline refreshed for it.
+
+## v5.58.0: Fix the buy price of a sold swing trade
+
+- Every **Buy** row in the Swing ledger now has ✎, including buys that were already sold (they showed "—" before).
+- **Fully sold buy:** fix the price or date. Each closed trade with shares from that buy gets the new lot price. Its average buy price, booked P/L, P/L %, holding period, tax view and swing cash are recalculated, and other buys of the same stock are untouched. Quantity can't change here; reopen the trade to change it.
+- **Partly sold buy:** the existing edit (quantity, price, date, delete) now applies a new price or date to the sold shares too, so the buy stays one row.
+- The date can't be after the sale or in the future.
+
 ## v5.57.0: Expenses export & import (CSV / Excel)
 
 - **⬇ Export** in Monthly expenses: this month, this financial year or everything.

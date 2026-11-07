@@ -308,7 +308,7 @@
         <div class="sw-score-pill" title="Setup score out of 100"><b>${i.score}</b><span>score</span></div></div>
       <div class="sw-setup">${i.icon} ${esc(i.label)}</div>
       <div class="sw-plan">
-        <div><span>Entry</span><b>${px(i.entry)}</b><small>up to ${px(i.entryHigh)}</small></div>
+        <div><span>${i.trigger ? "Buy above" : "Entry"}</span><b>${px(i.trigger || i.entry)}</b><small>${i.trigger ? `now ${px(i.entry)}` : `up to ${px(i.entryHigh)}`}</small></div>
         <div class="sl"><span>Stop-loss</span><b>${px(i.stop)}</b><small>−${i.riskPct}%</small></div>
         <div class="tg"><span>Target 1</span><b>${px(i.t1)}</b><small>+${i.t1Pct}%</small></div>
         <div class="tg"><span>Target 2</span><b>${px(i.t2)}</b><small>+${i.t2Pct}%</small></div>
@@ -562,7 +562,7 @@
       ${st ? `<span class="hint">Bought ${st.bought} for ${amt(st.boughtValue)} · sold ${st.sold} for ${amt(st.soldValue)} · booked <b class="${cls(st.realised)}">${sg(st.realised)}</b> · holding ${st.held} · ${dmy(st.first)} to ${dmy(st.last)}</span>` : ""}</div>
       <div class="table-wrap"><table class="sw-table sw-ledger"><thead><tr><th>Date</th><th>Stock</th><th>Type</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th><th>Details</th><th></th></tr></thead><tbody>${list.length ? list.map((e, i) => `<tr class="lg-${e.type.toLowerCase()}"><td>${dmy(e.date)}</td><td><div class="company">${esc(e.name)}</div><div class="ticker">${esc(e.symbol)}</div></td><td><span class="sw-sig ${e.type === "BUY" ? "dp" : "tp"}">${e.type === "BUY" ? "Buy" : "Sell"}</span></td><td class="num">${e.qty}</td><td class="num">${px(e.price)}</td><td class="num">${inr(e.value)}</td>
         <td>${e.type === "BUY" ? (e.sold ? `${e.held ? `${e.held} held · ` : ""}${e.sold} sold${e.soldOn.length ? ` (${e.soldOn.map(dmy).join(", ")})` : ""}` : "held") : `<b class="${cls(e.pnl)}">${sg(e.pnl)}</b> <small>${pct(e.pnlPct)}</small> · bought at ${px(e.buyAvg)} avg${e.atTarget ? " · at target" : ""}`}</td>
-        <td class="sw-acts">${(e.type === "BUY" && e.held > 0) || (e.type === "SELL" && e.tradeId) ? `<button type="button" class="ghost" data-lg-edit="${i}" title="${e.type === "BUY" ? "Edit or delete this buy" : "Fix the sale price or date"}">✎</button>` : `<span class="hint" title="Fully sold: edit the sale instead">—</span>`}</td></tr>`).join("") : `<tr><td colspan="8" class="nw-empty-row">Buys and sells appear here with their dates.</td></tr>`}</tbody></table></div>`;
+        <td class="sw-acts">${e.type === "BUY" || (e.type === "SELL" && e.tradeId) ? `<button type="button" class="ghost" data-lg-edit="${i}" title="${e.type === "BUY" ? (e.held > 0 ? "Edit or delete this buy" : "Fix the buy price or date (already sold)") : "Fix the sale price or date"}">✎</button>` : '<span class="hint">—</span>'}</td></tr>`).join("") : `<tr><td colspan="8" class="nw-empty-row">Buys and sells appear here with their dates.</td></tr>`}</tbody></table></div>`;
     $("#swLedgerSym").onchange = e => { ledgerSym = e.target.value; renderLedger(); };
     box.querySelectorAll("[data-lg-edit]").forEach(b => b.onclick = () => ledgerEdit(list[Number(b.dataset.lgEdit)]));
   }
@@ -582,17 +582,28 @@
   // The position's quantity and average price, your swing cash and the booked P/L all follow.
   async function ledgerEdit(e) {
     if (!e) return;
+    if (e.type === "BUY" && !(e.held > 0)) { // already sold: only the price / date can be fixed; P/L, tax and cash follow
+      const out = await window.ui.dialog({ title: `Fix buy: ${e.name}`, icon: "✎", okText: "Save",
+        message: `${dmy(e.date)} · bought ${e.qty} at ${px(e.price)}, sold${e.soldOn.length ? ` on ${e.soldOn.map(dmy).join(", ")}` : ""}. Fix the price or date you bought at; the sale's average buy price, booked P/L, tax and swing cash are recalculated. To change the quantity, reopen the trade from Closed trades.`,
+        bodyHtml: `<div class="nw-form">${field("Buy price (₹)", "price", e.price, 'inputmode="decimal" autofocus')}${dateField("Bought on", "date", e.date)}</div>`,
+        collect: box => api("/api/swing/ledger-sold-buy", { symbol: e.symbol, date: e.date, price: e.price, newPrice: box.querySelector("[name=price]").value, newDate: box.querySelector("[name=date]").value }) });
+      if (out) { sw = out; render(); if (out.notice) window.toast?.(out.notice, { kind: "ok" }); }
+      return;
+    }
     if (e.type === "BUY") {
       let remove = false;
       const out = await window.ui.dialog({ title: `Edit buy: ${e.name}`, icon: "✎", okText: "Save",
-        message: `${dmy(e.date)} · ${e.held} share${e.held === 1 ? "" : "s"} at ${px(e.price)}${e.sold ? `. ${e.sold} more from this buy were already sold: change those through the sale.` : "."} Your position's quantity and average price, and your swing cash, are updated.`,
+        message: `${dmy(e.date)} · ${e.held} share${e.held === 1 ? "" : "s"} at ${px(e.price)}${e.sold ? `. ${e.sold} more from this buy were already sold: a new price or date applies to them too (their P/L follows).` : "."} Your position's quantity and average price, and your swing cash, are updated.`,
         bodyHtml: `<div class="nw-form">${field("Quantity", "qty", e.held, 'inputmode="numeric" autofocus')}${field("Buy price (₹)", "price", e.price, 'inputmode="decimal"')}${dateField("Bought on", "date", e.date)}</div>
           <div class="toolbar" style="margin:10px 0 0"><button type="button" class="ghost danger-text" data-del>🗑 Delete this buy</button></div>`,
         onOpen: (box) => { const d = box.querySelector("[data-del]"), left = (sw.positions.find(p => p.id === e.posId)?.qty || 0) - e.held;
           d.onclick = () => { if (!d.dataset.armed) { d.dataset.armed = "1"; d.classList.add("armed"); d.textContent = left > 0 ? `Click again: remove ${e.held} shares (${left} stay)` : "Click again: this removes the whole position"; return; } remove = true; d.closest(".ui-dlg").querySelector("button.primary").click(); }; },
         collect: async box => {
           const v = n => box.querySelector(`[name=${n}]`).value;
-          return api("/api/swing/ledger-buy", { posId: e.posId, symbol: e.symbol, date: e.date, price: e.price, qty: v("qty"), newPrice: v("price"), newDate: v("date"), remove });
+          const r = await api("/api/swing/ledger-buy", { posId: e.posId, symbol: e.symbol, date: e.date, price: e.price, qty: v("qty"), newPrice: v("price"), newDate: v("date"), remove });
+          // part of this buy was already sold: fix those shares' price / date too, so the buy stays one row
+          if (!remove && e.sold > 0 && (Number(v("price")) !== e.price || v("date") !== e.date)) return api("/api/swing/ledger-sold-buy", { symbol: e.symbol, date: e.date, price: e.price, newPrice: v("price"), newDate: v("date") });
+          return r;
         } });
       if (out) { sw = out; render(); if (out.notice) window.toast?.(out.notice, { kind: "ok" }); }
       return;
@@ -663,6 +674,18 @@
     $("#swSettings").onclick = () => settingsDialog();
     $("#swTaxCalc").onclick = () => taxCalculator();
     $("#swIdeasScan").onclick = () => loadIdeas(true);
+    $("#swIdeasAlert").onclick = async () => {
+      const A = ideas?.alerts || { on: false, setups: ["cup", "momentum"], minScore: 60 };
+      const opts = [["cup", "☕ Cup and handle breakouts"], ["momentum", "📈 Momentum above 200-DMA"], ["high52", "🏔 52-week high breakouts"], ["breakout", "🚀 Breakouts on volume"], ["pullback", "↘↗ Pullbacks in an uptrend"], ["bounce", "🪃 Oversold bounces"], ["value", "💎 Value stocks turning up"]];
+      const out = await window.ui.dialog({ title: "Alert me on new swing ideas", icon: "🔔", okText: "Save",
+        bodyHtml: `<p class="hint">After each daily scan (after the close), new ideas of these setups go to your alerts, and to Telegram if it's connected (Alerts → 📱 Phone alerts). One alert per stock and setup every 10 days.</p>
+          <label class="ui-opt"><input type="checkbox" name="on"${A.on ? " checked" : ""}><span><b>Idea alerts on</b></span></label>
+          <div class="ia-list" style="display:flex!important;flex-direction:column;gap:6px;margin:8px 0 12px">${opts.map(([k, l]) => `<label class="ui-opt"><input type="checkbox" name="s" value="${k}"${A.setups.includes(k) ? " checked" : ""}><span>${l}</span></label>`).join("")}
+</div>
+          <label class="ui-field" style="max-width:220px"><span>Only ideas scoring at least</span><input class="ui-input" name="min" inputmode="numeric" value="${A.minScore}"></label>`,
+        collect: box => api("/api/swing/idea-alerts", { on: box.querySelector("[name=on]").checked, setups: [...box.querySelectorAll("[name=s]:checked")].map(i => i.value), minScore: box.querySelector("[name=min]").value }) });
+      if (out) { window.toast?.(out.notice || "Saved.", { kind: "ok" }); loadIdeas(); }
+    };
     $("#swIdeasSetup").onchange = $("#swIdeasSrc").onchange = () => { ideasShown = 12; if (ideas) renderIdeas(); };
     $("#swIdeas").addEventListener("click", async e => {
       if (e.target.closest("[data-more]")) { ideasShown += 12; renderIdeas(); return; }

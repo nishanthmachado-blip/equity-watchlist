@@ -119,7 +119,7 @@ test("chart: without Angel One a daily chart falls back to Yahoo; a hanging site
     assert.equal(d.json.bars[0].o, 99, "keeps Yahoo's open");
     assert.ok(d.json.notes.some(n => /Angel One not connected/.test(n)));
     const i = await s.call("/api/chart?symbol=TCS&tf=1D", { cookie: s.owner });
-    assert.deepEqual([i.json.bars.length, i.json.source], [0, null], "no intraday without Angel One");
+    assert.match(String(i.json.source), /^Yahoo \(5m bars/, "intraday falls back to Yahoo's 5-minute bars without Angel One"); assert.ok(i.json.bars.length >= 1);
   } finally { await s.stop(); }
   const s2 = await start({ YAHOO_CHART_BASE: `http://127.0.0.1:${hport}` });
   try {

@@ -49,8 +49,43 @@ export function sanitizeItem(input = {}, prev = null) {
     owner: text(input.owner, 40) || null,
     note: text(input.note, 200) || null,
     fundId: cat.id === "mf" && input.fundId ? text(input.fundId, 40) : null,
+    recurring: cat.kind === "asset" ? sanitizeRecurring(input, prev, value, now) : null,
     createdAt: prev?.createdAt || now, updatedAt: now
   };
+}
+// A monthly contribution added by itself (EPF, PPF, RD, SIP into a manual line): { monthly, day, rate, since }. The value you
+// enter is the balance on `since` (the day you saved it); every month on `day` the contribution is added, and the yearly
+// rate (EPF / PPF interest) compounds monthly. Saving a new value (e.g. from your passbook) restarts from that balance.
+export const RECURRING_RATE = { epf: 8.25, ppf: 7.1, nps: 10, fd: 7, bonds: 7.5 };
+function sanitizeRecurring(input, prev, value, now) {
+  if (!("monthly" in input)) return prev?.recurring ? { ...prev.recurring, since: prev.value === value ? prev.recurring.since : now } : null;
+  const monthly = money(input.monthly); if (!(monthly > 0)) return null;
+  if (monthly > 1e8) throw new Error("Monthly amount looks too large.");
+  const day = Math.min(28, Math.max(1, Math.round(Number(input.day) || 1)));
+  const r = input.rate === "" || input.rate == null ? null : Number(String(input.rate).replace(/[%\s]/g, ""));
+  if (r !== null && !(r >= 0 && r <= 30)) throw new Error("Interest rate should be between 0% and 30%.");
+  const same = prev?.recurring && prev.value === value;
+  return { monthly, day, rate: r, since: same ? prev.recurring.since : now };
+}
+// The line as of today: balance on `since` + contributions on each `day` since then + interest. PPF stops at ₹1.5 L a
+// financial year. Returns the item with value / invested moved on, and `auto` explaining what was added.
+export function withRecurring(item, today = new Date()) {
+  const rc = item?.recurring; if (!rc?.monthly || !rc.since) return item;
+  const start = new Date(rc.since); if (!Number.isFinite(start.getTime())) return item;
+  const rate = rc.rate ?? RECURRING_RATE[item.category] ?? 0, g = Math.pow(1 + rate / 100, 1 / 12) - 1;
+  const ist = d => new Date(d.getTime() + 19800e3), s = ist(start), t = ist(today);
+  let y = s.getUTCFullYear(), m = s.getUTCMonth(); if (s.getUTCDate() >= rc.day) m++;
+  let bal = item.value, added = 0, n = 0, interest = 0; const fyPut = new Map();
+  for (let guard = 0; guard < 600; guard++) {
+    const d = new Date(Date.UTC(y, m, rc.day)); if (d > t) break;
+    if (n > 0 || added > 0) { const i = bal * g; interest += i; bal += i; } // a month of interest on what was there
+    let c = rc.monthly;
+    if (item.category === "ppf") { const fy = d.getUTCMonth() >= 3 ? d.getUTCFullYear() : d.getUTCFullYear() - 1, put = fyPut.get(fy) || 0; c = Math.max(0, Math.min(c, 150000 - put)); fyPut.set(fy, put + c); }
+    bal += c; added += c; n++; m++;
+  }
+  // interest for the part-month since the last contribution is left out (it is credited later in real accounts)
+  if (!n) return { ...item, auto: { months: 0, added: 0, interest: 0, base: item.value, since: rc.since, monthly: rc.monthly, day: rc.day, rate } };
+  return { ...item, value: Math.round(bal), invested: Number.isFinite(item.invested) ? Math.round(item.invested + added) : item.invested, auto: { months: n, added: Math.round(added), interest: Math.round(interest), base: item.value, since: rc.since, monthly: rc.monthly, day: rc.day, rate } };
 }
 
 // stocks: [{ account, label, value, invested }]; mf: [{ key, name, value, invested, account, ... }] (synced);

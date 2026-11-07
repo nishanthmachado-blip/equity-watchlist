@@ -29,7 +29,7 @@
     }
     if (!has) return;
     $("#txCards").innerHTML = `
-      <div><span>${esc(t.fy.label)} realised · short term</span><strong class="${cls(R.netSt)}">${sgn(R.netSt)}</strong><small>gains ${inr(R.stGain)} · losses ${inr(R.stLoss)}</small></div>
+      <div><span>${esc(t.fy.label)} realised · short term</span><strong class="${cls(R.netSt)}">${sgn(R.netSt)}</strong><small>gains ${inr(R.stGain)} · losses ${inr(R.stLoss)}${R.intraday ? ` · intraday ${sgn(R.intraday)} counted separately` : ""}</small></div>
       <div><span>${esc(t.fy.label)} realised · long term</span><strong class="${cls(R.netLt)}">${sgn(R.netLt)}</strong><small>gains ${inr(R.ltGain)} · losses ${inr(R.ltLoss)}</small></div>
       <div><span>₹1.25 L exemption left this year</span><strong>${inr(R.exemptLeft)}</strong><small>${inr(R.exemptUsed)} used</small></div>
       <div><span>Estimated tax so far (${esc(t.fy.label)})</span><strong>${inr(R.tax)}</strong><small>before surcharge & cess</small></div>
@@ -52,13 +52,15 @@
     }).join("") || `<tr><td colspan="7" class="nw-empty-row">Sync your holdings to see gains per stock.</td></tr>`;
     $("#txWarn").innerHTML = [U.mismatches ? `${U.mismatches} holding${U.mismatches === 1 ? "" : "s"} don't match the tradebook (bonus, split, transfer-in, another broker, or an earlier year not imported). Their unmatched shares are shown as "date unknown".` : "", R.unmatchedSells ? `${R.unmatchedSells} sell${R.unmatchedSells === 1 ? "" : "s"} this year had no matching buy: import older tradebook years for accurate figures.` : ""].filter(Boolean).map(x => `<p class="tx-warn">⚠ ${x}</p>`).join("");
   }
-  async function load() { try { tx = await api(`/api/tax?account=${encodeURIComponent(account)}`); render(); } catch (e) { $("#txStatus").textContent = e.message; } }
+  // P&L across all brokers: its own script, loaded the first time this view opens
+  const pnl = () => { if (typeof window.loadPnl === "function") return window.loadPnl(); if (document.getElementById("pnlJs")) return; if (!document.getElementById("screensCss")) { const l = document.createElement("link"); l.id = "screensCss"; l.rel = "stylesheet"; l.href = "screens.css"; document.head.appendChild(l); } const sc = document.createElement("script"); sc.id = "pnlJs"; sc.src = "pnl.js"; sc.onload = () => window.loadPnl?.(); document.head.appendChild(sc); };
+  async function load() { pnl(); try { tx = await api(`/api/tax?account=${encodeURIComponent(account)}`); render(); } catch (e) { $("#txStatus").textContent = e.message; } }
   window.openTax = load;
   async function importFile(f) {
     if (!f) return; if (f.size > 20e6) { $("#txStatus").textContent = "File is larger than 20 MB."; return; }
     const st = $("#txStatus"); st.textContent = `Reading ${f.name}…`;
     const data = await new Promise((ok, no) => { const rd = new FileReader(); rd.onload = () => ok(String(rd.result).split(",")[1]); rd.onerror = no; rd.readAsDataURL(f); });
-    try { tx = await api("/api/tax/import", { filename: f.name, data, account }); account = tx.account || account; render(); st.textContent = `${f.name}: ${tx.imported.rows} trades read, ${tx.imported.added} new${tx.imported.skipped?.fno ? `, ${tx.imported.skipped.fno} F&O rows skipped` : ""}.`; window.toast?.(`✓ Tradebook imported: ${tx.imported.added} new trades.`, { kind: "ok" }); }
+    try { tx = await api("/api/tax/import", { filename: f.name, data, account }); account = tx.account || account; render(); pnl(); st.textContent = `${f.name}: ${tx.imported.rows} trades read, ${tx.imported.added} new${tx.imported.skipped?.fno ? `, ${tx.imported.skipped.fno} F&O rows skipped` : ""}.`; window.toast?.(`✓ Tradebook imported: ${tx.imported.added} new trades.`, { kind: "ok" }); }
     catch (e) { st.textContent = e.message; }
   }
   document.addEventListener("DOMContentLoaded", () => {
@@ -70,7 +72,7 @@
     drop.addEventListener("dragover", e => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); drop.classList.add("tx-drag"); } });
     drop.addEventListener("dragleave", () => drop.classList.remove("tx-drag"));
     drop.addEventListener("drop", e => { if (!e.dataTransfer.files.length) return; e.preventDefault(); drop.classList.remove("tx-drag"); importFile(e.dataTransfer.files[0]); });
-    $("#txClear").onclick = async () => { if (await window.ui.confirm({ title: "Clear the imported tradebook?", message: "Your holdings are not touched. Import the files again to bring the lots back.", okText: "Clear", danger: true })) { tx = await api("/api/tax/clear", {}); render(); } };
+    $("#txClear").onclick = async () => { if (await window.ui.confirm({ title: "Clear the imported tradebook?", message: "Your holdings are not touched. Import the files again to bring the lots back.", okText: "Clear", danger: true })) { tx = await api("/api/tax/clear", {}); render(); pnl(); } };
     $("#txRows").addEventListener("click", e => { const tr = e.target.closest("tr[data-key]"); if (!tr) return; const k = tr.dataset.key; open.has(k) ? open.delete(k) : open.add(k); render(); });
   });
 })();
