@@ -37,6 +37,7 @@ import { ASSET_CATEGORIES, LIABILITY_CATEGORIES, sanitizeItem, withRecurring, bu
 import { TAX_RULES, parseTradebook, mergeTrades, taxView, fyOf } from "./tax.mjs";
 import { pnlView } from "./pnl.mjs";
 import { parseTaxReport, reportTotals } from "./taxreport.mjs";
+import { reconcileSwing, applyBrokerFix, tradeFromBroker } from "./swingrecon.mjs";
 import { reviewHoldings } from "./cleanup.mjs";
 import { BUCKETS, sanitizeBucketPlan, bucketView } from "./buckets.mjs";
 import { moneyMapData, buildMoneyMap } from "./moneymap.mjs";
@@ -1038,10 +1039,10 @@ async function holdingsReview() {
   const look = new Map(lt.rows.filter(r => r.symbol).map(r => [r.symbol, r]));
   const taxRows = new Map((tax?.rows || []).filter(r => r.kind === "stock" && r.symbol).map(r => [r.symbol, r]));
   let realised = tax?.realised || {};
-  if (!tax?.tradeCount) { // no tradebook imported: the swing journal's booked short-term gains this FY
-    try { const st = await readJson(swingFile(), {}), b = bookedSummary(st.closed || [], {}), fy = (b.years || []).find(y => y.current); if (fy) realised = { stGain: Math.max(0, fy.netSt || 0), stLoss: 0 }; } catch { /* optional */ }
-  }
-  const out = reviewHoldings({ holdings: view.holdings, tech, look, taxRows, realised, exemptLeft: tax?.realised?.exemptLeft ?? undefined, equityTotal: lt.rows.reduce((a, r) => a + r.total, 0) });
+  // this year's booked gains from your brokers' records (tax P&L reports, trades on file); never the hand-typed journal
+  const bt = await brokerTaxNow().catch(() => null);
+  if (bt) realised = { stGain: Math.max(0, bt.netSt || 0), stLoss: 0 };
+  const out = reviewHoldings({ holdings: view.holdings, tech, look, taxRows, realised, exemptLeft: bt ? bt.exemptLeft : tax?.realised?.exemptLeft ?? undefined, equityTotal: lt.rows.reduce((a, r) => a + r.total, 0) });
   return { ...out, realised: { stGain: Math.round(realised.stGain || 0), stLoss: Math.round(realised.stLoss || 0) }, hasTradebook: !!tax?.tradeCount, fundsLinked: lt.perFund.filter(f => f.linked).length, fundsTotal: lt.perFund.length,
     trendMissing: view.holdings.filter(h => !tech.get(h.symbol)?.sma200).length, accounts: view.accounts.length, at: new Date().toISOString() };
 }
@@ -1204,6 +1205,7 @@ async function importTaxReport(rep, filename) {
   const accounts = await accountsList();
   let account = rep.clientId && accounts.find(a => a.id.toUpperCase() === rep.clientId)?.id;
   if (!account && rep.source === "indmoney") account = accounts.find(a => /^indmoney:/i.test(a.id))?.id || "indmoney";
+  if (!account && rep.source === "dhan") account = accounts.find(a => /^dhan:/i.test(a.id))?.id || "dhan";
   account ||= rep.clientId || rep.source;
   const entry = { ...rep, id: `tr${Date.now().toString(36)}`, account, file: String(filename || "").slice(0, 80), importedAt: new Date().toISOString() };
   return withUserLock(async () => {
@@ -1214,7 +1216,23 @@ async function importTaxReport(rep, filename) {
     return { broker: rep.broker, account, fy: rep.fy, to: rep.to, sales: rep.rows.length, totals: reportTotals(rep), other: rep.other, replaced: replaced > 0, skipped: rep.skipped };
   });
 }
+// The combined P&L is read often (Swing's refresh, the match card): kept for a minute per login and year, and dropped
+// whenever trades, reports or tax settings change.
+const pnlMemo = new Map(); // "<user>|<fy>" → { at, v }
+const dropPnlMemo = () => { const u = currentUser().id; for (const k of pnlMemo.keys()) if (k.startsWith(`${u}|`)) pnlMemo.delete(k); };
 async function pnlPage(fyLabel = null) {
+  const mk = `${currentUser().id}|${fyLabel || ""}`, hit = pnlMemo.get(mk);
+  if (hit && Date.now() - hit.at < 60e3) return hit.v;
+  const v = await pnlPageFresh(fyLabel); pnlMemo.set(mk, { at: Date.now(), v }); if (pnlMemo.size > 200) pnlMemo.delete(pnlMemo.keys().next().value);
+  return v;
+}
+// Your own tax this year as your brokers' data says (the holder "Me", else the first): null when nothing is on file
+async function brokerTaxNow() {
+  const v = await pnlPage(null); if (!v.rows.some(r => r.trades)) return null;
+  const h = v.holders.find(x => x.name === "Me") || v.holders[0]; if (!h) return null;
+  return { fy: v.fy.label, netSt: h.tax.netSt, netLt: h.tax.netLt, exemptLeft: h.tax.exemptLeft, tax: h.tax.tax, capitalGainsTax: h.tax.capitalGainsTax, gross: h.gross, sources: v.reports.map(r => r.broker), accounts: h.accounts.length };
+}
+async function pnlPageFresh(fyLabel = null) {
   const [st, accounts, hold, master, reps] = await Promise.all([readJson(taxFile(), { trades: [] }), accountsList(), readJson(taxHoldersFile(), { holders: {} }), scripMaster(), readJson(taxReportsFile(), { reports: [] })]);
   const single = accounts.length === 1 ? accounts[0].id : null, byIsin = new Map(master.list.filter(m => m.isin).map(m => [m.isin, m]));
   const names = new Map(), trades = (st.trades || []).map(t => { const m = t.isin && byIsin.get(t.isin); if (m) names.set(t.key, m.name); return { ...t, account: t.account || single || "", symbol: m ? m.symbol : t.symbol }; });
@@ -1270,6 +1288,7 @@ async function syncDhanTrades(fromDay = null) {
 // Today's trades from every connected broker, saved into the tradebook: Zerodha (Kite get_trades: today only, so this
 // runs every weekday after the close) and Dhan (the last week, or from last April when asked). Read-only calls.
 async function captureBrokerTrades({ dhanFrom = null } = {}) {
+  dropPnlMemo();
   const res = { at: new Date().toISOString(), day: istDay(), kite: [], dhan: null };
   const master = await scripMaster(), isinOf = new Map(master.list.filter(m => m.isin).map(m => [m.symbol, m.isin]));
   const got = [];
@@ -1428,6 +1447,45 @@ async function yahooSearch(q) {
 
 // ---- Swing trading: live prices (Kite quotes → Yahoo → saved prices), positions, swing watchlist, alerts ----
 const swingFile = () => userFile("swing.json");
+// ---- Swing journal ↔ broker (swingrecon.mjs): the journal's sales checked against the broker's records ----
+async function swingRecon(fyLabel = null) {
+  const [v, st, master] = await Promise.all([pnlPage(fyLabel), readJson(swingFile(), {}), scripMaster()]);
+  const isin = new Map(master.list.filter(m => m.isin).map(m => [m.symbol, m.isin])), sym = new Map(master.list.filter(m => m.isin).map(m => [m.isin, m.symbol]));
+  // also what the tradebooks / Zerodha reports say: a symbol and its ISIN side by side
+  for (const t of v.trades) if (t.isin && /^[A-Z0-9&-]{1,20}$/.test(t.symbol || "")) { if (!isin.has(t.symbol)) isin.set(t.symbol, t.isin); if (!sym.has(t.isin)) sym.set(t.isin, t.symbol); }
+  const r = reconcileSwing({ closed: st.closed || [], brokerRows: v.trades, fy: v.fy, isinOf: s => isin.get(String(s || "").toUpperCase()) || null, symbolOf: i => sym.get(i) || null, ignore: st.reconIgnore || [] });
+  return { ...r, fys: v.fys, hasBroker: v.rows.some(x => x.trades), reports: v.reports.map(x => ({ broker: x.broker, to: x.to })) };
+}
+async function swingReconApply(b = {}) {
+  const items = Array.isArray(b.items) ? b.items.slice(0, 500) : [], master = await scripMaster(), byIsin = new Map(master.list.filter(m => m.isin).map(m => [m.isin, m]));
+  const cur = await swingRecon(b.fy || null);
+  let notice = "";
+  await withUserLock(async () => {
+    const st = await readJson(swingFile(), {}); st.closed ||= [];
+    if (b.action === "fix") { // matched sales whose prices / date differ: take the broker's
+      let n = 0, cash = 0;
+      for (const it of items) {
+        const m = cur.matched.find(x => x.fixable && x.journal.ids.join(",") === String(it)); if (!m) continue;
+        const r = applyBrokerFix(st.closed, m.journal.ids, { buyAvg: m.broker.buyAvg, sellAvg: m.broker.sellAvg, day: m.broker.day }, tradeDate); st.closed = r.closed; n += r.touched; cash += r.cashChange;
+      }
+      if (cash) moveCash(st, cash, `Journal matched to the broker (${n} sale${n === 1 ? "" : "s"})`);
+      notice = n ? `${n} journal sale${n === 1 ? "" : "s"} now match${n === 1 ? "es" : ""} the broker${cash ? `; swing cash ${cash > 0 ? "+" : "−"}₹${Math.abs(Math.round(cash)).toLocaleString("en-IN")}` : ""}.` : "Nothing to fix.";
+    } else if (b.action === "add") { // sales at the broker that aren't in the journal
+      let n = 0;
+      for (const it of items) {
+        const x = cur.brokerOnly.find(y => y.k === it); if (!x || x.noDates) continue;
+        const m = x.isin && byIsin.get(x.isin), symbol = m?.symbol || x.nse || String(x.symbol || "").toUpperCase();
+        st.closed.push(tradeFromBroker(x, { symbol, name: m?.name || x.name || symbol, id: `t${Date.now().toString(36)}${n}${Math.random().toString(36).slice(2, 5)}`, tradeDate })); n++;
+      }
+      notice = n ? `${n} broker sale${n === 1 ? "" : "s"} added to the journal (swing cash not changed).` : "Nothing added.";
+    } else if (b.action === "ignore") { st.reconIgnore = [...new Set([...(st.reconIgnore || []), ...items.map(String)])].slice(-2000); notice = `${items.length} hidden: they're not swing trades.`; }
+    else if (b.action === "unignore") { st.reconIgnore = []; notice = "Hidden sales are back in the list."; }
+    else throw new Error("Unknown action.");
+    st.closed.sort((a, z) => String(z.closedAt).localeCompare(String(a.closedAt)));
+    await writeJson(swingFile(), st);
+  });
+  return { ...(await swingRecon(b.fy || null)), notice };
+}
 const livePriceCache = new Map(); // "EX:SYM" -> { price, prevClose, source, at } (shared: prices are public)
 // Live prices for the Swing page: NSE (the exchange's own quote) → Yahoo (batch, then live chart price) → Screener →
 // the last saved price (marked). Kite only when PRICE_SOURCES includes it. maxAgeMs 0 = always fetch (Refresh).
@@ -2173,8 +2231,18 @@ async function decideFor(b) {
   const bars = await eodBars(r.symbol), snap = (await readJson(swingScanFile, { snaps: {} })).snaps?.[r.symbol]?.s;
   const vol = dailyVol(bars.filter(x => Date.now() / 1000 - x.t < 120 * 86400).map(x => x.c)) ?? (snap?.atrPct ? snap.atrPct / 100 / 1.25 : null);
   const slabPct = b.slabPct !== undefined && b.slabPct !== "" ? Math.min(42.74, Math.max(0, Number(b.slabPct) || 0)) : st.settings?.slabPct ?? 30;
-  const out = decideHoldSell({ qty: p.qty, avgPrice: p.avgPrice, price: r.price, lots: lotsOf(p), today, dividend: div ? { amount: div.amount, date: div.date, days: div.days } : null, results: res2 ? { date: res2.date, days: res2.days } : null, vol, health: r.health || (snap ? positionHealth(snap, p.avgPrice) : null), targets: r.targets || [], planQty: r.sellNow || r.targets?.find(t => !t.done && t.sellQty)?.sellQty || null, slabPct, exemptLeft: ltExemptionLeft(st.closed || [], st.settings?.ltUsedElsewhere || 0), charges: { ...CHARGE_DEFAULTS, ...(st.settings?.charges || {}) } });
+  const out = decideHoldSell({ qty: p.qty, avgPrice: p.avgPrice, price: r.price, lots: lotsOf(p), today, dividend: div ? { amount: div.amount, date: div.date, days: div.days } : null, results: res2 ? { date: res2.date, days: res2.days } : null, vol, health: r.health || (snap ? positionHealth(snap, p.avgPrice) : null), targets: r.targets || [], planQty: r.sellNow || r.targets?.find(t => !t.done && t.sellQty)?.sellQty || null, slabPct, exemptLeft: ((await brokerTaxNow().catch(() => null))?.exemptLeft ?? ltExemptionLeft(st.closed || [], st.settings?.ltUsedElsewhere || 0)), charges: { ...CHARGE_DEFAULTS, ...(st.settings?.charges || {}) } });
   return { ...out, symbol: r.symbol, name: r.name, priceSource: r.priceSource || null };
+}
+// The tax line in Swing for this year: your brokers' figure (all your accounts, after set-off) in place of the journal's
+function withBrokerTax(b, bt, cessPct = 4) {
+  if (!bt || !b) return b;
+  const years = b.years.map(y => {
+    if (y.fy !== bt.fy) return y;
+    const tax = Math.round(bt.tax * (1 + cessPct / 100));
+    return { ...y, journalTax: y.tax, tax, netSt: bt.netSt, netLt: bt.netLt, taxSource: "brokers", brokerGross: bt.gross, due: Math.max(0, tax - y.paid), over: Math.max(0, y.paid - tax) };
+  });
+  return { ...b, years, brokerTax: bt };
 }
 async function swingView({ alerts = true, fresh = false } = {}) {
   const st = await readJson(swingFile(), {}); let watch = st.watch || [];
@@ -2228,14 +2296,17 @@ async function swingView({ alerts = true, fresh = false } = {}) {
   for (const w of view.watch) { const ev = eventsFor(w.symbol, { events: ce.events || [], actions: ce.actions || [], today, pastDays: 0, aheadDays: 30 }); w.upcoming = ev.slice(0, 3).map(e => ({ kind: e.kind, label: e.label, date: e.date, days: e.days, amount: e.amount ?? null })); }
   view.eventsSource = ce.sources || null; view.eventsAt = ce.at || null;
   // If sold now: charges, STT and tax on the whole position, and on the booking plan's "sell now" quantity
-  const charges = { ...CHARGE_DEFAULTS, ...(st.settings?.charges || {}) }, exemptLeft = ltExemptionLeft(st.closed || [], st.settings?.ltUsedElsewhere || 0);
+  // tax comes from your brokers' records (tax P&L reports, trades on file), not the journal you type; the journal only
+  // when nothing from a broker is on file yet
+  const bt = await brokerTaxNow().catch(() => null);
+  const charges = { ...CHARGE_DEFAULTS, ...(st.settings?.charges || {}) }, exemptLeft = bt ? bt.exemptLeft : ltExemptionLeft(st.closed || [], st.settings?.ltUsedElsewhere || 0);
   for (const r of view.positions) if (r.price > 0) {
     const p = positions.find(x => x.id === r.id) || r;
     r.ifSold = sellTaxEstimate({ lots: lotsForSale(p, r.qty), sellPrice: r.price, exchange: r.exchange, ltExemptLeft: exemptLeft, charges });
     if (r.sellNow > 0 && r.sellNow < r.qty) r.ifSellNow = sellTaxEstimate({ lots: lotsForSale(p, r.sellNow), sellPrice: r.price, exchange: r.exchange, ltExemptLeft: exemptLeft, charges });
   }
   view.totals.pat = portfolioPat(view.positions.map(r => r.ifSold).filter(Boolean), exemptLeft, charges);
-  return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), journal: { ...journalStats(all), setups: SETUPS, mistakes: MISTAKES }, ledger: buildLedger(positions, all), booked: bookedSummary(all, { taxPaid: st.taxPaid || [], ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0, cessPct: charges.cessPct ?? 4 }), taxInfo: { exemptLeft, charges, ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0 }, realisedNet: realisedAfterTax(all, charges), pricePending, cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
+  return { ...view, closed, realised: { count: all.length, pnl: Math.round(all.reduce((a, t) => a + (Number(t.pnl) || 0), 0)) }, score: scorecard(all), journal: { ...journalStats(all), setups: SETUPS, mistakes: MISTAKES }, ledger: buildLedger(positions, all), booked: withBrokerTax(bookedSummary(all, { taxPaid: st.taxPaid || [], ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0, cessPct: charges.cessPct ?? 4 }), bt, charges.cessPct ?? 4), taxInfo: { exemptLeft, charges, ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0, source: bt ? "brokers" : "journal" }, realisedNet: realisedAfterTax(all, charges), pricePending, cash: st.cash ? { balance: st.cash.balance, setAt: st.cash.setAt, log: (st.cash.log || []).slice(0, 12) } : null, marketOpen: marketIsOpen(), checkedAt: new Date().toISOString() };
 }
 // Closed swing trades as an Excel file: one row per FIFO buy lot (short / long term), a yearly tax estimate and the scorecard.
 async function sendSwingExport(res) {
@@ -3924,12 +3995,17 @@ async function appHandler(req, res, url) {
     }
     if (url.pathname.startsWith("/api/tax")) {
       const op = url.pathname.slice("/api/tax".length).replace(/^\//, "");
+      if (req.method === "POST") dropPnlMemo();
       try {
         const acct = String(url.searchParams.get("account") || "all").slice(0, 40);
         if (req.method === "GET" && !op) return reply(res, 200, await taxPage(acct));
         if (req.method === "GET" && op === "pnl") return reply(res, 200, await pnlPage(url.searchParams.get("fy")));
         if (req.method === "GET" && op === "pnl.xlsx") return sendPnlExport(res, url.searchParams.get("fy"));
         if (req.method === "POST" && op === "report-delete") { const b = await readBody(req); await withUserLock(async () => { const st = await readJson(taxReportsFile(), { reports: [] }); st.reports = st.reports.filter(r => r.id !== b.id); await writeJson(taxReportsFile(), st); }); return reply(res, 200, await pnlPage(b.fy || null)); }
+        if (req.method === "POST" && op === "report-term") { // a stock from a report without dates: held over a year or not
+          const b = await readBody(req); await withUserLock(async () => { const st = await readJson(taxReportsFile(), { reports: [] }), r = st.reports.find(x => x.id === b.id); if (!r) throw new Error("Report not found."); const set = new Set(r.longIsins || []); if (b.long) set.add(String(b.isin)); else set.delete(String(b.isin)); r.longIsins = [...set].slice(0, 500); await writeJson(taxReportsFile(), st); });
+          return reply(res, 200, await pnlPage(b.fy || null));
+        }
         if (req.method === "POST" && op === "slab") { const b = await readBody(req), r = Number(b.slabRate); if (![0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3].includes(r)) throw new Error("Pick a slab rate."); await withUserLock(async () => { const h = await readJson(taxHoldersFile(), { holders: {} }); h.slabRate = r; await writeJson(taxHoldersFile(), h); }); return reply(res, 200, await pnlPage(b.fy || null)); }
         if (req.method === "POST" && op === "holders") {
           const b = await readBody(req), accs = new Set((await accountsList()).map(a => a.id)), h = await readJson(taxHoldersFile(), { holders: {} });
@@ -4065,6 +4141,8 @@ async function appHandler(req, res, url) {
           return reply(res, 200, { ...swingIncome(st.closed || [], { target: st.settings?.incomeTarget || INCOME_DEFAULTS.target, capital, today: istDay() }), openCost: Math.round(open), cash: Number.isFinite(st.cash?.balance) ? Math.round(st.cash.balance) : null });
         }
         if (req.method === "GET" && op === "export.xlsx") return sendSwingExport(res);
+        if (req.method === "GET" && op === "recon") return reply(res, 200, await swingRecon(url.searchParams.get("fy")));
+        if (req.method === "POST" && op === "recon-apply") return reply(res, 200, await swingReconApply(await readBody(req)));
         if (req.method === "POST" && op === "tax") { // sell preview / calculator: { id, qty, price, date } or { buyPrice, boughtOn, qty, price, date }
           const b = await readBody(req), st = await readJson(swingFile(), {}), qty = Number(b.qty), price = Number(b.price);
           if (!(qty > 0 && price > 0)) return reply(res, 400, { message: "Enter quantity and price." });
@@ -4073,7 +4151,7 @@ async function appHandler(req, res, url) {
           const lots = p ? lotsForSale(p, Math.min(qty, p.qty)) : [{ qty, price: Number(b.buyPrice), at: b.boughtOn ? tradeDate(b.boughtOn) : new Date().toISOString() }];
           if (!(lots[0]?.price > 0)) return reply(res, 400, { message: "Enter the buy price." });
           const charges = { ...CHARGE_DEFAULTS, ...(st.settings?.charges || {}) };
-          return reply(res, 200, sellTaxEstimate({ lots, sellPrice: price, sellDate: b.date ? tradeDate(b.date) : new Date().toISOString(), exchange: p?.exchange || "NSE", ltExemptLeft: b.ltExemptLeft !== undefined ? Number(b.ltExemptLeft) : ltExemptionLeft(st.closed || [], st.settings?.ltUsedElsewhere || 0), charges }));
+          return reply(res, 200, sellTaxEstimate({ lots, sellPrice: price, sellDate: b.date ? tradeDate(b.date) : new Date().toISOString(), exchange: p?.exchange || "NSE", ltExemptLeft: b.ltExemptLeft !== undefined ? Number(b.ltExemptLeft) : ((await brokerTaxNow().catch(() => null))?.exemptLeft ?? ltExemptionLeft(st.closed || [], st.settings?.ltUsedElsewhere || 0)), charges }));
         }
         // Hold or sell? scenarios for one position: sell now, hold to the ex-date, book part + stop, wait for long-term rates
         if (req.method === "POST" && op === "decide") {

@@ -1,5 +1,22 @@
 # Equity Watchlist MVP
 
+## v5.67.0: swing journal matched to your brokers
+
+- **Tax comes from your brokers, never from the journal you type.** The **🧾 Tax to pay** strip, the payments dialog, the long-term exemption left in "if sold now" and hold-or-sell, and Holdings clean-up now use the combined P&L of your brokers (tax P&L reports and trades on file), with cess. The journal's own estimate is only used while nothing from a broker is on file. The payments dialog also shows what the journal alone would have said.
+- **Swing → 🔁 Match with your broker** checks every journal sale of the year against your brokers' records:
+  - **Differ:** the same sale (same stock, within 3 days) with a different quantity, buy or sell price, or date. **Use broker's** (or all at once) sets the journal's prices and date to the broker's, and swing cash moves by the P&L change. When the quantity differs, partial sales are flagged for fixing in the Ledger.
+  - **Missing from journal:** short-term and intraday sales at a broker that aren't in the journal. **Add** (or Add all), or **Hide** the ones that aren't swing. Long-term shares and debt ETFs are left out as investments.
+  - **Only in journal:** sales no broker has, usually a typo in the date or stock, or an account whose report isn't imported yet.
+  - Totals: journal P&L, swing P&L at your brokers, and the gap.
+- Stocks match on NSE symbol or ISIN, so INDmoney's and Dhan's company names meet the journal's symbols. Dhan's dateless report is matched on each stock's total for the year.
+- The combined P&L is kept for a minute per login (dropped on any tax change), so Swing's refresh stays fast. The perf baseline is refreshed for the new `/api/swing/recon`.
+
+## v5.66.1: Dhan realised P&L report
+
+- **Dhan → Reports → Realised P&L (.xls)** now imports like the Zerodha and INDmoney reports. It gives one total per stock (FIFO) with no dates. The segment's charges are shared across the stocks by turnover. Name, UCC, phone and email are not stored.
+- **Short or long term:** Dhan's report has no buy dates, so the app splits each stock from your Dhan trades on file (⟳ Get trades from brokers) where it can. Otherwise the stock counts as short term, and **Mark long term** on its line changes it. Its lines show as "period total" and stay out of the month chart.
+- Download it for the whole financial year (1 Apr to today), since the report itself doesn't say which dates it covers.
+
 ## v5.66.0: import brokers' tax P&L reports
 
 - **⬆ Import tax P&L report** (Tax view, or the same Import button as tradebooks): the app recognises

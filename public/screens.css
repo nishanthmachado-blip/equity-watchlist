@@ -311,3 +311,9 @@ table.pn-table{min-width:0!important;width:100%;font-size:13px}table.pn-table td
 .pn-taxbr{width:100%;min-width:0!important;margin:6px 0;font-size:13px}.pn-taxbr td{padding:4px 2px!important;border:0}.pn-slab{font-size:13px;display:flex;gap:6px;align-items:center}.pn-slab select{width:auto}
 .pn-srcs{margin:10px 0;border:1px dashed var(--line);border-radius:12px;padding:8px 12px}.pn-srcs summary{cursor:pointer;font-weight:600}.pn-srcs ul{margin:6px 0;padding-left:18px;font-size:13px}.pn-srcs li{margin:4px 0}
 .chip.pn-otherst,.chip.pn-otherlt{background:#efe8fb;color:#5b3aa8}
+.linkbtn{background:none;border:0;padding:2px 0;color:var(--accent,#2747a8);font-size:11.5px;text-decoration:underline;cursor:pointer}
+/* Swing → Match with your broker */
+.sr-head{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;margin:8px 0}.sr-head select{width:auto}
+.sr-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;flex:1}.sr-sum>div{border:1px solid var(--line);border-radius:12px;padding:8px 12px;display:flex;flex-direction:column}.sr-sum span,.sr-sum small{font-size:12px;color:var(--muted)}.sr-sum b{font-size:18px}
+.sr-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.sr-tabs button{border:1px solid var(--line);background:var(--card,#fff);border-radius:999px;padding:5px 12px;font-size:12.5px;cursor:pointer;color:var(--ink)}.sr-tabs button.on{background:var(--ink);color:var(--card,#fff);border-color:var(--ink)}
+table.sr-t{min-width:0!important;width:100%;font-size:13px}table.sr-t td,table.sr-t th{padding:7px 8px!important;vertical-align:top}.sr-act{display:flex;gap:4px;flex-wrap:wrap}.sr-body>.primary{margin:4px 0 8px}

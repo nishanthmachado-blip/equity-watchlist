@@ -60,7 +60,18 @@ export function pnlView({ trades = [], accounts = [], holders = {}, unrealised =
   // reports of this year: the broker's figures replace computed ones for that account up to the report's last day
   const reps = reports.filter(r => r.fy === fy.label), { keep, dropped } = dedupeReports(reps), covered = new Map();
   for (const r of reps) covered.set(r.account, r.to > (covered.get(r.account) || "") ? r.to : covered.get(r.account));
-  const fromReports = reps.flatMap((rep, i) => keep[i].map(x => ({ key: x.isin || x.name, account: rep.account, symbol: x.symbol || x.name, isin: x.isin, buyDate: x.buyDate, sellDate: x.sellDate, qty: x.qty,
+  // reports without buy dates (Dhan's realised P&L): the term comes from your trades on file for that stock in that
+  // account (their FIFO split into intraday / short / long), or from what you marked; else short term
+  const termSplit = new Map();
+  for (const r of realised) { if (r.unmatched || r.sellDate < fy.from || r.sellDate > fy.to) continue; const k = `${r.account || ""}|${r.key}`, t = termSplit.get(k) || { intraday: 0, eqSt: 0, eqLt: 0 }; t[r.intraday ? "intraday" : r.long ? "eqLt" : "eqSt"] += r.qty; termSplit.set(k, t); }
+  const resolve = (rep, x) => {
+    if (!x.termUnknown) return [x];
+    if ((rep.longIsins || []).includes(x.isin)) return [{ ...x, bucket: "eqLt", termFrom: "you" }];
+    const t = termSplit.get(`${rep.account}|${x.isin}`), tot = t ? t.intraday + t.eqSt + t.eqLt : 0;
+    if (!tot) return [{ ...x, termFrom: "assumed" }];
+    return ["intraday", "eqSt", "eqLt"].filter(b => t[b] > 0).map(b => { const f = t[b] / tot; return { ...x, bucket: b, termFrom: "trades", qty: x.qty !== null ? Math.round(x.qty * f * 1000) / 1000 : null, buyValue: x.buyValue * f, sellValue: x.sellValue * f, gain: x.gain * f, taxable: x.taxable * f, charges: (x.charges || 0) * f }; });
+  };
+  const fromReports = reps.flatMap((rep, i) => keep[i].flatMap(x => resolve(rep, x)).map(x => ({ key: x.isin || x.name, termFrom: x.termFrom || null, noDates: !!x.termUnknown, reportId: rep.id, account: rep.account, symbol: x.symbol || x.name, isin: x.isin, buyDate: x.buyDate, sellDate: x.sellDate, qty: x.qty,
     buy: x.qty && x.buyValue !== null ? x.buyValue / x.qty : null, sell: x.qty && x.sellValue !== null ? x.sellValue / x.qty : null, gain: x.taxable ?? x.gain, bucket: x.bucket, kind: x.kind, charges: x.charges ?? 0, fromReport: rep.broker, summaryOnly: !!x.summaryOnly, intraday: x.bucket === "intraday", long: /Lt$/.test(x.bucket) })));
   const computed = realised.filter(r => r.sellDate >= fy.from && r.sellDate <= fy.to && !(covered.has(r.account || "") && r.sellDate <= covered.get(r.account || "")));
   const inFy = [...computed, ...fromReports];
@@ -68,6 +79,7 @@ export function pnlView({ trades = [], accounts = [], holders = {}, unrealised =
   for (const r of inFy) {
     if (r.unmatched) continue;
     const id = r.account || "", a = byAcc.get(id) || byAcc.set(id, blank()).get(id); add(a, r); add(total, r);
+    if (r.noDates) continue; // a period total, not a sale on a day
     const mk = r.sellDate.slice(0, 7), m = byMonth.get(mk) || byMonth.set(mk, { intraday: 0, st: 0, lt: 0 }).get(mk), b = bucketOf(r);
     if (b === "intraday") m.intraday += r.gain; else if (/Lt$/.test(b)) m.lt += r.gain; else m.st += r.gain;
   }
@@ -98,7 +110,8 @@ export function pnlView({ trades = [], accounts = [], holders = {}, unrealised =
     sellDate: r.sellDate, buyDate: r.buyDate, account: r.account || "", accountLabel: label(r.account), symbol: r.symbol || r.isin || r.key, name: names.get(r.key) || names.get(r.symbol) || null, kind: r.kind || "stock",
     qty: r.qty === null || r.qty === undefined ? null : Math.round(r.qty * 1000) / 1000, buy: r.buy === null || r.buy === undefined ? null : Math.round(r.buy * 100) / 100, sell: r.sell === null || r.sell === undefined ? null : Math.round(r.sell * 100) / 100, gain: r.gain === null ? null : r0(r.gain),
     term: r.unmatched ? "No buy found" : TERM[bucketOf(r)], days: r.buyDate ? Math.round((Date.parse(r.sellDate) - Date.parse(r.buyDate)) / 864e5) : null,
-    charges: r.unmatched ? null : r0(r.charges ?? estimateCharges(r)), chargesEst: !r.fromReport && (r.charges === null || r.charges === undefined), src: r.fromReport || "trades"
+    charges: r.unmatched ? null : r0(r.charges ?? estimateCharges(r)), chargesEst: !r.fromReport && (r.charges === null || r.charges === undefined), src: r.fromReport || "trades",
+    noDates: !!r.noDates, termFrom: r.termFrom || null, reportId: r.reportId || null, isin: r.isin || null
   }));
   const months = [...byMonth.entries()].sort().map(([month, m]) => ({ month, intraday: r0(m.intraday), st: r0(m.st), lt: r0(m.lt), total: r0(m.intraday + m.st + m.lt) }));
   const warnings = [];
@@ -108,7 +121,8 @@ export function pnlView({ trades = [], accounts = [], holders = {}, unrealised =
     else if (r.to && r.to < fy.to && r.to < today && Date.parse(today) - Date.parse(r.to) > 20 * 864e5 && !r.fromApi) warnings.push({ id: r.id, text: `${r.label}: trades on file end on ${r.to}. Import a newer tradebook or its tax P&L report if you traded after that.` });
     if (r.unmatched) warnings.push({ id: r.id, text: `${r.label}: ${r.unmatched} sale${r.unmatched === 1 ? "" : "s"} in ${fy.label} had no matching buy (bought before the trades on file start). Import the broker's tax P&L report for this year: it has the buy prices.` });
   }
-  const notes = [];
+  const notes = [], assumed = fromReports.filter(r => r.termFrom === "assumed");
+  if (assumed.length) notes.push(`${assumed.length} stock${assumed.length === 1 ? "" : "s"} from a report without buy dates (Dhan) counted as short term: no trades on file show when they were bought. If one was held over a year, tap "Mark long term" on it in the list below.`);
   if (dropped) notes.push(`${dropped} mutual fund sale${dropped === 1 ? "" : "s"} appeared in two reports (INDmoney covers funds at every broker): counted once.`);
   const srcs = reps.map(r => ({ id: r.id, broker: r.broker, account: r.account, accountLabel: label(r.account), from: r.from, to: r.to, file: r.file || null, importedAt: r.importedAt || null, sales: r.rows.filter(x => !x.summaryOnly).length, other: r.other }));
   return { fy, fys, rules: TAX_RULES, slabRate, rows, holders: holderRows, total: { ...finish(total), unrealised: r0(rows.reduce((a, r) => a + (r.unrealised || 0), 0)) }, months, trades: tradeRows, tradeCount: inFy.length, warnings, notes, reports: srcs, today };
