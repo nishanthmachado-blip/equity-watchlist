@@ -1,5 +1,22 @@
 # Equity Watchlist MVP
 
+## v5.75.1: Swing trading back on your journal by default; the gap to the Tax view explained month by month
+- Fix: v5.74 / v5.75 switched the Swing trading screen's Booked profit and Swing income to broker trades on their own, which replaced your correct journal months with every short-term sale on file and left out Dhan (whose P&L reports carry no sale dates). Both are back on **✍️ My journal** unless you pick 🏦 Brokers yourself.
+- **🧾 "Your journal vs the Tax view: why they differ"** (under Booked profit): month by month, your journal, your brokers' short-term sales, and the Tax view's total, plus a "No sale date (Dhan)" row. The reasons are spelled out: the Tax view counts every sale (long-term, funds, debt, US); not every short-term sale is a swing trade; Dhan's reports have no dates.
+- On 🏦 Brokers, the same panel splits the Tax view into swing, long-term and funds / other.
+
+## v5.75.0: Swing trading's Booked profit matches your brokers, with the gap to the Tax view explained
+- **📅 Booked profit** on the Swing trading screen now has the same **🏦 Brokers / ✍️ My journal** switch as Swing income (one setting for both). On Brokers, the months, totals, trade counts and tax ≈ come from the Tax view's trades, not from what was typed into the journal.
+- **🧾 "Tax view says … why the difference?"**: for the year or months you pick, a month-by-month table of Tax view, Swing, Long term and Funds / other. The Tax view counts every sale (long-term sales of shares held over a year, mutual funds, debt ETFs, US stocks); Swing counts only short-term and same-day sales of stocks and ETFs. Sales from a report without sale dates (Dhan's P&L) are named too.
+- The closed-trades list under it is still your journal and says so.
+
+## v5.74.0: Swing trading's monthly income tracker uses your broker trades
+- **💰 Swing income** on the Swing trading screen has a new switch: **🏦 Brokers** (the Tax view's trades: tax P&L reports, tradebooks, Dhan, the daily pick-up and trades you add in the Swing book) or **✍️ My journal** (what you typed in). It starts on Brokers once there are broker trades. Your choice is remembered.
+- The chart, the month's progress to your target, win rate, average win / loss, streaks and the capital the target needs are all worked out from the trades you pick. Swing = short-term and same-day sales of stocks and ETFs over the last 12 months, across the two financial years.
+- **📅 Month by month**: a table of every month (trades, win rate, booked, after tax, % of target, ✅ hit / 🔻 loss). Click a month or its bar to list that month's sales: date, stock, account, quantity, buy and sell price, profit and days held.
+- Dhan P&L reports carry no sale dates, so their sales can't be put in a month; the note under the tracker says how many are left out.
+- Fix: v5.73's mobile table rule broke words mid-way in narrow table cells; words now wrap whole.
+
 ## v5.73.0: works on phones and tablets of every size, in a browser or an in-app web view
 - **Automated mobile check** (`npm run mobile`, also part of `npm run check`): opens all 39 screens on 13 Android and iOS sizes, from the Galaxy Fold cover screen (280 px) and the first iPhone SE (320 px) up to the iPad Mini and Galaxy Tab, plus phones held sideways. It fails when a screen scrolls sideways or something sticks out past the edge, when a script error is thrown, when a text box is under 16px (iPhone zooms the page when you tap it), when a button or checkbox is smaller than 24 × 24 px, or when a dialog doesn't fit the screen. It also checks the viewport tag and the iPhone home-bar padding. Options: `--device "iPhone SE"`, `--view networth`, `--shots folder/` (a screenshot of every screen), `--webkit` (iOS sizes on WebKit when it's installed). It needs Playwright (`npm i -D playwright && npx playwright install chromium`) and is skipped without it.
 - **Fixed what it found (412 problems → 0)**:

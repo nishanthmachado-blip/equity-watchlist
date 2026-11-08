@@ -342,3 +342,25 @@ table.dl-grid .dl-stock{position:sticky;left:0;background:var(--card,#fff);z-ind
 .dl-paste{font-family:ui-monospace,monospace;font-size:12px;width:100%;min-height:200px}.dl-list{margin:0 0 8px;padding-left:16px}.dl-list li{margin:4px 0}
 .dl-cell.auto{color:#2747a8;font-style:italic;background:rgba(39,71,168,.07)}.dl-auto{margin-top:12px;border:1px dashed var(--line);border-radius:12px;padding:8px 12px}.dl-auto summary{cursor:pointer}.dl-auto .primary{margin-top:6px}
 .dl-stockf{display:block;margin:0 0 10px}.dl-stockf .ui-input{width:100%}
+/* Swing income: which trades, and month by month */
+.si-src{display:inline-flex;gap:4px;padding:3px;border:1px solid var(--line);border-radius:999px;background:var(--card-bg,#fff)}
+.si-src button{border:0;background:none;padding:6px 12px;border-radius:999px;font:inherit;font-size:.85rem;font-weight:600;color:var(--muted);cursor:pointer;min-height:32px}
+.si-src button.active{background:var(--ix,#183b62);color:#fff}
+.si-col{cursor:pointer}.si-col.sel span{font-weight:800;color:var(--ink);text-decoration:underline}
+.si-months{margin:14px 0 6px}.si-months>summary{cursor:pointer;padding:6px 0}
+.si-mtab,.si-trades{width:100%;min-width:0!important;border-collapse:collapse}
+.si-mtab td,.si-mtab th,.si-trades td,.si-trades th{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left}
+.si-mtab .num,.si-trades .num{text-align:right}
+.si-mrow{cursor:pointer}.si-mrow:hover,.si-mrow.sel{background:color-mix(in srgb,var(--ix,#183b62) 7%,transparent)}
+.si-mt>td{padding:0 0 10px 12px!important;background:color-mix(in srgb,var(--ix,#183b62) 3%,transparent)}
+.si-trades{font-size:.88rem}
+.si-months .table-wrap{max-height:none!important}
+@media (max-width:699px){.si-mtab th:nth-child(3),.si-mtab td:nth-child(3),.si-mtab th:nth-child(5),.si-mtab td:nth-child(5){display:none}.si-mtab td,.si-mtab th{white-space:nowrap;padding:8px 6px}.si-mtab td:first-child{white-space:normal}.si-src{order:3}.si-trades th:nth-child(4),.si-trades td:nth-child(4),.si-trades th:nth-child(5),.si-trades td:nth-child(5){display:none}}
+.sw-bk-src{margin-left:auto}
+.sw-recon{margin:10px 0 0}.sw-recon>summary{cursor:pointer;padding:6px 0;font-size:.92rem}
+.sw-recon-t{width:100%;min-width:0!important;border-collapse:collapse;font-size:.88rem}.sw-recon-t td,.sw-recon-t th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}.sw-recon-t .num{text-align:right}
+.sw-recon .table-wrap{max-height:none!important}
+@media (max-width:699px){.sw-bk-src{margin-left:0}}
+@media (max-width:699px){.sw-recon-t td,.sw-recon-t th{padding:6px 5px;white-space:nowrap}}
+.sw-recon-why{margin:6px 0 10px;padding-left:18px}.sw-recon-why li{margin:3px 0}
+@media (max-width:699px){.sw-recon-t td:first-child{white-space:normal;min-width:64px}.sw-recon-t th{white-space:normal}}

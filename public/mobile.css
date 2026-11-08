@@ -156,8 +156,8 @@ body.standalone .tabbar{bottom:max(10px,env(safe-area-inset-bottom))!important}
   /* rating chips and small tables in cards wrap on the narrowest phones */
   .md-how{white-space:normal}
   .wk-ctl{flex-wrap:wrap}.wk-ctl select{min-width:120px!important}
-  .chip{max-width:100%;white-space:normal;overflow-wrap:anywhere}
-  main td,main th{overflow-wrap:anywhere}
+  .chip{max-width:100%;white-space:normal;overflow-wrap:break-word}
+  main td,main th{overflow-wrap:break-word}
   table.sw-prev{min-width:0!important;width:100%;table-layout:fixed}
 }
 @media (pointer:coarse){

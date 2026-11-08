@@ -1539,6 +1539,44 @@ async function swingBookPage(fyLabel = null) {
   return { ...book, fys: v.fys, accountsList: [...labels].map(([id, label]) => ({ id, label })).filter(a => a.id), manual, hasBroker: v.rows.some(r => r.trades) || lots.length > 0, reports: v.reports.map(r => ({ broker: r.broker, accountLabel: r.accountLabel, to: r.to })) };
 }
 
+// Closed swing trades from your brokers (the Tax view's records, via the Swing book) for the last 12 months: this
+// financial year and the one before. Rows from a report without sale dates (Dhan's P&L) can't go into a month.
+async function brokerSwingClosed() {
+  const today = istDay(), now = fyOf(today), prev = fyOf(`${Number(now.from.slice(0, 4)) - 1}-06-01`), cut = `${Number(today.slice(0, 4)) - 1}${today.slice(4, 7)}`;
+  const books = await Promise.all([now.label, prev.label].map(f => swingBookPage(f).catch(() => null)));
+  const seen = new Set(), closed = [], undated = { trades: 0, gain: 0 };
+  for (const b of books) for (const c of b?.closed || []) {
+    if (seen.has(c.k)) continue; seen.add(c.k);
+    if (!c.sellDay) { if (b === books[0]) { undated.trades++; undated.gain += c.gain; } continue; }
+    if (c.sellDay.slice(0, 7) < cut) continue;
+    closed.push({ symbol: c.symbol, account: c.accountLabel, qty: c.qty, buyAvg: c.buyAvg, sellAvg: c.sellAvg, pnl: c.gain, charges: c.charges, intraday: c.intraday, openedAt: c.buyDay ? `${c.buyDay}T06:00:00Z` : null, closedAt: `${c.sellDay}T06:00:00Z`, day: c.sellDay, days: c.days });
+  }
+  return { closed, undated: { trades: undated.trades, gain: Math.round(undated.gain) } };
+}
+// The Swing screen's Booked profit from your brokers (every financial year on file), and how it adds up to the Tax
+// view: the Tax view counts every sale (long-term, mutual funds, debt and US too); Swing counts only short-term and
+// same-day sales of stocks and ETFs.
+async function brokerBooked() {
+  const fys = (await pnlPage(null)).fys || [];
+  const [views, books] = await Promise.all([Promise.all(fys.map(f => pnlPage(f).catch(() => null))), Promise.all(fys.map(f => swingBookPage(f).catch(() => null)))]);
+  const rows = [], seen = new Set();
+  for (const b of books) for (const c of b?.closed || []) {
+    if (!c.sellDay || seen.has(c.k)) continue; seen.add(c.k);
+    const opened = c.buyDay ? `${c.buyDay}T06:00:00Z` : `${c.sellDay}T06:00:00Z`;
+    rows.push({ symbol: c.symbol, qty: c.qty, buyAvg: c.buyAvg, sellPrice: c.sellAvg, pnl: c.gain, openedAt: opened, closedAt: `${c.sellDay}T06:00:00Z`, lots: [{ qty: c.qty, price: c.buyAvg, at: opened }], intraday: c.intraday, account: c.accountLabel });
+  }
+  const group = t => (t.noDates ? "undated" : t.kind === "mf" ? "funds" : ["us", "debt"].includes(t.kind) ? "other" : ["STCG", "Intraday"].includes(t.term) ? "swing" : /LT/.test(t.term) ? "longTerm" : "other");
+  const recon = views.filter(Boolean).map(v => {
+    const tot = { swing: 0, longTerm: 0, funds: 0, other: 0, undated: 0 }, M = new Map();
+    for (const t of v.trades || []) { if (t.gain === null) continue; const g = group(t); tot[g] += t.gain; if (g === "undated") continue; const m = M.get(t.sellDate.slice(0, 7)) || M.set(t.sellDate.slice(0, 7), { month: t.sellDate.slice(0, 7), swing: 0, longTerm: 0, funds: 0, other: 0 }).get(t.sellDate.slice(0, 7)); m[g] += t.gain; }
+    const R = o => Object.fromEntries(Object.entries(o).map(([k, x]) => [k, typeof x === "number" ? Math.round(x) : x]));
+    const months = [...M.values()].map(m => R({ ...m, tax: m.swing + m.longTerm + m.funds + m.other })).sort((a, b) => a.month.localeCompare(b.month));
+    return { fy: v.fy.label, ...R(tot), tax: Math.round(Object.values(tot).reduce((a, x) => a + x, 0)), months };
+  });
+  return { rows, recon };
+}
+const monthTrades = rows => { const M = {}; for (const t of rows) { const m = t.day.slice(0, 7); (M[m] ||= []).push(t); } for (const m in M) M[m].sort((a, b) => b.day.localeCompare(a.day)); return M; };
+
 // ---- Swing journal ↔ broker (swingrecon.mjs): the journal's sales checked against the broker's records ----
 async function swingRecon(fyLabel = null) {
   const [v, st, master] = await Promise.all([pnlPage(fyLabel), readJson(swingFile(), {}), scripMaster()]);
@@ -4312,18 +4350,30 @@ async function appHandler(req, res, url) {
     if (url.pathname.startsWith("/api/swing")) {
       const op = url.pathname.slice("/api/swing".length).replace(/^\//, "");
       try {
-        if (req.method === "GET" && !op) return reply(res, 200, await swingView({ fresh: url.searchParams.get("fresh") === "1" }));
+        if (req.method === "GET" && !op) {
+          const v = await swingView({ fresh: url.searchParams.get("fresh") === "1" }), st = await readJson(swingFile(), {});
+          // Booked profit: your brokers' trades (as the Tax view has them) unless you picked the journal
+          const bb = await brokerBooked().catch(() => ({ rows: [], recon: [] })), source = st.settings?.incomeSource === "brokers" ? "brokers" : "journal"; // the journal unless you switch: it knows which sales were swing trades
+          const charges = { cessPct: 4, ...(v.taxInfo?.charges || {}) };
+          const booked = source === "brokers" && bb.rows.length ? withBrokerTax(bookedSummary(bb.rows, { taxPaid: st.taxPaid || [], ltUsedElsewhere: st.settings?.ltUsedElsewhere || 0, cessPct: charges.cessPct ?? 4 }), v.booked?.brokerTax || null, charges.cessPct ?? 4) : v.booked;
+          return reply(res, 200, { ...v, booked, bookedSource: source === "brokers" && bb.rows.length ? "brokers" : "journal", bookedCounts: { brokers: bb.rows.length, journal: v.realised?.count || 0 }, bookedRecon: bb.recon });
+        }
         if (req.method === "GET" && op === "summary") { // for the strip on Home
           const st = await readJson(swingFile(), {}); if (!(st.positions || []).length && !(st.watch || []).length) return reply(res, 200, { has: false });
           const v = await swingView(), t = v.totals;
           return reply(res, 200, { has: true, positions: v.positions.length, watch: v.watch.length, takeProfit: t.takeProfit, deploy: t.deploy, deployNow: t.deployNow, near: [...v.positions, ...v.watch].filter(r => /^near/.test(r.status)).length, pnl: t.pnl, pnlPct: t.pnlPct, cash: t.cash, cashShort: t.cashShort, top: [...v.positions, ...v.watch].filter(r => r.status === "take-profit" || r.status === "deploy").slice(0, 3).map(r => ({ symbol: r.symbol, name: r.name, status: r.status, note: r.note })), marketOpen: v.marketOpen });
         }
         if (op === "income") { // Swing income tracker: monthly booked profit against your target, and the capital it takes
-          if (req.method === "POST") { const b = await readBody(req), t = Number(String(b.target ?? "").replace(/[,₹\s]/g, "")); if (!(t >= 1000 && t <= 1e8)) return reply(res, 400, { message: "Enter a monthly target between ₹1,000 and ₹10 Cr." }); await withUserLock(async () => { const st = await readJson(swingFile(), {}); st.settings = { ...(st.settings || {}), incomeTarget: Math.round(t) }; await writeJson(swingFile(), st); }); }
+          if (req.method === "POST") { const b = await readBody(req); if (b.source) { const src = b.source === "journal" ? "journal" : "brokers"; await withUserLock(async () => { const st = await readJson(swingFile(), {}); st.settings = { ...(st.settings || {}), incomeSource: src }; await writeJson(swingFile(), st); }); } else { const t = Number(String(b.target ?? "").replace(/[,₹\s]/g, "")); if (!(t >= 1000 && t <= 1e8)) return reply(res, 400, { message: "Enter a monthly target between ₹1,000 and ₹10 Cr." }); await withUserLock(async () => { const st = await readJson(swingFile(), {}); st.settings = { ...(st.settings || {}), incomeTarget: Math.round(t) }; await writeJson(swingFile(), st); }); } }
           else if (req.method !== "GET") return reply(res, 405, { message: "GET or POST." });
           const st = await readJson(swingFile(), {}), open = (st.positions || []).reduce((a, p) => a + (Number(p.buyAvg ?? p.avgPrice) || 0) * (Number(p.qty) || 0), 0);
           const capital = Number.isFinite(st.cash?.balance) ? st.cash.balance + open : open > 0 ? open : null;
-          return reply(res, 200, { ...swingIncome(st.closed || [], { target: st.settings?.incomeTarget || INCOME_DEFAULTS.target, capital, today: istDay() }), openCost: Math.round(open), cash: Number.isFinite(st.cash?.balance) ? Math.round(st.cash.balance) : null });
+          // which trades: your brokers' (the Tax view's records; the default once there are any) or the hand-typed journal
+          const bk = await brokerSwingClosed(), journal = (st.closed || []).filter(t => t.closedAt);
+          const source = st.settings?.incomeSource === "brokers" ? "brokers" : "journal";
+          const rows = source === "brokers" ? bk.closed : journal.map(t => ({ symbol: t.symbol, account: null, qty: Number(t.qty) || null, buyAvg: Number(t.buyAvg) || null, sellAvg: Number(t.sellPrice ?? t.sellAvg) || null, pnl: Number(t.pnl), intraday: false, openedAt: t.openedAt || null, closedAt: t.closedAt, day: new Date(new Date(t.closedAt).getTime() + 19800e3).toISOString().slice(0, 10), days: t.openedAt ? Math.max(1, Math.round((new Date(t.closedAt) - new Date(t.openedAt)) / 864e5)) : null })).filter(t => Number.isFinite(t.pnl));
+          return reply(res, 200, { ...swingIncome(rows, { target: st.settings?.incomeTarget || INCOME_DEFAULTS.target, capital, today: istDay() }), openCost: Math.round(open), cash: Number.isFinite(st.cash?.balance) ? Math.round(st.cash.balance) : null,
+            source, counts: { brokers: bk.closed.length, journal: journal.length }, undated: source === "brokers" ? bk.undated : null, monthTrades: monthTrades(rows) });
         }
         if (req.method === "GET" && op === "export.xlsx") return sendSwingExport(res);
         if (req.method === "GET" && op === "recon") return reply(res, 200, await swingRecon(url.searchParams.get("fy")));
