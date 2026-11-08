@@ -53,7 +53,8 @@ import { buildXlsx } from "./xlsx.mjs";
 import { isEtf, indexFor, parseAllIndices, etfLens, etfType } from "./etf.mjs";
 import { parseNseActions, parseYahooEvents, mergeActions, adjustPosition, adjustWatch } from "./corpactions.mjs";
 import { parseNseEvents, parseYahooCalendar, eventsFor, swingEventAdvice } from "./events.mjs";
-import { returnsView, indexTwin, swingFlows, dividendsReceived, forwardDividends, xirr } from "./returns.mjs";
+import { returnsView, indexTwin, swingFlows, dividendsReceived, forwardDividends, xirr, closeOn } from "./returns.mjs";
+import { muhuratView, sanitizePick, sanitizeYear, sanitizeWatch as sanitizeMuhuratWatch, muhuratWatchView, MUHURAT_DATES } from "./muhurat.mjs";
 import { logIdeas, judgeIdea, ideaStats } from "./ideastrack.mjs";
 import { RULE_TYPES, sanitizeRule, describeRule, checkLiveRule, checkEodRule } from "./alertrules.mjs";
 import { chartEvents, applyDrawingOp } from "./chartmarks.mjs";
@@ -1009,6 +1010,31 @@ async function decideView({ amount = null } = {}) {
 }
 // ---- Opportunity fund (oppfund.mjs): money kept for market falls, put to work in steps as Nifty falls from its high ----
 const oppFile = () => userFile("opportunity.json");
+// ---- Diwali Muhurat picks (muhurat.mjs): bought each Muhurat session, held for 10–20 years, CAGR year by year ----
+const muhuratFile = () => userFile("muhurat.json");
+const muhuratTried = new Map(); // "NSE:SYM" → when a first quote was tried (never wait twice for the same stock in 6 h)
+async function muhuratPage() {
+  const [st, stocks, master] = await Promise.all([readJson(muhuratFile(), { picks: [], years: {} }), readWatchlist().catch(() => []), scripMaster()]);
+  const wl = new Map(stocks.map(x => [symOf(x), x])), bySym = new Map(master.list.map(m => [m.symbol, m]));
+  const eodLast = async sym => { const b = await eodBars(sym); return b.length ? { price: b.at(-1).c, asOf: new Date(b.at(-1).t * 1000).toISOString() } : null; };
+  const quote = sym => { const k = `NSE:${sym}`, l = livePriceCache.get(k), q = quoteCache.get(k), w = wl.get(sym);
+    if (l?.price > 0) return { price: l.price, asOf: new Date(l.at || Date.now()).toISOString() }; if (q?.price > 0) return { price: q.price, asOf: q.asOf || new Date(q.at).toISOString() }; if (w?.price > 0) return { price: w.price, asOf: w.priceAt || w.updatedAt || null }; return null; };
+  const syms = [...new Set([...(st.picks || []), ...(st.watch || [])].map(p => p.symbol))];
+  // a stock never priced yet: one quick try (≤1.5 s, once per 6 h); the regular price refresh keeps it current after that
+  const missing = syms.filter(s => !quote(s) && !(Date.now() - (muhuratTried.get(s) || 0) < 6 * 36e5));
+  if (missing.length) { for (const s of missing) muhuratTried.set(s, Date.now()); const got = await fetchQuotesFast(missing.map(symbol => ({ symbol, exchange: "NSE" })), 1500).catch(() => new Map()); for (const [k, q] of got) quoteCache.set(k, { ...q, at: Date.now() }); }
+  const prices = new Map(); for (const s of syms) prices.set(s, quote(s) || await eodLast(s));
+  const nb = await eodBars("NIFTYBEES"), nNow = quote("NIFTYBEES")?.price ?? (nb.length ? nb.at(-1).c : null);
+  const names = new Map(syms.map(s => [s, bySym.get(s)?.name || wl.get(s)?.name || null]));
+  const v = muhuratView({ picks: st.picks || [], years: st.years || {}, price: sym => prices.get(sym) || null, niftyNow: nNow, niftyOn: d => closeOn(nb, d), names, today: istDay() });
+  // the watchlist: today's price, 52-week range from saved closes, and the main watchlist's valuation where the stock is there
+  const ranges = new Map(); for (const w of st.watch || []) { const b = (await eodBars(w.symbol)).slice(-252).map(x => x.c).filter(x => x > 0); if (b.length > 20) ranges.set(w.symbol, { high52: Math.max(...b), low52: Math.min(...b) }); }
+  let verdicts = new Map();
+  if ((st.watch || []).some(w => wl.has(w.symbol))) { try { const { rows } = await computeRows(); verdicts = new Map(rows.map(r => [String(r.symbol || "").toUpperCase(), r])); } catch { /* valuation optional */ } }
+  const today = istDay(), nextDate = Object.values(MUHURAT_DATES).filter(x => x >= today).sort()[0] || null;
+  const watch = muhuratWatchView({ watch: st.watch || [], price: sym => prices.get(sym) || null, range: sym => ranges.get(sym) || null, verdict: sym => verdicts.get(sym) || null, names, nextDate, today });
+  return { ...v, watch, dates: MUHURAT_DATES, unknown: syms.filter(s => master.list.length > 100 && !bySym.has(s)) };
+}
 async function oppPage({ withPicks = true } = {}) {
   const [st, scan] = await Promise.all([readJson(oppFile(), {}), readJson(swingScanFile, {})]);
   const q = quoteCache.get("NSE:NIFTYBEES"), live = q?.price > 0 && Date.now() - (q.at || 0) < 20 * 60e3 ? q.price : null;
@@ -2452,6 +2478,7 @@ async function eodUniverse() {
     for (const x of stocks) if (symOf(x) && (x.exchange || "NSE") === "NSE") set.add(symOf(x));
     for (const x of [...(st.positions || []), ...(st.watch || [])]) if ((x.exchange || "NSE") === "NSE") set.add(x.symbol);
     for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol) set.add(String(h.symbol).toUpperCase());
+    { const m = await readJson(muhuratFile(), { picks: [] }); for (const p of [...(m.picks || []), ...(m.watch || [])]) if (p.symbol) set.add(String(p.symbol).toUpperCase()); } // Diwali Muhurat picks and watchlist: closing prices kept
   });
   for (const x of SEED_STOCKS) set.add(x.symbol);
   return set;
@@ -3574,6 +3601,7 @@ async function activeSymbols() {
   for (const x of [...(st.positions || []), ...(st.watch || [])]) set.add(x.symbol);
   for (const a of Object.values(hold.accounts || {})) for (const h of a.holdings || []) if (h.symbol) set.add(String(h.symbol).toUpperCase());
   for (const x of fav.symbols || []) set.add(String(x).toUpperCase());
+  { const m = await readJson(muhuratFile(), { picks: [] }); for (const p of [...(m.picks || []), ...(m.watch || [])]) if (p.symbol) set.add(String(p.symbol).toUpperCase()); } // Diwali Muhurat picks and watchlist
   for (const t of themes?.themes || []) for (const x of t.symbols || []) { const sym = typeof x === "string" ? x : x?.symbol; if (sym) set.add(String(sym).toUpperCase()); } // Long-term theme stocks
   return set;
 }
@@ -3625,6 +3653,7 @@ async function refreshAllPrices({ user = null, force = false } = {}) {
         accounts.push(currentUser());
         for (const x of stocks) { const sym = symOf(x); if (sym && act.has(sym)) items.set(`${x.exchange || "NSE"}:${sym}`, { symbol: sym, exchange: x.exchange || "NSE", last: x.price }); }
         for (const x of [...(st.positions || []), ...(st.watch || [])]) { const k = `${x.exchange || "NSE"}:${x.symbol}`; if (!items.has(k)) items.set(k, { symbol: x.symbol, exchange: x.exchange || "NSE" }); }
+        { const m = await readJson(muhuratFile(), { picks: [] }); for (const p of [...(m.picks || []), ...(m.watch || [])]) { const k = `NSE:${p.symbol}`; if (!items.has(k)) items.set(k, { symbol: p.symbol, exchange: "NSE" }); } } // Diwali Muhurat picks and watchlist
       };
       if (user) await asUser(user, collect); else await forEachUser(collect);
       const all = [...items.values()], need = all.filter(i => force || !(livePriceCache.get(`${i.exchange}:${i.symbol}`)?.at > Date.now() - LIVE_MAX_AGE()));
@@ -4010,6 +4039,37 @@ async function appHandler(req, res, url) {
       const { goals } = await readBody(req); if (!Array.isArray(goals) || goals.length > 30) return reply(res, 400, { message: "goals must be a list (30 max)" });
       const clean = goals.map(g => ({ symbol: String(g.symbol || "").toUpperCase().replace(/[^A-Z0-9.&-]/g, "").slice(0, 20), market: g.market === "US" ? "US" : "IN", target: Math.max(1, Math.round(Number(g.target) || 0)), current: Number.isFinite(Number(g.current)) ? Math.max(0, Number(g.current)) : null, note: String(g.note || "").slice(0, 80) })).filter(g => g.symbol && g.target > 0);
       await writeJson(userFile("share-goals.json"), { goals: clean }); return reply(res, 200, { goals: clean });
+    }
+    if (url.pathname.startsWith("/api/muhurat")) {
+      const op = url.pathname.slice("/api/muhurat".length).replace(/^\//, "");
+      try {
+        if (req.method === "GET" && !op) return reply(res, 200, await muhuratPage());
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown operation." });
+        const b = await readBody(req), today = istDay(); let notice = "";
+        await withUserLock(async () => {
+          const st = await readJson(muhuratFile(), { picks: [], years: {} }); st.picks ||= []; st.years ||= {};
+          if (op === "add" || op === "edit") {
+            const p = sanitizePick(b, { today, years: st.years });
+            if (op === "edit") { const i = st.picks.findIndex(x => x.id === b.id); if (i < 0) throw new Error("That pick is gone."); st.picks[i] = { ...p, id: b.id }; notice = `${p.symbol} updated.`; }
+            else { if (st.picks.length >= 1000) throw new Error("That's a lot of picks: remove some first."); st.picks.push(p); notice = `${p.symbol} added to ${p.year}.`; }
+          } else if (op === "delete") { const n = st.picks.length; st.picks = st.picks.filter(x => x.id !== b.id); if (st.picks.length === n) throw new Error("That pick is gone."); notice = "Removed."; }
+          else if (op === "watch-add" || op === "watch-edit") {
+            st.watch ||= [];
+            const sym = String(b.symbol || "").trim().toUpperCase().replace(/^(NSE|BSE):/, ""), eb = /^[A-Z0-9&-]{1,20}$/.test(sym) ? await eodBars(sym) : [];
+            const q = livePriceCache.get(`NSE:${sym}`)?.price ?? quoteCache.get(`NSE:${sym}`)?.price ?? (eb.length ? eb.at(-1).c : null); // price when added: live, else the last close
+            if (op === "watch-edit") { const i = st.watch.findIndex(x => x.id === b.id); if (i < 0) throw new Error("That stock is gone."); st.watch[i] = sanitizeMuhuratWatch({ ...st.watch[i], ...b, id: b.id, addedOn: st.watch[i].addedOn, addedPrice: st.watch[i].addedPrice }, { today }); notice = `${st.watch[i].symbol} updated.`; }
+            else { const w = sanitizeMuhuratWatch(b, { today, price: q }); if (st.watch.some(x => x.symbol === w.symbol)) throw new Error(`${w.symbol} is already on the watchlist.`); if (st.watch.length >= 300) throw new Error("The watchlist is full."); st.watch.push(w); notice = `${w.symbol} added to the Muhurat watchlist.`; }
+          } else if (op === "watch-delete") { const n = (st.watch || []).length; st.watch = (st.watch || []).filter(x => x.id !== b.id); if (st.watch.length === n) throw new Error("That stock is gone."); notice = "Removed from the watchlist."; }
+          else if (op === "watch-bought") { // bought it in the Muhurat session: becomes that year's pick, leaves the watchlist
+            const w = (st.watch || []).find(x => x.id === b.id); if (!w) throw new Error("That stock is gone.");
+            const p = sanitizePick({ ...b, symbol: w.symbol, note: b.note ?? w.note, id: undefined }, { today, years: st.years }); st.picks.push(p); st.watch = st.watch.filter(x => x.id !== b.id); notice = `${p.symbol} moved to your ${p.year} picks.`;
+          }
+          else if (op === "year") { const y = sanitizeYear(b, today); st.years[y.year] = { ...(st.years[y.year] || {}), ...y }; delete st.years[y.year].year; if (b.niftyThen === "") delete st.years[y.year].niftyThen; notice = `${y.year} saved.`; }
+          else throw new Error("Unknown operation.");
+          await writeJson(muhuratFile(), st);
+        });
+        return reply(res, 200, { ...(await muhuratPage()), notice });
+      } catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname.startsWith("/api/swingbook")) {
       const op = url.pathname.slice("/api/swingbook".length).replace(/^\//, "");

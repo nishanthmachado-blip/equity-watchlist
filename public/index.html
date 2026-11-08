@@ -29,6 +29,7 @@
       <button id="viewLongterm" class="viewTab" data-goto="longterm" title="Long-term themes"><span class="ico" aria-hidden="true">🧭</span><span class="lbl">Long-term themes</span></button>
       <button id="viewReview" class="viewTab" data-goto="review" title="Holdings clean-up"><span class="ico" aria-hidden="true">🧹</span><span class="lbl">Holdings clean-up</span></button>
       <button id="viewSwing" class="viewTab" title="Swing trading"><span class="ico" aria-hidden="true">⚡</span><span class="lbl">Swing trading</span></button>
+      <button id="viewMuhurat" class="viewTab" data-goto="muhurat" title="Diwali Muhurat picks: held for the long run, CAGR year by year"><span class="ico" aria-hidden="true">🪔</span><span class="lbl">Muhurat picks</span></button>
       <button id="viewSwingBook" class="viewTab" data-goto="swingbook" title="Swing book: from your brokers' records"><span class="ico" aria-hidden="true">📗</span><span class="lbl">Swing book (brokers)</span></button>
       <button id="viewReturns" class="viewTab" data-goto="returns" title="Returns vs index"><span class="ico" aria-hidden="true">📈</span><span class="lbl">Returns vs index</span></button>
       <button id="viewEvents" class="viewTab" data-goto="events" title="Results &amp; dividends calendar"><span class="ico" aria-hidden="true">📅</span><span class="lbl">Results &amp; dividends</span></button>
@@ -241,6 +242,10 @@
     <section id="bkView" data-feature-view="buckets" hidden>
       <section class="toolbar"><span class="hint">Your net worth in four buckets: safety, short term, long-term growth and retirement. Click a bucket to jump to it.</span><button type="button" class="ghost" data-bk-settings>⚙ Settings</button><button type="button" class="ghost" id="bkReload">⟳ Refresh</button></section>
       <div id="bkSum"></div><div id="bkBody"><p class="hint">Loading…</p></div><div id="bkNotes"></div>
+    </section>
+    <section id="mhView" data-feature-view="muhurat" hidden>
+      <section class="toolbar"><span class="hint">The stocks you buy each Diwali in the Muhurat session, kept for 10–20 years: what each year's picks are worth now and how fast they compound.</span><button type="button" class="ghost" id="mhReload">⟳ Refresh</button></section>
+      <div id="mhBody"><p class="hint">Loading…</p></div>
     </section>
     <section id="sbView" data-feature-view="swingbook" hidden>
       <section class="toolbar"><span class="hint">Your swing trades exactly as your brokers report them: imported tax P&L and tradebooks, the daily pick-up and trades you add. The old Swing trading journal stays as it is and isn't used here.</span><button type="button" class="ghost" id="sbReload">⟳ Refresh</button></section>

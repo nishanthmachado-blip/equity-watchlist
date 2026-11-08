@@ -1,5 +1,23 @@
 # Equity Watchlist MVP
 
+## v5.69.1: Muhurat watchlist
+
+- **Muhurat picks → 👀 Watchlist:** a shortlist of stocks you're considering for the next Diwali.
+  - Each stock shows today's price, the change since you added it, how far it is from your **buy-below** price (✅ when at or under it, sorted first), how far it is below its 52-week high (from saved closing prices), and the valuation status and buy zone from your main watchlist when the stock is in it. It also shows your **planned amount** and about how many shares that buys at today's price.
+  - Cards show the next Muhurat date and days to go, how many stocks are at their buy-below price, and the total planned against that year's budget (flagged when over).
+  - **✓ Bought** moves a stock into that year's picks, with quantity and price prefilled from the planned amount and today's price. ✎ edits and ✕ removes.
+- Watchlist stocks get prices and closing history like the picks.
+
+## v5.69.0: Diwali Muhurat picks
+
+- **New screen: 🪔 Muhurat picks** (Your portfolio). It tracks the stocks you buy each Diwali in the Muhurat session and hold for 10–20 years. Entries are made by hand; nothing is sold here.
+  - **Year tabs** (2026, 2025, …) plus **All years**, and **+ Another year** for older Diwalis.
+  - **Each pick:** quantity, buy price, buy date (defaults to that year's Muhurat date; NSE dates 2016–2026 built in), today's price, worth, gain, and **CAGR** with how many years the money takes to double at that rate. CAGR shows only once a pick is a year old, because a few months annualised is misleading. Until then it shows when the pick turns long term. Edit or remove a pick at any time.
+  - **Each year:** invested, worth today, CAGR, and the **same money in Nifty** (NIFTYBEES) from the same day, with how far ahead or behind you are. NIFTYBEES's price that day comes from saved closing prices, or you can type it in the year's ⚙ settings, along with the Muhurat date and an optional budget.
+  - **All years:** total invested and worth, **XIRR** across every year's buys, winners, the best compounder, and each Diwali side by side (click a year to open it).
+- **Prices:** Muhurat stocks join the regular price refresh and daily closing prices, like your watchlist and holdings. A stock never priced before gets one quick try (up to 1.5 s) when the page opens.
+- Picks are stored per login (`muhurat.json`) and never sent to Ask AI. Perf baseline refreshed for `/api/muhurat`.
+
 ## v5.68.2: click a figure to see its sales
 
 - **Tax view → P&L across all your brokers:** click any figure in an account's row (sales, intraday, short term, long term, other assets, realised, charges, net) to jump to **Every sale** filtered to that account and type. The heading shows the filter, with **show all** to clear it. The "All brokers" row works the same way across accounts. The type filter gains **All sales** and **Other assets**.
