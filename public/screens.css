@@ -328,3 +328,17 @@ table.sb-t{min-width:0!important;width:100%;font-size:13px}table.sb-t td,table.s
 table.mh-t{min-width:0!important;width:100%;font-size:13px}table.mh-t td,table.mh-t th{padding:7px 8px!important;vertical-align:top}.mh-row{cursor:pointer}.mh-row:hover td{background:var(--pill-bg)}.mh-act{white-space:nowrap}
 .mh-set{margin-top:12px;border:1px dashed var(--line);border-radius:12px;padding:8px 12px}.mh-set summary{cursor:pointer;font-weight:600}.mh-set .primary{margin-top:6px}
 .mh-tabs button.mh-wtab.on{background:#0f766e;border-color:#0f766e}tr.mh-hit td{background:rgba(31,157,85,.08)}
+/* Dividends received, month by month */
+.dl-tools{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0 10px}.dl-tools .mh-tabs{margin:0}.dl-btns{display:flex;gap:8px;flex-wrap:wrap}
+.dl-btns a.btnlike{background:var(--btn-bg);border:1px solid var(--btn-border);color:var(--ink);padding:6px 12px;font-size:12px;border-radius:999px;text-decoration:none;font-weight:600}
+.dl-top{font-size:15px!important;line-height:1.3}
+.dl-wrap{overflow-x:auto;max-height:none!important;overflow-y:visible}table.dl-grid{min-width:980px!important;width:100%;font-size:12.5px;border-collapse:collapse}table.dl-grid td,table.dl-grid th{padding:5px 6px!important;white-space:nowrap}
+table.dl-grid .dl-stock{position:sticky;left:0;background:var(--card,#fff);z-index:1;min-width:120px;text-align:left}table.dl-grid thead .dl-stock{background:inherit}
+.dl-cell{cursor:pointer;color:var(--ink)}.dl-cell:hover{background:var(--pill-bg);outline:1px dashed var(--line)}.dl-cell.has{background:rgba(31,157,85,.07);font-weight:600}
+.dl-future{opacity:.45}.dl-total td{border-top:2px solid var(--line)!important;background:var(--pill-bg)}.dl-prev td{font-size:11.5px}
+.dl-who td{vertical-align:top;font-size:11px;color:var(--muted);white-space:normal!important;min-width:60px;line-height:1.35}
+.dl-bars{display:flex;gap:8px;align-items:flex-end;margin:10px 0 0;flex-wrap:wrap}.dl-bar{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:var(--muted)}.dl-pair{display:flex;gap:2px;align-items:flex-end;height:72px}
+.dl-pair i,.dl-legend i{display:inline-block;width:10px;border-radius:3px 3px 0 0}.dl-pair i.cur,.dl-legend i.cur{background:#1f9d55}.dl-pair i.prev,.dl-legend i.prev{background:#c9d3e0}.dl-legend{width:100%;margin:4px 0 0}.dl-legend i{height:10px;border-radius:2px;margin:0 3px 0 10px;vertical-align:-1px}
+.dl-paste{font-family:ui-monospace,monospace;font-size:12px;width:100%;min-height:200px}.dl-list{margin:0 0 8px;padding-left:16px}.dl-list li{margin:4px 0}
+.dl-cell.auto{color:#2747a8;font-style:italic;background:rgba(39,71,168,.07)}.dl-auto{margin-top:12px;border:1px dashed var(--line);border-radius:12px;padding:8px 12px}.dl-auto summary{cursor:pointer}.dl-auto .primary{margin-top:6px}
+.dl-stockf{display:block;margin:0 0 10px}.dl-stockf .ui-input{width:100%}

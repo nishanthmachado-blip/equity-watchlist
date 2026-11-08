@@ -54,6 +54,7 @@ import { isEtf, indexFor, parseAllIndices, etfLens, etfType } from "./etf.mjs";
 import { parseNseActions, parseYahooEvents, mergeActions, adjustPosition, adjustWatch } from "./corpactions.mjs";
 import { parseNseEvents, parseYahooCalendar, eventsFor, swingEventAdvice } from "./events.mjs";
 import { returnsView, indexTwin, swingFlows, dividendsReceived, forwardDividends, xirr, closeOn } from "./returns.mjs";
+import { ledgerView, sanitizeEntry as sanitizeDivEntry, parsePaste as parseDivPaste, MONTHS as DIV_MONTHS, holdingMatcher, autoCredits, fyDividends } from "./divledger.mjs";
 import { muhuratView, sanitizePick, sanitizeYear, sanitizeWatch as sanitizeMuhuratWatch, muhuratWatchView, MUHURAT_DATES } from "./muhurat.mjs";
 import { logIdeas, judgeIdea, ideaStats } from "./ideastrack.mjs";
 import { RULE_TYPES, sanitizeRule, describeRule, checkLiveRule, checkEodRule } from "./alertrules.mjs";
@@ -1010,6 +1011,49 @@ async function decideView({ amount = null } = {}) {
 }
 // ---- Opportunity fund (oppfund.mjs): money kept for market falls, put to work in steps as Nifty falls from its high ----
 const oppFile = () => userFile("opportunity.json");
+// ---- Dividends received, month by month (divledger.mjs): recorded as they arrive or pasted from your own sheet ----
+const divLedgerFile = () => userFile("dividend-ledger.json");
+// Dividends your holdings earn are added on their own (shares held on the ex-date × dividend per share, from NSE's
+// announcements and the dividend history), from the "auto from" date; you confirm, change or hide each one.
+async function divLedgerPage(year = null) {
+  const today = istDay(), { st, autos, match, holdings } = await divLedgerData(true);
+  const v = ledgerView([...(st.entries || []), ...autos], { year, today, shares: name => match(name)?.qty ?? null });
+  // this financial year's dividends for income tax (the Tax view uses the same numbers)
+  const fyNow = fyOf(today), fyd = fyDividends([...(st.entries || []), ...autos], { fy: fyNow }), hold = await readJson(taxHoldersFile(), { holders: {} });
+  const slab = Number.isFinite(hold.slabRate) ? hold.slabRate : 0.3;
+  return { ...v, auto: { ...st.auto, found: autos.length, holdings: holdings.length }, holdingNames: holdings.map(h => ({ symbol: h.symbol, name: h.name, qty: h.qty })).sort((a, b) => a.symbol.localeCompare(b.symbol)),
+    tax: { fy: fyd.fy, gross: fyd.gross, credited: fyd.credited, estimated: fyd.estimated, tds: fyd.tds, slabRate: slab, tax: Math.round(fyd.gross * slab), due: Math.round(fyd.gross * slab - fyd.tds), tdsLimit: fyd.tdsLimit, count: fyd.count } };
+}
+// the ledger's entries plus dividends your holdings earned that aren't recorded yet (auto-added); init: switch auto-add
+// on the first time (only the Received tab does that, not the Tax view)
+async function divLedgerData(init = false) {
+  const today = istDay();
+  let st = await readJson(divLedgerFile(), { entries: [] });
+  if (!st.auto && init) { st = await withUserLock(async () => { const cur = await readJson(divLedgerFile(), { entries: [] }); if (!cur.auto) { cur.auto = { on: true, from: `${today.slice(0, 7)}-01` }; await writeJson(divLedgerFile(), cur); } return cur; }); }
+  const [holdings, tb, accounts] = await Promise.all([holdingsOf("all"), readJson(taxFile(), { trades: [] }), accountsList()]);
+  const match = holdingMatcher(holdings), entries = st.entries || [];
+  // the grid's own names for your holdings, so a credit lands in the row you already have ("Infy", not INFY)
+  const rowOf = new Map(); for (const e of entries) { const h = match(e.stock); if (h && !rowOf.has(h.symbol)) rowOf.set(h.symbol, e.stock); }
+  let autos = [];
+  if (st.auto?.on && holdings.length) {
+    const single = accounts.length === 1 ? accounts[0].id : null, syms = new Set(holdings.map(h => h.symbol));
+    const trades = (tb.trades || []).filter(x => x.symbol && syms.has(x.symbol)).map(x => ({ ...x, account: x.account || single }));
+    const received = dividendsReceived({ trades, holdings, dividends: await allDividends(syms), from: st.auto.from, to: today });
+    autos = autoCredits({ received, entries, rowName: sym => rowOf.get(sym) || sym, from: st.auto.from, today, dismissed: st.dismissed || [] });
+  }
+  return { st, autos, match, holdings };
+}
+async function sendDivLedgerExport(res, year) {
+  const v = await divLedgerPage(year), M = { type: "money", width: 10 };
+  const cols = [{ header: "Stock", key: "stock", width: 22 }, ...DIV_MONTHS.map((m, i) => ({ header: m, key: `m${i}`, ...M })), { header: "Total", key: "total", type: "money", width: 12 }, { header: `${v.year - 1}`, key: "lastYear", type: "money", width: 12 }];
+  const rows = v.rows.map(r => ({ stock: r.stock, ...Object.fromEntries(r.months.map((x, i) => [`m${i}`, x.amount || null])), total: r.total, lastYear: r.lastYear }));
+  const totals = { stock: "Total", ...Object.fromEntries(v.monthTotals.map((x, i) => [`m${i}`, x])), total: v.total, lastYear: v.prevTotal || null };
+  const payers = DIV_MONTHS.map((m, i) => ({ month: m, amount: v.monthTotals[i], who: v.payers[i].join(", ") }));
+  const buf = buildXlsx([{ name: `Dividends ${v.year}`, columns: cols, rows, totals }, { name: "Who paid when", columns: [{ header: "Month", key: "month", width: 8 }, { header: "Received", key: "amount", type: "money", width: 12 }, { header: "Paid by", key: "who", width: 80 }], rows: payers }]);
+  res.writeHead(200, { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Length": buf.length, "Cache-Control": "no-store", "Content-Disposition": `attachment; filename="dividends-received-${v.year}.xlsx"` });
+  return res.end(buf);
+}
+
 // ---- Diwali Muhurat picks (muhurat.mjs): bought each Muhurat session, held for 10–20 years, CAGR year by year ----
 const muhuratFile = () => userFile("muhurat.json");
 const muhuratTried = new Map(); // "NSE:SYM" → when a first quote was tried (never wait twice for the same stock in 6 h)
@@ -1269,7 +1313,8 @@ async function pnlPageFresh(fyLabel = null) {
   // a report from someone else's PAN (a family member's account) gets their first name as the holder, until you rename it
   const mainPan = reps.reports.map(r => r.panKey).filter(Boolean).sort((a, z, l = reps.reports) => l.filter(r => r.panKey === z).length - l.filter(r => r.panKey === a).length)[0];
   for (const r of reps.reports) if (!holders[r.account] && r.panKey && r.panKey !== mainPan && r.holderName) holders[r.account] = r.holderName;
-  const v = pnlView({ trades, accounts, holders, unrealised, names, reports: reps.reports, slabRate: Number.isFinite(hold.slabRate) ? hold.slabRate : 0.3, fy: fyLabel, today: istDay() });
+  const dl = await divLedgerData(false), dlAll = [...(dl.st.entries || []), ...dl.autos];
+  const v = pnlView({ trades, accounts, holders, unrealised, names, reports: reps.reports, slabRate: Number.isFinite(hold.slabRate) ? hold.slabRate : 0.3, fy: fyLabel, divLedger: fy => fyDividends(dlAll, { fy }), divHolder: hold.divHolder || null, today: istDay() });
   const dhanAcc = accounts.filter(a => /^dhan:/.test(a.id));
   return { ...v, holderMap: hold.holders || {}, dhan: { accounts: dhanAcc.map(a => a.id), lastSync: hold.dhanSync || null }, capture: hold.capture || null, kiteAccounts: accounts.filter(a => !/:/.test(a.id)).length };
 }
@@ -1281,11 +1326,14 @@ async function sendPnlExport(res, fyLabel) {
   const sheets = [
     { name: `P&L by account ${v.fy.label.slice(3)}`, columns: accCols, rows: v.rows, totals: { label: "All brokers", trades: v.total.trades, intraday: v.total.intraday, stGain: v.total.stGain, stLoss: v.total.stLoss, ltGain: v.total.ltGain, ltLoss: v.total.ltLoss, gross: v.total.gross, charges: v.total.charges, net: v.total.net, unrealised: v.total.unrealised },
       notes: [`${v.fy.label}: ${v.fy.from} to ${v.fy.to}. FIFO within each demat account; a buy and sell of a stock on the same day in one account is intraday.`, "Charges: Dhan's own figures where synced from Dhan, otherwise estimated from Zerodha's published rates.", "Check against each broker's tax P&L before filing. Not tax advice."] },
-    { name: "Tax by holder", columns: [{ header: "Holder (PAN)", key: "name", width: 16 }, { header: "Net STCG", key: "netSt", ...M }, { header: "Net LTCG", key: "netLt", ...M }, { header: "LTCG exemption used", key: "exemptUsed", ...M }, { header: "Capital gains tax", key: "cgt", width: 18, type: "money" }, { header: "Intraday", key: "intraday", width: 12, type: "money" }, { header: "Dividends", key: "div", width: 12, type: "money" }, { header: "F&O", key: "fno", width: 10, type: "money" }, { header: "Tax at slab rate", key: "slabTax", width: 16, type: "money" }, { header: "Estimated tax", key: "tax", width: 16, type: "money" }, { header: "Losses to carry forward", key: "carry", width: 20, type: "money" }],
-      rows: v.holders.map(h => ({ ...h, netSt: h.tax.netSt, netLt: h.tax.netLt, exemptUsed: h.tax.exemptUsed, cgt: h.tax.capitalGainsTax, div: h.other.dividends, fno: h.other.fno, slabTax: h.tax.slabTax, tax: h.tax.tax, carry: h.tax.carryForward })), notes: [`STCG ${v.rules.stRate * 100}%, LTCG ${v.rules.ltRate * 100}% above ₹${v.rules.ltExemption.toLocaleString("en-IN")} per holder per year (listed equity); other assets short term at your slab rate (${v.slabRate * 100}%), long term 12.5%. Intraday, F&O, dividends and interest at the slab rate. Before surcharge and cess.`, ...v.notes] },
+    { name: "Tax by holder", columns: [{ header: "Holder (PAN)", key: "name", width: 16 }, { header: "Net STCG", key: "netSt", ...M }, { header: "Net LTCG", key: "netLt", ...M }, { header: "LTCG exemption used", key: "exemptUsed", ...M }, { header: "Capital gains tax", key: "cgt", width: 18, type: "money" }, { header: "Intraday", key: "intraday", width: 12, type: "money" }, { header: "Dividends", key: "div", width: 12, type: "money" }, { header: "F&O", key: "fno", width: 10, type: "money" }, { header: "Tax at slab rate", key: "slabTax", width: 16, type: "money" }, { header: "Estimated tax", key: "tax", width: 16, type: "money" }, { header: "Dividend TDS (est.)", key: "tds", width: 16, type: "money" }, { header: "Still to pay", key: "afterTds", width: 14, type: "money" }, { header: "Losses to carry forward", key: "carry", width: 20, type: "money" }],
+      rows: v.holders.map(h => ({ ...h, netSt: h.tax.netSt, netLt: h.tax.netLt, exemptUsed: h.tax.exemptUsed, cgt: h.tax.capitalGainsTax, tds: h.tax.tdsPaid, afterTds: h.tax.afterTds, div: h.other.dividends, fno: h.other.fno, slabTax: h.tax.slabTax, tax: h.tax.tax, carry: h.tax.carryForward })), notes: [`STCG ${v.rules.stRate * 100}%, LTCG ${v.rules.ltRate * 100}% above ₹${v.rules.ltExemption.toLocaleString("en-IN")} per holder per year (listed equity); other assets short term at your slab rate (${v.slabRate * 100}%), long term 12.5%. Intraday, F&O, dividends and interest at the slab rate. Before surcharge and cess.`, ...v.notes] },
     { name: "Trades", columns: [{ header: "Sell date", key: "sellDate", type: "date", width: 12 }, { header: "Account", key: "accountLabel", width: 24 }, { header: "Symbol", key: "symbol", width: 13 }, { header: "Stock", key: "name", width: 26 }, { header: "Qty", key: "qty", type: "int", width: 7 },
       { header: "Buy date", key: "buyDate", type: "date", width: 12 }, { header: "Buy price", key: "buy", type: "money", width: 11 }, { header: "Sell price", key: "sell", type: "money", width: 11 }, { header: "Gain / loss", key: "gain", ...M }, { header: "Term", key: "term", width: 11 }, { header: "Days", key: "days", type: "int", width: 7 }, { header: "Charges", key: "charges", type: "money", width: 10 }],
       rows: v.trades },
+    ...(v.dividends ? [{ name: "Dividends", columns: [{ header: "Stock", key: "stock", width: 24 }, { header: "Credited to bank", key: "credited", ...M }, { header: "Auto-added (est.)", key: "estimated", ...M }, { header: "Before TDS", key: "gross", ...M }, { header: "TDS cut (est.)", key: "tds", ...M }, { header: "Months", key: "mo", width: 30 }],
+      rows: v.dividends.stocks.map(x => ({ ...x, estimated: x.estimated || null, tds: x.tds || null, mo: x.months.join(", ") })), totals: { stock: "Total", credited: v.dividends.credited, estimated: v.dividends.estimated || null, gross: v.dividends.gross, tds: v.dividends.tds },
+      notes: [`${v.dividends.fy}, from Dividends received; counted in ${v.dividends.holder}'s tax at the slab rate on the amount before TDS. 10% TDS where a company paid more than ₹${v.dividends.tdsLimit.toLocaleString("en-IN")} in the year. Check against AIS / Form 26AS.`] }] : []),
     { name: "By month", columns: [{ header: "Month", key: "month", width: 10 }, { header: "Intraday", key: "intraday", ...M }, { header: "Short term", key: "st", ...M }, { header: "Long term", key: "lt", ...M }, { header: "Total", key: "total", ...M }], rows: v.months }
   ];
   const buf = buildXlsx(sheets);
@@ -4040,6 +4088,44 @@ async function appHandler(req, res, url) {
       const clean = goals.map(g => ({ symbol: String(g.symbol || "").toUpperCase().replace(/[^A-Z0-9.&-]/g, "").slice(0, 20), market: g.market === "US" ? "US" : "IN", target: Math.max(1, Math.round(Number(g.target) || 0)), current: Number.isFinite(Number(g.current)) ? Math.max(0, Number(g.current)) : null, note: String(g.note || "").slice(0, 80) })).filter(g => g.symbol && g.target > 0);
       await writeJson(userFile("share-goals.json"), { goals: clean }); return reply(res, 200, { goals: clean });
     }
+    if (url.pathname.startsWith("/api/divledger")) {
+      const op = url.pathname.slice("/api/divledger".length).replace(/^\//, "");
+      try {
+        if (req.method === "GET" && !op) return reply(res, 200, await divLedgerPage(url.searchParams.get("year")));
+        if (req.method === "GET" && op === "export.xlsx") return sendDivLedgerExport(res, url.searchParams.get("year"));
+        if (req.method === "GET" && op === "entries") { const y = String(url.searchParams.get("year") || ""); const st = await readJson(divLedgerFile(), { entries: [] }); return reply(res, 200, { entries: (st.entries || []).filter(e => e.month.startsWith(`${y}-`)) }); }
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown operation." });
+        const b = await readBody(req), today = istDay(); dropPnlMemo(); let notice = "", preview = null;
+        const pending = op === "confirm" ? await divLedgerPage(b.year || null) : null; // worked out before the file is locked
+        await withUserLock(async () => {
+          const st = await readJson(divLedgerFile(), { entries: [] }); st.entries ||= [];
+          if (op === "add") { const e = sanitizeDivEntry(b, today); if (st.entries.length >= 20000) throw new Error("Too many entries."); st.entries.push(e); notice = `₹${e.amount.toLocaleString("en-IN")} from ${e.stock} recorded.`; }
+          else if (op === "edit") { const i = st.entries.findIndex(x => x.id === b.id); if (i < 0) throw new Error("That entry is gone."); st.entries[i] = sanitizeDivEntry({ ...b, id: b.id }, today); notice = "Updated."; }
+          else if (op === "delete") { const ids = new Set([].concat(b.ids || b.id || [])); const n = st.entries.length; st.entries = st.entries.filter(x => !ids.has(x.id)); if (st.entries.length === n) throw new Error("That entry is gone."); notice = "Removed."; }
+          else if (op === "confirm") { // an auto-added dividend: keep it (as it is, or with the amount / month you saw credited)
+            const row = pending.rows.find(r => r.months.some(m => m.autos.some(x => x.id === b.autoId))), a = row?.months.flatMap(m => m.autos).find(x => x.id === b.autoId);
+            if (!a || st.entries.some(e => e.fromAuto === b.autoId)) throw new Error("That dividend is no longer pending.");
+            const mo = pending.rows.flatMap(r => r.months.map((m, i) => (m.autos.some(x => x.id === b.autoId) ? `${pending.year}-${String(i + 1).padStart(2, "0")}` : null))).find(Boolean);
+            const e = sanitizeDivEntry({ stock: b.stock || row.stock, month: b.month || mo, amount: b.amount ?? a.amount, note: b.note ?? `${a.qty} shares × ₹${a.perShare} (ex-date ${a.exDate})` }, today);
+            st.entries.push({ ...e, fromAuto: a.id }); notice = `Confirmed: ₹${e.amount.toLocaleString("en-IN")} from ${e.stock}.`;
+          } else if (op === "dismiss") { st.dismissed = [...new Set([...(st.dismissed || []), String(b.autoId)])].slice(-2000); notice = "Hidden: it won't be added again."; }
+          else if (op === "auto") { const from = String(b.from || "").slice(0, 10); if (from && (!/^\d{4}-\d{2}-\d{2}$/.test(from) || from > today)) throw new Error("Pick a date up to today."); st.auto = { on: !!b.on, from: from || st.auto?.from || `${today.slice(0, 7)}-01` }; notice = st.auto.on ? `Dividends from your holdings are added from ${st.auto.from}.` : "Auto-add is off."; }
+          else if (op === "import") { // pasted from your sheet: the years in it are replaced (so pasting again doesn't double up), or added to
+            const p = parseDivPaste(String(b.text || "").slice(0, 500000)); if (!p.entries.length) throw new Error("No amounts found. Copy the whole block including the header row (year, Jan … Dec).");
+            const future = p.entries.filter(e => e.month > today.slice(0, 7)); if (future.length) throw new Error(`${future.length} amount${future.length === 1 ? " is" : "s are"} in months that haven't come yet (e.g. ${future[0].stock}, ${future[0].month}).`);
+            const replace = b.mode !== "add", ys = new Set(p.years.map(String));
+            preview = { entries: p.entries.length, years: p.years, total: Math.round(p.entries.reduce((a, e) => a + e.amount, 0) * 100) / 100, replacing: replace ? st.entries.filter(e => ys.has(e.month.slice(0, 4))).length : 0, skipped: p.skipped };
+            if (b.dryRun) return;
+            const fresh = p.entries.map((e, i) => sanitizeDivEntry({ ...e, id: `dv${Date.now().toString(36)}${i.toString(36)}` }, today));
+            st.entries = [...(replace ? st.entries.filter(e => !ys.has(e.month.slice(0, 4))) : st.entries), ...fresh];
+            notice = `${fresh.length} dividends imported for ${p.years.join(", ")}${replace && preview.replacing ? ` (replaced ${preview.replacing} earlier entries for ${p.years.length === 1 ? "that year" : "those years"})` : ""}.`;
+          } else throw new Error("Unknown operation.");
+          if (!b.dryRun) await writeJson(divLedgerFile(), st);
+        });
+        if (b.dryRun) return reply(res, 200, { preview });
+        return reply(res, 200, { ...(await divLedgerPage(b.year || null)), notice });
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
     if (url.pathname.startsWith("/api/muhurat")) {
       const op = url.pathname.slice("/api/muhurat".length).replace(/^\//, "");
       try {
@@ -4102,6 +4188,7 @@ async function appHandler(req, res, url) {
           const b = await readBody(req); await withUserLock(async () => { const st = await readJson(taxReportsFile(), { reports: [] }), r = st.reports.find(x => x.id === b.id); if (!r) throw new Error("Report not found."); const set = new Set(r.longIsins || []); if (b.long) set.add(String(b.isin)); else set.delete(String(b.isin)); r.longIsins = [...set].slice(0, 500); await writeJson(taxReportsFile(), st); });
           return reply(res, 200, await pnlPage(b.fy || null));
         }
+        if (req.method === "POST" && op === "div-holder") { const b = await readBody(req), n = String(b.holder || "").replace(/[<>]/g, "").trim().slice(0, 40); await withUserLock(async () => { const h = await readJson(taxHoldersFile(), { holders: {} }); if (n) h.divHolder = n; else delete h.divHolder; await writeJson(taxHoldersFile(), h); }); return reply(res, 200, await pnlPage(b.fy || null)); }
         if (req.method === "POST" && op === "slab") { const b = await readBody(req), r = Number(b.slabRate); if (![0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3].includes(r)) throw new Error("Pick a slab rate."); await withUserLock(async () => { const h = await readJson(taxHoldersFile(), { holders: {} }); h.slabRate = r; await writeJson(taxHoldersFile(), h); }); return reply(res, 200, await pnlPage(b.fy || null)); }
         if (req.method === "POST" && op === "holders") {
           const b = await readBody(req), accs = new Set((await accountsList()).map(a => a.id)), h = await readJson(taxHoldersFile(), { holders: {} });

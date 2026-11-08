@@ -52,7 +52,8 @@ const TERM = { intraday: "Intraday", eqSt: "STCG", eqLt: "LTCG", neSt: "Other ST
 // trades: [{ account, key, symbol, isin, date, side, qty, price, charges? }]; accounts: [{ id, label, broker }];
 // holders: { [accountId]: "name" }; unrealised: { [accountId]: ₹ }; names: Map(key → display name);
 // reports: [{ id, account, broker, fy, from, to, panKey, holderName, coverage, rows, other, file }]; slabRate: 0–0.42
-export function pnlView({ trades = [], accounts = [], holders = {}, unrealised = {}, names = new Map(), reports = [], slabRate = 0.3, fy: fyLabel = null, today }) {
+// divLedger(fy) → fyDividends() of the Dividends received ledger for that year (or null); divHolder: whose they are
+export function pnlView({ trades = [], accounts = [], holders = {}, unrealised = {}, names = new Map(), reports = [], slabRate = 0.3, fy: fyLabel = null, divLedger = () => null, divHolder = null, today }) {
   const { realised } = fifo(trades);
   const fys = [...new Set([fyOf(today).label, ...realised.map(r => fyOf(r.sellDate).label), ...reports.map(r => r.fy)])].sort().reverse();
   const want = fys.includes(fyLabel) ? fyLabel : fys[0], fyStart = Number(want.match(/\d{4}/)[0]), fy = fyOf(`${fyStart}-06-01`);
@@ -102,10 +103,19 @@ export function pnlView({ trades = [], accounts = [], holders = {}, unrealised =
     const h = hs.get(r.holder) || hs.set(r.holder, { name: r.holder, accounts: [], ...blank(), unrealised: 0 }).get(r.holder);
     h.accounts.push(r.id); for (const k of ["trades", "intraday", "stGain", "stLoss", "ltGain", "ltLoss", "neSt", "neLt", "charges", "chargesEst"]) h[k] += r[k]; h.unrealised += r.unrealised || 0;
   }
+  // dividends: the Dividends received ledger (every broker, what reached your bank, grossed up for TDS) when it has
+  // this year; otherwise what the brokers' tax reports list (Zerodha's report has only Zerodha's dividends)
+  const L = divLedger(fy), divWho = divHolder && String(divHolder).trim() ? String(divHolder).trim() : hs.has(ME) || !hs.size ? ME : [...hs.keys()][0];
+  if (L && L.count) {
+    if (!hs.has(divWho)) hs.set(divWho, { name: divWho, accounts: [], ...blank(), unrealised: 0 });
+    const o = otherBy.get(divWho) || { dividends: 0, interest: 0, fno: 0 };
+    otherBy.set(divWho, { ...o, reportDividends: o.dividends, dividends: L.gross, divTds: L.tds, divFrom: "ledger" });
+  }
   const holderRows = [...hs.values()].map(h => {
     const f = finish(h), o = otherBy.get(h.name) || { dividends: 0, interest: 0, fno: 0 };
     const tax = taxAll({ eqSt: f.netSt, neSt: f.neSt, eqLt: f.netLt, neLt: f.neLt, intraday: f.intraday, fno: o.fno, dividends: o.dividends, interest: o.interest }, slabRate);
-    return { name: h.name, accounts: h.accounts, ...f, unrealised: r0(h.unrealised), other: { dividends: r0(o.dividends), interest: r0(o.interest), fno: r0(o.fno) }, tax,
+    tax.dividendTax = r0(Math.max(0, o.dividends) * slabRate); tax.tdsPaid = r0(o.divTds || 0); tax.afterTds = r0(tax.tax - tax.tdsPaid);
+    return { name: h.name, accounts: h.accounts, ...f, unrealised: r0(h.unrealised), other: { dividends: r0(o.dividends), interest: r0(o.interest), fno: r0(o.fno), divFrom: o.divFrom || (o.dividends ? "reports" : null), reportDividends: o.divFrom ? r0(o.reportDividends) : null }, tax,
       intradayNote: f.intraday > 0 ? "Intraday profit is business income: added to your income and taxed at your slab rate." : f.intraday < 0 ? "Intraday loss can only be set off against intraday profit (carried forward 4 years)." : null };
   });
   const label = id => known.get(id)?.label || repOf.get(id)?.broker || id || "—";
@@ -128,5 +138,5 @@ export function pnlView({ trades = [], accounts = [], holders = {}, unrealised =
   if (assumed.length) notes.push(`${assumed.length} stock${assumed.length === 1 ? "" : "s"} from a report without buy dates (Dhan) counted as short term: no trades on file show when they were bought. If one was held over a year, tap "Mark long term" on it in the list below.`);
   if (dropped) notes.push(`${dropped} mutual fund sale${dropped === 1 ? "" : "s"} appeared in two reports (INDmoney covers funds at every broker): counted once.`);
   const srcs = reps.map(r => ({ id: r.id, broker: r.broker, account: r.account, accountLabel: label(r.account), from: r.from, to: r.to, file: r.file || null, importedAt: r.importedAt || null, sales: r.rows.filter(x => !x.summaryOnly).length, other: r.other }));
-  return { fy, fys, rules: TAX_RULES, slabRate, rows, holders: holderRows, total: { ...finish(total), unrealised: r0(rows.reduce((a, r) => a + (r.unrealised || 0), 0)) }, months, trades: tradeRows, tradeCount: inFy.length, warnings, notes, reports: srcs, today };
+  return { fy, fys, rules: TAX_RULES, slabRate, rows, holders: holderRows, total: { ...finish(total), unrealised: r0(rows.reduce((a, r) => a + (r.unrealised || 0), 0)) }, months, trades: tradeRows, tradeCount: inFy.length, warnings, notes, reports: srcs, dividends: L && L.count ? { ...L, holder: divWho } : null, divHolder: divWho, today };
 }

@@ -1,5 +1,29 @@
 # Equity Watchlist MVP
 
+## v5.71.0: dividends in the Tax view
+- **Dividend income is now part of your tax**: the Tax view pulls this financial year's (April–March) dividends from 📅 Dividends received, covering every broker: what you recorded plus the ones added from your holdings (≈). They are taxed at your slab rate (30% by default; change it under *Your income-tax slab*).
+- **Before TDS**: tax is on the gross dividend. A company that paid you more than ₹10,000 in the year (₹5,000 before FY 2025-26) cut 10% TDS, so what reached your bank is grossed up. The TDS already cut is taken off: the tax card shows *Estimated tax*, *Less TDS* and *Still to pay*.
+- New **Dividends** card at the top of the Tax view: click it for stock by stock (credited, auto-added, before TDS, TDS) and to pick whose income they are (tax is per person).
+- When the ledger has dividends for the year they replace the dividends in a broker's tax report (Zerodha's report lists only Zerodha's), which is shown alongside for comparison. Years with nothing in the ledger still use the reports.
+- The Received tab shows the year's dividend tax with a link to the Tax view. *Excel for your CA* has a new Dividends sheet and TDS / Still to pay columns.
+
+## v5.70.1: dividends added from your holdings, share counts
+- **Any stock can be recorded**: the stock box in *Record a dividend* is a full-width text box. Type any name or symbol (e.g. IOC); your current holdings and names already in the ledger are suggested as you type.
+- **Auto-add from holdings**: when a stock you hold goes ex-dividend, the credit (shares held on the ex-date × dividend per share) appears in the month it should reach your bank (about 3 weeks after the ex-date), shown as **≈ amount** in italics. Click it to confirm (with the exact amount credited and the month) or hide it. Stocks with an entry of yours within a month of it are not added twice. Turned on from the first time you open the tab; earlier months stay as you recorded them. Change the start date or turn it off under *Auto-add from your holdings*.
+- **Shares column**: how many shares of each stock you hold today (all accounts), next to the stock name; "—" for stocks you no longer hold. Stocks you hold that haven't paid you yet this year get their own row when a dividend is announced.
+- The "Paid in 2025, nothing yet in 2026" note says whether you still hold the stock.
+
+## v5.70.0: dividends received, month by month
+
+- **Dividend income planner → 📅 Received:** your dividend sheet inside the app. One grid per year, with stocks down the side and months across, and for each stock its total and last year's total. Below the grid: each month's total, last year's month totals, and **Paid by** (who paid each month).
+  - **+ Record a dividend** when one is credited: stock, month, amount, and an optional note. Click any cell to add one there, or to change or remove it. A month with two credits from one stock lists both.
+  - **📋 Paste from Excel:** copy your existing sheet (the year row with Jan … Dec, then a row per stock; several years at once) and paste it. TOTAL rows and the "who paid" lists are skipped. A preview shows the count and total first. **Replace** (the default) swaps out the years in the paste, so you can paste again after editing in Excel; **Add** appends.
+  - **Cards:** received this year so far, change on last year (same months), average per month and best month, and the three biggest payers with their share.
+  - **Bars:** each month against last year's. A warning lists stocks that paid last year but not yet this year, with the months they paid.
+  - **⬇ Excel:** the year's grid, plus a "who paid when" sheet.
+  - Stock names match loosely ("HDFC Bank Ltd" = "hdfc bank") and stay in the order of your sheet. Months after today are dimmed and can't be filled.
+- Stored per login (`dividend-ledger.json`); not sent to Ask AI. Lint now covers this screen too, and the perf baseline is refreshed for `/api/divledger`.
+
 ## v5.69.1: Muhurat watchlist
 
 - **Muhurat picks → 👀 Watchlist:** a shortlist of stocks you're considering for the next Diwali.

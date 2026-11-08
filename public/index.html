@@ -114,7 +114,7 @@
 
     <section id="divView" hidden>
       <p class="hint">Plan the income your dividend stocks pay. Dividend per share is the last 12 months of payouts (Yahoo history, refreshed weekly); edit it if you expect a different payout. Payment months come from the last three years. Figures are before tax and are estimates, not promises: companies can cut dividends.</p>
-      <nav class="views sub dv-tabs" aria-label="Dividend planner"><button type="button" class="viewTab active" data-dvtab="mine">My dividend income</button><button type="button" class="viewTab" data-dvtab="goal">Goal planner</button></nav>
+      <nav class="views sub dv-tabs" aria-label="Dividend planner"><button type="button" class="viewTab active" data-dvtab="mine">My dividend income</button><button type="button" class="viewTab" data-dvtab="goal">Goal planner</button><button type="button" class="viewTab" data-dvtab="received">📅 Received</button></nav>
       <div id="dvMine">
       <div id="dvReceived" class="dv-received"></div>
       <section class="metrics" id="dvCards" aria-label="Dividend income summary"></section>
@@ -167,6 +167,7 @@
         </section>
         <p class="hint">Yield shown is trailing (dividend ÷ price) and will change with the market. Dividends can be cut. Not investment advice.</p>
       </div>
+      <div id="dvLedger" hidden><p class="hint">Loading…</p></div>
     </section>
 
     <section id="listsView" hidden>
