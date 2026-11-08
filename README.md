@@ -1,5 +1,22 @@
 # Equity Watchlist MVP
 
+## v5.73.0: works on phones and tablets of every size, in a browser or an in-app web view
+- **Automated mobile check** (`npm run mobile`, also part of `npm run check`): opens all 39 screens on 13 Android and iOS sizes, from the Galaxy Fold cover screen (280 px) and the first iPhone SE (320 px) up to the iPad Mini and Galaxy Tab, plus phones held sideways. It fails when a screen scrolls sideways or something sticks out past the edge, when a script error is thrown, when a text box is under 16px (iPhone zooms the page when you tap it), when a button or checkbox is smaller than 24 × 24 px, or when a dialog doesn't fit the screen. It also checks the viewport tag and the iPhone home-bar padding. Options: `--device "iPhone SE"`, `--view networth`, `--shots folder/` (a screenshot of every screen), `--webkit` (iOS sizes on WebKit when it's installed). It needs Playwright (`npm i -D playwright && npx playwright install chromium`) and is skipped without it.
+- **Fixed what it found (412 problems → 0)**:
+  - Pickers (Swing ideas setup, Market source, Plan / Thesis stock, Invest "From"), the INDmoney CSV file box and the Model portfolio's choice cards ran off the right edge on 320–430 px phones; they now fit and wrap.
+  - Every touch screen, not only narrow phones, gets 16px text boxes, so iPads and phones on their side no longer zoom in when you tap a box.
+  - Finger-sized controls on touch screens: checkboxes are 24 px, and the favourite ♥, banner ✕, chart and "price now" buttons are 32 px. Expandable sections are taller and quicker to tap, with no tap delay or grey flash.
+  - Phones on their side: a one-line header and compact banners, so the screen shows content, not chrome. Safe areas are respected on notched phones.
+- **Older phones and in-app web views** (iOS 15+, Android WebView / Chrome 90+): styles that only new browsers understand now get a plain fallback added automatically when the server loads them. Missing script helpers are filled in for older web views.
+- **Running it inside an app's web view**: turn on JavaScript, DOM storage and cookies. On Android, also handle file choosers (`onShowFileChooser`) so the tax / Excel imports can pick a file. Pinch-zoom is left on.
+
+## v5.72.0: family members in Net worth (your wife's PF, PPF…)
+- **By person** on the Net worth screen: a card for you and for each family member with their own net worth, share of the family total and what they hold (EPF, PPF, stocks…).
+- **＋ Add a family member**: type a name (e.g. Wife), pick the first account (EPF / PF, PPF, NPS, FD, mutual fund, gold, bank) and fill it in. Each person's card has **+ PF**, **+ PPF** and **+ Other** buttons that open the form with that person already filled in. Monthly contributions (EPF, PPF) are added on their own, the same as for your own accounts.
+- Click a person's card to list only their entries, with their net total. The Owner box suggests the names already used; empty means you, and joint assets or loans can go under "Joint".
+- Broker accounts (stocks, mutual funds) count under the person named for that account in Tax → *Whose accounts are these?*
+- The family total (top of the screen) still includes everyone.
+
 ## v5.71.0: dividends in the Tax view
 - **Dividend income is now part of your tax**: the Tax view pulls this financial year's (April–March) dividends from 📅 Dividends received, covering every broker: what you recorded plus the ones added from your holdings (≈). They are taxed at your slab rate (30% by default; change it under *Your income-tax slab*).
 - **Before TDS**: tax is on the gross dividend. A company that paid you more than ₹10,000 in the year (₹5,000 before FY 2025-26) cut 10% TDS, so what reached your bank is grossed up. The TDS already cut is taken off: the tax card shows *Estimated tax*, *Less TDS* and *Still to pay*.

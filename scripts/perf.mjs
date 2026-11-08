@@ -34,24 +34,7 @@ const STATIC_GZ_BUDGET_KB = 900; // all scripts + styles, compressed
 const freePort = () => new Promise(r => { const s = net.createServer().listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => r(p)); }); });
 const pct = (arr, p) => { const a = [...arr].sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.ceil(p / 100 * a.length) - 1)]; };
 
-async function seed(dataDir, userDir) {
-  await fs.mkdir(userDir, { recursive: true });
-  const watch = JSON.parse(await fs.readFile(path.join(root, "test", "fixtures", "perf-watchlist.json"), "utf8"));
-  await fs.writeFile(path.join(userDir, "watchlist.json"), JSON.stringify(watch));
-  await fs.copyFile(path.join(root, "test", "fixtures", "perf-fundamentals.json"), path.join(dataDir, "fundamentals-cache.json"));
-  const syms = watch.map(s => s.marketSymbol || s.ticker).filter(Boolean);
-  const holdings = syms.slice(0, 40).map((s, i) => ({ symbol: s, qty: 10 + i, avgPrice: 100 + i * 7, lastPrice: 110 + i * 7, exchange: "NSE" }));
-  const mf = [1, 2, 3].map(i => ({ isin: `INF000P0${String(i).padStart(4, "0")}`, name: `Perf Fund ${i} Direct Growth`, units: 1000 * i, avgNav: 50, nav: 60, navDate: "2026-10-01", invested: 50000 * i, value: 60000 * i }));
-  await fs.writeFile(path.join(userDir, "kite-holdings.json"), JSON.stringify({ accounts: { PF1234: { broker: "zerodha", label: "Perf main", syncedAt: new Date().toISOString(), mfSyncedAt: new Date().toISOString(), holdings, mf } } }));
-  const at = new Date(Date.now() - 40 * 864e5).toISOString();
-  const positions = syms.slice(40, 55).map((s, i) => ({ id: `p${i}`, symbol: s, exchange: "NSE", name: s, qty: 20 + i, avgPrice: 200 + i * 10, limit: 300000, lots: [{ qty: 20 + i, price: 200 + i * 10, at }], openedAt: at }));
-  const watchItems = syms.slice(55, 75).map((s, i) => ({ id: `w${i}`, symbol: s, exchange: "NSE", name: s, list: i < 10 ? "dip" : null, buyBelow: 150 + i, amount: 100000, addedAt: at }));
-  await fs.writeFile(path.join(userDir, "swing.json"), JSON.stringify({ positions, watch: watchItems, closed: [], settings: {}, cash: { balance: 500000, log: [] } }));
-  await fs.writeFile(path.join(userDir, "other-holdings.json"), JSON.stringify({
-    us: ["AAPL", "MSFT", "NVDA", "VOO", "GOOGL"].map((s, i) => ({ id: `u${i}`, source: "import", account: "Vested", symbol: s, name: s, qty: 5 + i, avgUsd: 100 + i * 20, investedUsd: (5 + i) * (100 + i * 20), importedAt: at })),
-    mf: [{ id: "m1", source: "cas", isin: "INF846K01EW2", name: "Axis ELSS Tax Saver Fund - Direct Growth", folio: "1", units: 1234.5, cost: 100000, nav: 98, navDate: "2026-10-01", value: 120981, importedAt: at }]
-  }));
-}
+import { seed } from "./testserver.mjs"; // the same realistic account the mobile check uses
 
 async function main() {
   // Outside sites that accept the connection and never answer: the worst case for a page that waits on them.

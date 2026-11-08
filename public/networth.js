@@ -2,7 +2,7 @@
 // with a daily trend and a look-through of what you really own in each stock (directly and through your funds).
 (() => {
   const $ = s => document.querySelector(s), esc = s => window.ui.esc(s);
-  let nw = null, filter = "all";
+  let nw = null, filter = "all", who = null; // who: a person's name (lower case) to show only their entries
   const api = async (url, body) => {
     const r = await fetch(url, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.message || `HTTP ${r.status}`), { status: r.status }); return j;
@@ -19,6 +19,7 @@
   const signed = v => `${v > 0 ? "+" : v < 0 ? "−" : ""}${short(Math.abs(v)).replace(/^−/, "")}`;
   const ago = iso => { if (!iso) return ""; const d = (Date.now() - new Date(iso).getTime()) / 864e5; return d < 1 ? "today" : d < 2 ? "yesterday" : `${Math.floor(d)} days ago`; };
   const CLASS_COLORS = { equity: "var(--nw-equity)", debt: "var(--nw-debt)", retire: "var(--nw-retire)", gold: "var(--nw-gold)", realestate: "var(--nw-re)", cash: "var(--nw-cash)", alt: "var(--nw-alt)" };
+  const ownerOf = o => { const x = String(o ?? "").trim(); return !x || /^(self|me|myself|mine|own)$/i.test(x) ? "Me" : x; };
   const catOf = id => [...(nw?.assetCategories || []), ...(nw?.liabilityCategories || [])].find(c => c.id === id) || { label: id, icon: "•" };
 
   function spark(history) {
@@ -51,6 +52,16 @@
     // asset-class mix
     $("#nwMix").innerHTML = v.classes.length ? `<div class="nw-bar">${v.classes.map(c => `<i style="width:${c.pct}%;background:${CLASS_COLORS[c.id]}" title="${esc(c.label)} ${c.pct}%"></i>`).join("")}</div>
       <div class="nw-legend">${v.classes.map(c => `<span><i style="background:${CLASS_COLORS[c.id]}"></i>${esc(c.label)} <b>${c.pct}%</b> <small>${short(c.value)}</small></span>`).join("")}</div>` : "";
+    // by person: you, your wife, joint… each with their own PF, PPF, stocks and loans
+    const P = v.people || [], many = P.length > 1;
+    $("#nwPeople").innerHTML = `<div class="nw-head nw-ph"><h3>👨‍👩‍👧 By person</h3><span class="hint">${many ? "click a person to see only their entries" : "add your wife's (or anyone's) PF, PPF and other accounts here; each person gets their own total"}</span></div>
+      <div class="nw-pcards">${P.map(p => `<div class="nw-pcard${who === p.name.toLowerCase() ? " active" : ""}" data-who="${esc(p.name)}" role="button" tabindex="0">
+        <div class="nw-ptop"><b>${p.name === "Me" ? "🙋 Me" : `👤 ${esc(p.name)}`}</b>${many && p.pct !== null ? `<span class="hint">${p.pct}%</span>` : ""}</div>
+        <strong title="${full(p.net)}">${short(p.net)}</strong>
+        <small>${short(p.assets)} assets${p.liabilities ? ` · −${short(p.liabilities)} loans` : ""}</small>
+        <div class="nw-pcats">${p.cats.slice(0, 5).map(c => `<span title="${esc(c.label)} ${full(c.value)}">${c.icon} ${esc(c.label.replace(/ \/.*$/, ""))} ${short(c.value)}</span>`).join("")}</div>
+        <div class="nw-padd"><button type="button" class="ghost" data-padd="epf|${esc(p.name)}">+ PF</button><button type="button" class="ghost" data-padd="ppf|${esc(p.name)}">+ PPF</button><button type="button" class="ghost" data-padd="|${esc(p.name)}">+ Other</button></div></div>`).join("")}
+        <button type="button" class="nw-pcard nw-pnew" data-pnew>＋ Add a family member<small>e.g. Wife: her PF, PPF, FDs…</small></button></div>`;
     // category cards: every asset type shows, so it is obvious where NPS, PPF or gold go
     const cards = v.categories.filter(c => c.kind === "asset" || c.count);
     $("#nwCats").innerHTML = cards.map(c => {
@@ -61,8 +72,9 @@
       </button>`;
     }).join("");
     // entries
-    const lines = v.lines.filter(l => filter === "all" || l.category === filter);
-    $("#nwFilterNote").innerHTML = filter === "all" ? `${v.lines.length} entries` : `${esc(catOf(filter).label)} · ${lines.length} ${lines.length === 1 ? "entry" : "entries"} · <button type="button" class="linklike" data-clear>show all</button>`;
+    const lines = v.lines.filter(l => (filter === "all" || l.category === filter) && (!who || ownerOf(l.owner).toLowerCase() === who));
+    const whoName = who ? (P.find(p => p.name.toLowerCase() === who)?.name || who) : null;
+    $("#nwFilterNote").innerHTML = filter === "all" && !who ? `${v.lines.length} entries` : `${[whoName ? esc(whoName) : "", filter !== "all" ? esc(catOf(filter).label) : ""].filter(Boolean).join(" · ")} · ${lines.length} ${lines.length === 1 ? "entry" : "entries"}${who ? ` · ${short(lines.reduce((a, l) => a + (l.kind === "liability" ? -l.value : l.value), 0))} net` : ""} · <button type="button" class="linklike" data-clear>show all</button>`;
     $("#nwRows").innerHTML = lines.length ? lines.map(l => {
       const c = catOf(l.category), gain = Number.isFinite(l.invested) && l.invested > 0 ? l.value - l.invested : null;
       return `<tr class="${l.kind}" data-id="${esc(l.id)}">
@@ -114,13 +126,13 @@
   }
   window.openNetworth = load;
 
-  async function editItem(item = null, presetCat = null) {
+  async function editItem(item = null, presetCat = null, presetOwner = null) {
     const cats = nw.assetCategories.filter(c => !c.auto), liabs = nw.liabilityCategories;
     const cur = item?.category || presetCat || "epf";
     const isLiab = id => liabs.some(c => c.id === id);
     const fundOpts = sel => `<option value="">Not linked</option>${nw.xrayFunds.map(f => `<option value="${esc(f.id)}"${f.id === sel ? " selected" : ""}>${esc(f.name)}</option>`).join("")}`;
     const saved = await window.ui.dialog({
-      title: item ? `Edit ${item.name}` : isLiab(cur) ? "Add a liability" : "Add an asset", icon: isLiab(cur) ? "📄" : "➕", okText: item ? "Save" : "Add", wide: true,
+      title: item ? `Edit ${item.name}` : isLiab(cur) ? "Add a liability" : presetOwner && presetOwner !== "Me" ? `Add for ${presetOwner}` : "Add an asset", icon: isLiab(cur) ? "📄" : "➕", okText: item ? "Save" : "Add", wide: true,
       bodyHtml: `<div class="nw-form">
         <label class="ui-field"><span>Type</span><select class="ui-input" name="category">
           <optgroup label="Assets">${cats.map(c => `<option value="${c.id}"${c.id === cur ? " selected" : ""}>${c.icon} ${esc(c.label)}</option>`).join("")}</optgroup>
@@ -134,7 +146,7 @@
           <label class="ui-field"><span>Interest % a year</span><input class="ui-input" name="rate" inputmode="decimal" data-rate-ph placeholder="typical" value="${item?.recurring?.rate ?? ""}"></label>
           ${item?.auto?.months ? `<p class="ui-hint">Includes ${full(item.auto.added)} added on its own over ${item.auto.months} month${item.auto.months === 1 ? "" : "s"}${item.auto.interest ? ` and ${full(item.auto.interest)} interest` : ""} since ${esc(new Date(item.auto.since).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }))}. Saving restarts from the value above, so you can correct it from your passbook any time.</p>` : '<p class="ui-hint">The value above is today\'s balance; from next month the contribution (and interest) is added by itself, and Bucket strategy / Till you retire use it. Correct the value from your passbook any time.</p>'}
         </fieldset>
-        <label class="ui-field"><span>Owner (optional)</span><input class="ui-input" name="owner" placeholder="e.g. Self, Spouse, Joint" value="${esc(item?.owner || "")}"></label>
+        <label class="ui-field"><span>Owner (optional)</span><input class="ui-input" name="owner" list="nwOwners" placeholder="empty = you · e.g. Wife, Joint" value="${esc(item?.owner || (presetOwner && presetOwner !== "Me" ? presetOwner : ""))}"><datalist id="nwOwners">${[...new Set(["Wife", "Joint", ...(nw.people || []).map(p => p.name).filter(n => n !== "Me")])].map(n => `<option value="${esc(n)}">`).join("")}</datalist></label>
         <label class="ui-field"><span>Note (optional)</span><input class="ui-input" name="note" placeholder="e.g. UAN 1234…, matures 2031" value="${esc(item?.note || "")}"></label>
         <label class="ui-field" data-mf-only><span>X-ray portfolio (for the look-through)</span><select class="ui-input" name="fundId">${fundOpts(item?.fundId)}</select></label>
       </div><p class="ui-hint" data-hint></p>`,
@@ -156,6 +168,16 @@
       }
     });
     if (saved) { nw = saved; render(); window.toast?.(item ? "Saved." : "Added to your net worth.", { kind: "ok", ms: 3000 }); }
+  }
+
+  // a new person: their name, then their first account (PF by default)
+  async function addPerson() {
+    const got = await window.ui.dialog({ title: "Add a family member", icon: "👤", okText: "Next",
+      bodyHtml: `<label class="ui-field"><span>Name or relation</span><input class="ui-input" name="who" list="nwWhoSug" placeholder="e.g. Wife, Priya, Mom" autofocus><datalist id="nwWhoSug"><option value="Wife"><option value="Husband"><option value="Mom"><option value="Dad"><option value="Joint"></datalist></label>
+        <label class="ui-field"><span>First account to add</span><select class="ui-input" name="cat"><option value="epf">🏛️ EPF / PF</option><option value="ppf">🛡️ PPF</option><option value="nps">🧓 NPS</option><option value="fd">🏦 Fixed deposit</option><option value="mf">🧺 Mutual fund</option><option value="gold">🪙 Gold</option><option value="cash">💵 Bank & cash</option></select></label>
+        <p class="ui-hint">Their entries are counted in your family net worth and shown under their own name. To give a broker account (stocks / funds) to them, name it under Tax → Whose accounts are these?</p>`,
+      collect: box => { const n = box.querySelector("[name=who]").value.replace(/[<>]/g, "").trim(); if (!n) throw new Error("Type a name, e.g. Wife."); return { n, cat: box.querySelector("[name=cat]").value }; } });
+    if (got) editItem(null, got.cat, got.n);
   }
 
   const STATE = { "on-track": ["On track", "good"], stretch: ["Stretch", "warn"], behind: ["Behind", "bad"], "out-of-reach": ["Needs a rethink", "bad"] };
@@ -233,7 +255,10 @@
     });
     document.querySelector("#nwView").addEventListener("click", async e => {
       const t = e.target;
-      if (t.closest("[data-clear]")) { filter = "all"; render(); return; }
+      if (t.closest("[data-clear]")) { filter = "all"; who = null; render(); return; }
+      const pa = t.closest("[data-padd]"); if (pa) { const [cat, name] = pa.dataset.padd.split("|"); editItem(null, cat || "fd", name); return; }
+      if (t.closest("[data-pnew]")) { addPerson(); return; }
+      const pw = t.closest("[data-who]"); if (pw) { const k = pw.dataset.who.toLowerCase(); who = who === k ? null : k; render(); return; }
       const go = t.closest("[data-go]"); if (go) { setView(go.dataset.go); return; }
       const add = t.closest("[data-addcat]"); if (add) { editItem(null, add.dataset.addcat); return; }
       const ed = t.closest("[data-edit]"); if (ed) { editItem(nw.lines.find(l => l.id === ed.dataset.edit)); return; }

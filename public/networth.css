@@ -840,3 +840,19 @@ td.co-has-logo>.co-logo{left:10px;top:10px}
 .nw-rec legend{font-size:12.5px;font-weight:700;padding:0 4px}.nw-rec .ui-hint{grid-column:1/-1;margin:2px 0 4px}
 .nw-recchip{color:var(--good,#1f9d55);font-weight:700;white-space:nowrap}
 .nw-form .nw-rec{grid-column:1/span 3!important;flex:1 1 100%;width:100%;box-sizing:border-box;grid-template-columns:repeat(3,minmax(0,1fr))}@media (max-width:560px){.nw-form .nw-rec{grid-template-columns:1fr}}
+/* by person */
+.nw-people{margin:0 0 20px}
+.nw-ph{margin-bottom:8px}
+.nw-pcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.nw-pcard{display:flex;flex-direction:column;gap:3px;text-align:left;padding:14px;border-radius:16px;border:1px solid var(--line);background:var(--card-bg,#fff);cursor:pointer;color:var(--ink);font:inherit}
+.nw-pcard:hover{border-color:var(--ix)}
+.nw-pcard.active{border-color:var(--ix);box-shadow:0 0 0 3px color-mix(in srgb,var(--ix) 18%,transparent)}
+.nw-pcard strong{font-size:1.35rem}
+.nw-pcard small{color:var(--muted)}
+.nw-ptop{display:flex;justify-content:space-between;gap:8px}
+.nw-pcats{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:.78rem;color:var(--muted);margin-top:4px}
+.nw-padd{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.nw-padd .ghost{padding:4px 10px;font-size:.8rem;min-height:0}
+.nw-pnew{border-style:dashed;justify-content:center;align-items:center;font-weight:600;color:var(--ix);min-height:120px}
+.nw-pnew small{font-weight:400}
+@media (max-width:700px){.nw-pcards{grid-template-columns:1fr}}

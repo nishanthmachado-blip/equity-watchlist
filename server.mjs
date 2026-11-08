@@ -3479,12 +3479,14 @@ async function networthView() {
     const px = h.qty ? h.value / h.qty : 0;
     for (const a of h.accounts) { const r = per.get(a.userId) || { value: 0, invested: 0 }; r.value += px * a.qty; r.invested += (a.avgPrice || 0) * a.qty; per.set(a.userId, r); }
   }
-  const stocks = view.accounts.map(a => ({ account: a.userId, label: `${a.brokerName || "Zerodha"} · ${a.label}`, value: Math.round(per.get(a.userId)?.value || 0), invested: Math.round(per.get(a.userId)?.invested || 0) || null, syncedAt: a.syncedAt }));
+  // whose each broker account is: the names given in the Tax view (Whose accounts are these?)
+  const holderOfAcc = (await readJson(taxHoldersFile(), { holders: {} })).holders || {};
+  const stocks = view.accounts.map(a => ({ account: a.userId, label: `${a.brokerName || "Zerodha"} · ${a.label}`, value: Math.round(per.get(a.userId)?.value || 0), invested: Math.round(per.get(a.userId)?.invested || 0) || null, syncedAt: a.syncedAt, owner: holderOfAcc[a.userId] || null }));
   const accts = Object.entries((await readHoldStore()).accounts || {});
   let intl;
   try { intl = (await usHoldings()).rows.filter(r => Number.isFinite(r.valueInr)).map(r => ({ key: r.key, name: `${r.name}${r.symbol && r.symbol !== r.name ? ` (${r.symbol})` : ""} · ${r.account}`, value: Math.round(r.valueInr), invested: Number.isFinite(r.investedInr) ? Math.round(r.investedInr) : null, syncedAt: r.priceDate || r.syncedAt })); }
   catch { intl = accts.flatMap(([id, a]) => (a.us || []).map((u, i) => ({ key: `${id}:${u.symbol || i}`, name: `${u.name}${u.symbol ? ` (${u.symbol})` : ""} · ${a.label || id}`, value: u.value, invested: u.invested, syncedAt: a.syncedAt }))); }
-  const nw = buildNetworth({ stocks, intl, mf: mf.map(f => ({ key: f.key, name: f.name, value: f.value, invested: f.invested, syncedAt: f.syncedAt, fundId: f.fundId, isin: f.isin })), items });
+  const nw = buildNetworth({ stocks, intl, mf: mf.map(f => ({ key: f.key, name: f.name, value: f.value, invested: f.invested, syncedAt: f.syncedAt, fundId: f.fundId, isin: f.isin, owner: holderOfAcc[f.account] || null })), items });
   // Look-through uses synced funds plus hand-entered funds that are linked to an X-ray portfolio.
   const xray = new Map(xrFile.funds.map(f => [f.id, { name: f.name, holdings: f.holdings }]));
   const fundsForLook = [...mf.map(f => ({ key: f.key, name: f.name, value: f.value, fundId: f.fundId })), ...items.filter(i => i.category === "mf").map(i => ({ key: `manual:${i.id}`, name: i.name, value: i.value, fundId: i.fundId }))];

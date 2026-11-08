@@ -136,3 +136,55 @@ body.standalone .tabbar{bottom:max(10px,env(safe-area-inset-bottom))!important}
   #pfRows>tr>td:nth-child(2),#pfRows>tr>td:nth-child(7),#pfRows>tr>td:nth-child(8){order:-2}
   #pfRows>tr>td:nth-child(7) ,#pfRows>tr>td:nth-child(8){font-size:16px;font-weight:700}
 }
+
+/* ---- v5.73: checked on Android and iOS sizes from 280 px (Galaxy Fold cover) to tablets, portrait and landscape
+   (npm run mobile). Nothing may stick out past the right edge; every touch screen gets 16px form fields and
+   finger-sized controls, whatever its width (iPads and phones on their side included). ---- */
+@media (max-width:699px){
+  /* form controls never wider than the screen, even with a long option ("📈 Momentum above 200-DMA") */
+  main select,main input:not([type=checkbox]):not([type=radio]),main textarea{max-width:100%;min-width:0}
+  main label{min-width:0;max-width:100%}
+  main .toolbar>label:not(:has(>input[type=checkbox])),main .toolbar>select,main .toolbar>input:not([type=checkbox]):not([type=radio]){flex:1 1 100%!important;min-width:0!important}
+  main .toolbar>label>select,main .toolbar>label>input{width:100%;flex:1 1 auto}
+  main .lens-control{display:flex;flex-direction:column;align-items:stretch;gap:4px}
+  input[type=file]{width:100%;max-width:100%;flex:1 1 100%!important;font-size:14px!important}
+  #pfCsvLabel{min-width:0!important;flex:1 1 100%!important}
+  /* the model portfolio's choice cards (with a line of explanation) wrap instead of running off the screen */
+  #mdProfile,#mdStyle{display:flex!important;flex-wrap:wrap!important;width:100%}
+  #mdProfile>button,#mdStyle>button{white-space:normal!important;flex:1 1 130px!important;min-width:0}
+  .md-row{flex-direction:column;gap:6px!important}.md-lbl{width:auto!important;padding-top:0!important}
+  /* rating chips and small tables in cards wrap on the narrowest phones */
+  .md-how{white-space:normal}
+  .wk-ctl{flex-wrap:wrap}.wk-ctl select{min-width:120px!important}
+  .chip{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+  main td,main th{overflow-wrap:anywhere}
+  table.sw-prev{min-width:0!important;width:100%;table-layout:fixed}
+}
+@media (pointer:coarse){
+  /* iOS zooms the page when a field under 16px is tapped: phones, tablets and in-app web views alike */
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),select,textarea{font-size:16px!important}
+  /* finger-sized controls (at least 24 × 24 px, most 32+) */
+  summary{min-height:32px;padding-top:4px;padding-bottom:4px;box-sizing:border-box}
+  input[type=checkbox],input[type=radio]{width:24px!important;height:24px!important;min-width:24px!important;margin:1px 6px 1px 1px!important;flex:none!important}
+  .fav-btn,.fresh-x,.sw-px-now,.ch-mini{min-width:32px!important;min-height:32px!important}
+  button,[role=button]{min-height:28px}
+  .toolbar{flex-wrap:wrap!important}.toolbar>*{max-width:100%}.toolbar .lens-control{max-width:100%;white-space:normal;flex-wrap:wrap}.lens-control select{min-width:0;max-width:100%}
+  a.btnlike{min-height:32px}
+  /* no grey flash on tap, no double-tap zoom delay */
+  a,button,[role=button],summary,label,select{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+}
+/* phones on their side: the header and bottom bar take little height */
+@media (pointer:coarse) and (max-height:500px) and (orientation:landscape){
+  header{padding:max(8px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 8px max(16px,env(safe-area-inset-left))!important;flex-direction:row!important;align-items:center!important;gap:12px!important}
+  header .eyebrow,header .sub,#provider{display:none!important}
+  header h1{font-size:20px!important;line-height:1.15;margin:0!important}
+  .header-actions{flex-wrap:nowrap!important;overflow-x:auto;scrollbar-width:none;gap:6px!important;min-width:0}
+  .header-actions::-webkit-scrollbar{display:none}
+  .header-actions>*{flex:none}
+  .header-actions button,.header-actions .pill{padding:5px 10px!important;font-size:12.5px!important;min-height:32px}
+  .fresh-item{padding:6px 10px!important;font-size:12.5px!important;gap:8px!important;line-height:1.3}
+  .fresh-item button{padding:4px 9px!important;font-size:12px!important}
+  .ai-fab{transform:scale(.85);transform-origin:bottom right}
+  main{padding-left:max(12px,env(safe-area-inset-left))!important;padding-right:max(12px,env(safe-area-inset-right))!important}
+  .ui-dlg{max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px)}
+}

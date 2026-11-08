@@ -88,13 +88,31 @@ export function withRecurring(item, today = new Date()) {
   return { ...item, value: Math.round(bal), invested: Number.isFinite(item.invested) ? Math.round(item.invested + added) : item.invested, auto: { months: n, added: Math.round(added), interest: Math.round(interest), base: item.value, since: rc.since, monthly: rc.monthly, day: rc.day, rate } };
 }
 
+// Whose an entry is: empty, "self", "me", "myself" → "Me"; other names kept as typed, matched without case ("wife" = "Wife")
+export const ME = "Me";
+export const ownerName = o => { const s = String(o ?? "").replace(/\s+/g, " ").trim(); return !s || /^(self|me|myself|mine|own)$/i.test(s) ? ME : s; };
+// Net worth per person (you, your wife, joint…): assets, loans and net, with what each holds by type
+export function byPerson(lines = []) {
+  const P = new Map();
+  for (const l of lines) {
+    const name = ownerName(l.owner), k = name.toLowerCase(), p = P.get(k) || P.set(k, { name, assets: 0, liabilities: 0, count: 0, cats: new Map() }).get(k);
+    if (l.kind === "liability") p.liabilities += l.value || 0; else p.assets += l.value || 0;
+    p.count++; const c = CAT.get(l.category); if (c) p.cats.set(c.id, (p.cats.get(c.id) || 0) + (l.kind === "liability" ? -(l.value || 0) : l.value || 0));
+  }
+  const totalNet = [...P.values()].reduce((a, p) => a + p.assets - p.liabilities, 0);
+  return [...P.values()].map(p => ({ name: p.name, assets: Math.round(p.assets), liabilities: Math.round(p.liabilities), net: Math.round(p.assets - p.liabilities), count: p.count,
+    pct: totalNet > 0 ? Math.round((p.assets - p.liabilities) / totalNet * 1000) / 10 : null,
+    cats: [...p.cats.entries()].map(([id, value]) => ({ id, label: CAT.get(id).label, icon: CAT.get(id).icon, value: Math.round(value) })).sort((a, b) => Math.abs(b.value) - Math.abs(a.value)) }))
+    .sort((a, b) => (a.name === ME ? -1 : b.name === ME ? 1 : b.net - a.net));
+}
+
 // stocks: [{ account, label, value, invested }]; mf: [{ key, name, value, invested, account, ... }] (synced);
 // items: manual entries. Returns totals, categories, asset-class mix and liabilities.
 export function buildNetworth({ stocks = [], mf = [], intl = [], items = [] } = {}) {
   const lines = [];
   for (const s of stocks) if (s.value > 0) lines.push({ source: "synced", kind: "asset", category: "stocks", id: `stk:${s.account}`, name: s.label, value: s.value, invested: s.invested ?? null, owner: s.owner || null, syncedAt: s.syncedAt || null });
   for (const f of mf) if (f.value > 0) lines.push({ source: "synced", kind: "asset", category: "mf", id: `mf:${f.key}`, name: f.name, value: f.value, invested: f.invested ?? null, owner: f.owner || null, syncedAt: f.syncedAt || null, fundId: f.fundId || null, isin: f.isin || null });
-  for (const u of intl) if (u.value > 0) lines.push({ source: "synced", kind: "asset", category: "intl", id: `intl:${u.key}`, name: u.name, value: u.value, invested: u.invested ?? null, syncedAt: u.syncedAt || null });
+  for (const u of intl) if (u.value > 0) lines.push({ source: "synced", kind: "asset", category: "intl", id: `intl:${u.key}`, name: u.name, value: u.value, invested: u.invested ?? null, owner: u.owner || null, syncedAt: u.syncedAt || null });
   for (const it of items) if (CAT.has(it.category)) lines.push({ source: "manual", ...it });
   const sum = (arr, k = "value") => Math.round(arr.reduce((a, x) => a + (Number(x[k]) || 0), 0));
   const assets = lines.filter(l => l.kind === "asset"), liabilities = lines.filter(l => l.kind === "liability");
@@ -109,7 +127,7 @@ export function buildNetworth({ stocks = [], mf = [], intl = [], items = [] } = 
   const investedLines = assets.filter(l => Number.isFinite(l.invested) && l.invested > 0);
   return {
     totals: { investable: sum(assets.filter(l => !['realestate', 'other', 'insurance'].includes(l.category))), assets: totalAssets, liabilities: totalLiabilities, net: totalAssets - totalLiabilities, invested: investedLines.length ? sum(investedLines, "invested") : null, gainOnInvested: investedLines.length ? sum(investedLines) - sum(investedLines, "invested") : null, debtToAssets: totalAssets > 0 ? Math.round(totalLiabilities / totalAssets * 1000) / 10 : null },
-    categories, classes,
+    categories, classes, people: byPerson(lines),
     lines: lines.sort((a, b) => b.value - a.value)
   };
 }

@@ -6,8 +6,9 @@ Personal Indian-equity research app: Node ESM server (`server.mjs`, per-user dat
 1. `npm run lint` (undefined names in server and browser code).
 2. `npm test` (unit + server tests).
 3. `npm run perf`: starts the server on a throw-away account with outside sites (NSE, Yahoo, Screener, AMFI, Stooq, Anthropic) **hanging**, times every page's API (cold and repeat p95), static files and the live stream, and fails on a broken budget or a >50% regression against `scripts/perf-baseline.json`. When a slower number is expected and accepted, refresh the baseline with `npm run perf -- --update` and say so in the release notes.
-   `npm run check` runs all three.
-4. New screens: add their GET API to `PAGES` in `scripts/perf.mjs`.
+   `npm run check` runs all three, then the mobile check.
+4. New screens: add their GET API to `PAGES` in `scripts/perf.mjs` and their view name to `VIEWS` in `scripts/mobile.mjs`.
+5. `npm run mobile` (`scripts/mobile.mjs`, Playwright): every screen in `VIEWS` × Android / iOS sizes in `DEVICES` (280 px to tablets, landscape); fails on sideways scroll, anything past the right edge outside a scrolling box, script errors, text boxes under 16px on iOS, tap targets under 24 px, dialogs that don't fit. Add new screens to `VIEWS`. The throw-away server for both checks is `scripts/testserver.mjs`.
 
 ## Performance rules
 - A page request never waits on an outside site. Answer from cache / saved data and refresh in the background; wait (with a short budget, ~1.5 s) only the first time something was never fetched, and never repeat a failed fetch on every request (remember the try).
@@ -32,3 +33,8 @@ Personal Indian-equity research app: Node ESM server (`server.mjs`, per-user dat
 - Dividends received (`divledger.mjs`, `/api/divledger`, `public/divledger.js` lazy-loaded from the Dividend planner's "Received" tab, per-login `dividend-ledger.json`): hand-recorded or pasted credits by month; never sent to Ask AI.
   Auto-added credits (`autoCredits()`): holdings × announced dividends (`allDividends` → `dividendsReceived`) from `auto.from`, credited `CREDIT_LAG_DAYS` after the ex-date, ids `auto:SYM:exDate`; confirming writes a normal entry with `fromAuto`, hiding adds to `dismissed`. Never sent to Ask AI.
   Tax: `fyDividends()` (FY Apr–Mar, grossed up ÷0.9 above `divTdsThreshold`, autos already gross) feeds `pnlView({ divLedger, divHolder })`; ledger replaces report dividends for that holder (`tax-holders.json` `divHolder`, op `/api/tax/div-holder`). `divLedgerData(false)` never switches auto-add on. Any divledger POST drops the P&L memo.
+- Net worth per person: `byPerson()` / `ownerName()` in networth.mjs (empty / self / me → "Me", names matched without case); synced stock and MF lines take their owner from `tax-holders.json` holders.
+
+## Phones and web views
+- Mobile fixes go in `public/mobile.css`: `(max-width:699px)` for phone layout, `(pointer:coarse)` for every touch screen (16px fields, finger-sized controls), `(pointer:coarse) and (max-height:500px) and (orientation:landscape)` for phones on their side.
+- `static.mjs` `cssCompat()` adds fallbacks when it serves CSS (color-mix → the main colour, dvh/svh → vh, -webkit-backdrop-filter). Script helpers for older web views (`.at`, `Object.hasOwn`, `findLast`, `structuredClone`) are inline at the top of index.html. Support target: iOS 15+, Android WebView / Chrome 90+. Avoid regex lookbehind (`(?<=`, `(?<!`) in browser code: it breaks the whole script on iOS before 16.4.

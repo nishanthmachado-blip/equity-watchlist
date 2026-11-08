@@ -1,6 +1,6 @@
 {
   "name": "equity-watchlist-mvp",
-  "version": "5.71.0",
+  "version": "5.73.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,8 @@
     "docker:up": "docker compose up -d --build",
     "lint": "node scripts/lint.mjs",
     "perf": "node scripts/perf.mjs",
-    "check": "npm run lint && npm test && npm run perf"
+    "mobile": "node scripts/mobile.mjs",
+    "check": "npm run lint && npm test && npm run perf && npm run mobile"
   },
   "dependencies": {
     "mongodb": "^6.21.0",
