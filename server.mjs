@@ -1156,7 +1156,7 @@ async function syncKiteSlot(kc, slotId, slotLabel, label) {
 }
 
 // ---- Backup / restore: one JSON file with every file in your private folder ----
-const BACKUP_SECRET_FILES = /^(kite-session(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp|notify|ai-keys?|login-2fa|secrets-key)\.json$/;
+const BACKUP_SECRET_FILES = /^(kite-session(-[\w-]+)?|kite-oauth(-[\w-]+)?|broker-sessions|broker-credentials|broker-mcp|notify|ai-keys?|login-2fa|secrets-key)\.json$/;
 const BACKUP_NAME_RE = /^[a-z0-9][\w-]{0,60}\.json$/i;
 async function makeBackup(includeSecrets) {
   const dir = userDir(), files = {};
@@ -4053,6 +4053,16 @@ async function appHandler(req, res, url) {
     if (url.pathname.startsWith("/api/kite/")) {
       const op = url.pathname.slice("/api/kite/".length);
       const fail = e => reply(res, e.loginRequired ? 401 : 502, { message: e.message, loginRequired: !!e.loginRequired });
+      if (op === "callback" && req.method === "GET") {
+        // Zerodha's OAuth page sends the browser back here with ?code=&state=; the slot that started the login owns the state.
+        const code = url.searchParams.get("code"), state = url.searchParams.get("state"), err = url.searchParams.get("error_description") || url.searchParams.get("error");
+        const page = (ok, msg) => reply(res, ok ? 200 : 400, `<!doctype html><meta charset="utf-8"><title>${ok ? "Connected" : "Login failed"}</title><body style="font:15px system-ui;margin:40px;max-width:560px"><h2>${ok ? "✓ Connected" : "Login did not finish"}</h2><p>${msg.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</p><p>You can close this tab and return to the Integrations tab.</p></body>`, "text/html; charset=utf-8");
+        if (err) return page(false, `Zerodha said: ${err}`);
+        let owner = null; if (code && state) for (const sl of await kiteSlotList()) { const c = await kiteFor(sl.id); if (await c.ownsState(state)) { owner = c; break; } }
+        if (!owner) return page(false, "This login link is stale or was not started from this app. Press Log in again.");
+        try { await owner.finishOAuth({ code, state }); return page(true, "Zerodha is connected. Press Sync holdings in the Zerodha card."); }
+        catch (e) { return page(false, e.message); }
+      }
       if (op === "slots" && req.method === "GET") {
         const list = await kiteSlotList();
         const slots = await Promise.all(list.map(async sl => { const c = await kiteFor(sl.id); return { ...sl, removable: sl.id !== "main", ...(await c.status()) }; }));
@@ -4068,7 +4078,7 @@ async function appHandler(req, res, url) {
       if (op === "slots/remove" && req.method === "POST") {
         const { slot } = await readBody(req); if (!slot || slot === "main") return reply(res, 400, { message: "The first account cannot be removed (disconnect it instead)." });
         try { await (await kiteFor(slot)).forget(); } catch {}
-        kiteClients.delete(`${currentUser().id}:${slot}`); await fs.rm(userFile(`kite-session-${slot}.json`), { force: true });
+        kiteClients.delete(`${currentUser().id}:${slot}`); await fs.rm(userFile(`kite-session-${slot}.json`), { force: true }); await fs.rm(userFile(`kite-oauth-${slot}.json`), { force: true });
         await writeJson(U.kiteSlotsFile, { slots: (await kiteSlotList()).filter(x => x.id !== "main" && x.id !== slot) });
         return reply(res, 200, { ok: true });
       }
@@ -4077,7 +4087,7 @@ async function appHandler(req, res, url) {
       const slotLabel = (await kiteSlotList()).find(x => x.id === slotId)?.label;
       if (op === "status" && req.method === "GET") return reply(res, 200, { ...(await kc.status()), readOnlyTools: READ_ONLY_TOOLS, accounts: kiteAccountsSummary(await readHoldStore()) });
       if (op === "tools" && req.method === "GET") { try { return reply(res, 200, { tools: await kc.listTools() }); } catch (e) { return fail(e); } }
-      if (op === "login" && req.method === "POST") { try { return reply(res, 200, await kc.login()); } catch (e) { return fail(e); } }
+      if (op === "login" && req.method === "POST") { try { return reply(res, 200, await kc.login({ redirectUri: `${PUBLIC_URL}/api/kite/callback` })); } catch (e) { return fail(e); } }
       if (op === "diagnose" && req.method === "GET") return reply(res, 200, await kc.diagnose());
       if (op === "disconnect" && req.method === "POST") { await kc.forget(); return reply(res, 200, { ok: true }); }
       if (op === "holdings" && req.method === "GET") return reply(res, 200, await kiteHoldingsView());
@@ -5479,12 +5489,12 @@ const OWNER_ONLY = [
   // The AI advisor spends the owner's Anthropic key; open it to everyone with ALLOW_MEMBER_ADVISOR=1.
   { method: "POST", test: p => p.startsWith("/api/advise") && process.env.ALLOW_MEMBER_ADVISOR !== "1" }
 ];
-const LEGACY_FILES = ["swing.json", "us-list.json", "us-growth.json", "meta.json", "networth.json", "tradebook.json", "watchlist.json", "history.json", "positions.json", "valuation-log.json", "custom-list.json", "theses.json", "kite-holdings.json", "lists.json", "dividend-plan.json", "growth-overrides.json", "funds.json", "alerts.json", "kite-slots.json", "kite-session.json", "broker-sessions.json", "broker-credentials.json", "broker-mcp.json"];
+const LEGACY_FILES = ["swing.json", "us-list.json", "us-growth.json", "meta.json", "networth.json", "tradebook.json", "watchlist.json", "history.json", "positions.json", "valuation-log.json", "custom-list.json", "theses.json", "kite-holdings.json", "lists.json", "dividend-plan.json", "growth-overrides.json", "funds.json", "alerts.json", "kite-slots.json", "kite-session.json", "kite-oauth.json", "broker-sessions.json", "broker-credentials.json", "broker-mcp.json"];
 // Before accounts existed everything sat directly in data/. The owner inherits it; files already in the owner's folder win.
 async function migrateLegacyData(owner) {
   const dest = userDir(owner); let moved = [];
   await fs.mkdir(dest, { recursive: true, mode: 0o700 });
-  const names = [...LEGACY_FILES, ...(await fs.readdir(DATA_DIR).catch(() => [])).filter(n => /^kite-session-[\w-]+\.json$/.test(n))];
+  const names = [...LEGACY_FILES, ...(await fs.readdir(DATA_DIR).catch(() => [])).filter(n => /^kite-(session|oauth)-[\w-]+\.json$/.test(n))];
   for (const name of new Set(names)) {
     const from = path.join(DATA_DIR, name), to = path.join(dest, name);
     try { await fs.access(from); } catch { continue; }

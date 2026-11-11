@@ -1,5 +1,14 @@
 # Equity Watchlist MVP
 
+## v5.75.2: Zerodha (Kite MCP) login works again: OAuth sign-in for the hosted server
+- Fix: **Log in** on a Zerodha card failed with `Login failed: Kite MCP HTTP 401: no bearer token`. The hosted Kite MCP server now wants an OAuth sign-in before it answers anything, and the app sent no token.
+- **Log in** now does it: when the server answers 401, the app finds the server's OAuth details, registers itself, and opens Zerodha's sign-in page (a new tab, plus a link if the tab is blocked). After you sign in the browser returns to `/api/kite/callback`, the card turns to *Connected*, and **Sync holdings** works as before.
+- The token is kept per Zerodha account slot in `kite-oauth*.json` (a secret file: left out of backups, never sent to the browser) and sent on every call; it is refreshed automatically, and **Disconnect** forgets it. Removing a slot deletes its file.
+- The return link is `PUBLIC_URL` + `/api/kite/callback` (default `http://localhost:4173`). Behind a domain, set `PUBLIC_URL` to the https address.
+- **Diagnose** now says when the server wants an OAuth sign-in and whether a saved token was rejected. If the server publishes no OAuth details, the message points to self-hosting (`KITE_MCP_URL`).
+- Servers that still use the older session-tied `login` link keep working as before. Still read-only: the tool allow-list is unchanged.
+- Tests: `test/v5752-kite-oauth.test.mjs` runs a fake Kite server that answers 401 until you sign in (PKCE, registration, refresh, per-slot files, revoked token).
+
 ## v5.75.1: Swing trading back on your journal by default; the gap to the Tax view explained month by month
 - Fix: v5.74 / v5.75 switched the Swing trading screen's Booked profit and Swing income to broker trades on their own, which replaced your correct journal months with every short-term sale on file and left out Dhan (whose P&L reports carry no sale dates). Both are back on **✍️ My journal** unless you pick 🏦 Brokers yourself.
 - **🧾 "Your journal vs the Tax view: why they differ"** (under Booked profit): month by month, your journal, your brokers' short-term sales, and the Tax view's total, plus a "No sale date (Dhan)" row. The reasons are spelled out: the Tax view counts every sale (long-term, funds, debt, US); not every short-term sale is a swing trade; Dhan's reports have no dates.

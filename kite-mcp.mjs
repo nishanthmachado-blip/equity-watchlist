@@ -13,6 +13,9 @@
 // sign in (with your own credentials, on Zerodha's site), and the MCP session becomes authenticated. The
 // session id is kept in data/kite-session.json so a server restart does not force a new login; Kite expires
 // logins daily, after which login() is needed again. One session = one Zerodha account.
+// Newer hosted servers answer HTTP 401 "no bearer token" until you sign in with OAuth: login() then returns the
+// authorization URL (discovery, client registration and PKCE are done by createOAuth in mcp-client.mjs), the browser
+// comes back to /api/kite/callback, and the token (kept in data/kite-oauth*.json, a secret file) rides on every call.
 import { dfs as fs } from "./storage.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +25,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const PROTOCOL = "2025-06-18";
 
 export class KiteError extends Error {
-  constructor(message, { loginRequired = false, network = false } = {}) { super(message); this.loginRequired = loginRequired; this.network = network; }
+  constructor(message, { loginRequired = false, network = false, authRequired = false, wwwAuthenticate = null } = {}) { super(message); this.loginRequired = loginRequired; this.network = network; this.authRequired = authRequired; this.wwwAuthenticate = wwwAuthenticate; }
 }
 const LOGIN_HINT = /(please\s+)?log\s?in\b|login (is )?required|not (logged in|authenticated)|unauthori[sz]ed|session (has )?(expired|invalid)|invalid (session|access token)|token (is )?(expired|invalid)|TokenException/i;
 
@@ -131,9 +134,15 @@ export function normalizeProfile(json) {
 }
 
 // ---- client ----------------------------------------------------------------------------------------
-export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mcp.kite.trade/mcp", enabled = process.env.KITE_MCP_ENABLED !== "0", fetchImpl = fetch, sessionFile = path.join(here, "data", "kite-session.json"), timeoutMs = 20000 } = {}) {
+export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mcp.kite.trade/mcp", enabled = process.env.KITE_MCP_ENABLED !== "0", fetchImpl = fetch, sessionFile = path.join(here, "data", "kite-session.json"), oauthFile = null, timeoutMs = 20000 } = {}) {
   let session = null, loaded = false, chain = Promise.resolve(), nextId = 1;
   const cfg = { url, enabled, timeoutMs };
+  // ---- OAuth (only used when the server answers 401) ----
+  const oauthPath = oauthFile || (path.basename(sessionFile).startsWith("kite-session") ? path.join(path.dirname(sessionFile), path.basename(sessionFile).replace(/^kite-session/, "kite-oauth")) : `${sessionFile}.oauth.json`);
+  let oauthState = null, oauthLoaded = false, oauth = null;
+  const oauthStore = { get: () => oauthState, set: async v => { oauthState = v; if (v === null) await fs.rm(oauthPath, { force: true }); else { await fs.mkdir(path.dirname(oauthPath), { recursive: true }); await fs.writeFile(oauthPath, JSON.stringify(v), { mode: 0o600 }); } } };
+  async function loadOauth() { if (oauthLoaded) return; oauthLoaded = true; try { oauthState = JSON.parse(await fs.readFile(oauthPath, "utf8")); } catch { /* none saved */ } }
+  async function oauthFor() { await loadOauth(); if (!oauth) { const { createOAuth } = await import("./mcp-client.mjs"); oauth = createOAuth({ mcpUrl: url, store: oauthStore, fetchImpl, clientName: "Equity Watchlist (read-only)" }); } return oauth; }
 
   async function loadSession() {
     if (loaded) return; loaded = true;
@@ -145,6 +154,7 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
   async function post(body, { withSession = true } = {}) {
     const headers = { "Content-Type": "application/json", Accept: "application/json, text/event-stream", "MCP-Protocol-Version": session?.protocol || PROTOCOL };
     if (withSession && session?.sessionId) headers["Mcp-Session-Id"] = session.sessionId;
+    await loadOauth(); if (oauthState?.tokens?.accessToken) { const t = await (await oauthFor()).token(); if (t) headers.Authorization = `Bearer ${t}`; }
     let response;
     try { response = await fetchImpl(url, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) }); }
     catch (e) { throw new KiteError(`Cannot reach Kite MCP at ${url}: ${e.message}`, { network: true }); }
@@ -157,7 +167,7 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
     const text = await response.text();
     // the hosted server answers an expired / unknown session with HTTP 400 "Invalid session ID": start a new one
     if (response.status === 400 && withSession && /invalid session|session (id )?(not found|expired|unknown)|unknown session/i.test(text)) throw new KiteError("session-gone", { network: false });
-    if (!response.ok) throw new KiteError(`Kite MCP HTTP ${response.status}${text ? `: ${text.slice(0, 160)}` : ""}`, { loginRequired: response.status === 401 || response.status === 403 });
+    if (!response.ok) throw new KiteError(`Kite MCP HTTP ${response.status}${text ? `: ${text.slice(0, 160)}` : ""}`, { loginRequired: response.status === 401 || response.status === 403, authRequired: response.status === 401, wwwAuthenticate: response.status === 401 ? response.headers.get("www-authenticate") : null });
     let msg; try { msg = parseRpcBody(text, response.headers.get("content-type"), id); } catch { throw new KiteError(`Kite MCP returned unreadable data: ${text.slice(0, 120)}`); }
     if (!msg) throw new KiteError("Kite MCP sent no response for the request.");
     if (msg.error) throw new KiteError(`Kite MCP error ${msg.error.code}: ${msg.error.message}`, { loginRequired: LOGIN_HINT.test(msg.error.message || "") });
@@ -199,7 +209,27 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
     config: cfg,
     callTool,
     async listTools() { if (!cfg.enabled) throw new KiteError("Kite MCP is disabled."); return serial(async () => { await ensure(); const { result } = await rpc("tools/list", {}); return (result?.tools || []).map(t => ({ name: t.name, allowed: READ_ONLY_TOOLS.includes(t.name), description: (t.description || "").slice(0, 140) })); }); },
-    async login() { const { text } = await callTool("login", {}, { checkLogin: false }); return { loginUrl: extractLoginUrl(text), message: text.slice(0, 600) }; },
+    // The server's own `login` tool gives a Zerodha link. A server that wants OAuth first (HTTP 401) gets the OAuth
+    // authorization URL instead: open it, sign in on Zerodha, and the browser returns to redirectUri.
+    async login({ redirectUri } = {}) {
+      try { const { text } = await callTool("login", {}, { checkLogin: false }); return { loginUrl: extractLoginUrl(text), message: text.slice(0, 600) }; }
+      catch (e) {
+        if (!e.authRequired || !redirectUri) throw e;
+        try {
+          const { authUrl } = await (await oauthFor()).start({ redirectUri, wwwAuthenticate: e.wwwAuthenticate });
+          return { loginUrl: authUrl, authUrl, oauth: true, message: "Zerodha's server asks for an OAuth sign-in." };
+        } catch (e2) {
+          throw new KiteError(`${e2.message} If you have a Kite Connect API key you can self-host the Kite MCP server and set KITE_MCP_URL.`);
+        }
+      }
+    },
+    // The browser came back from Zerodha with ?code=&state=: swap the code for a token and start a clean session.
+    async finishOAuth({ code, state }) {
+      await (await oauthFor()).finish({ code, state });
+      session = null; loaded = true; await fs.rm(sessionFile, { force: true });
+    },
+    async ownsState(state) { await loadOauth(); return !!state && oauthState?.pending?.state === state; },
+    hasOAuthToken: async () => { await loadOauth(); return !!oauthState?.tokens?.accessToken; },
     async profile() { const { json } = await callTool("get_profile"); return normalizeProfile(json); },
     async status() {
       if (!cfg.enabled) return { enabled: false, connected: false };
@@ -236,12 +266,12 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
     async diagnose() {
       const steps = [], add = (step, ok, detail) => steps.push({ step, ok, detail: String(detail ?? "").slice(0, 400) });
       if (!cfg.enabled) return { steps: [{ step: "enabled", ok: false, detail: "KITE_MCP_ENABLED=0 switches Kite off" }] };
-      try { const t = await this.listTools(); add("connect + tools/list", true, `${t.length} tools: ${t.map(x => x.name).join(", ")}`); } catch (e) { add("connect + tools/list", false, e.message); return { url, steps }; }
+      try { const t = await this.listTools(); add("connect + tools/list", true, `${t.length} tools: ${t.map(x => x.name).join(", ")}`); } catch (e) { add("connect + tools/list", false, e.authRequired ? `${e.message}. The server wants an OAuth sign-in first (${oauthState?.tokens?.accessToken ? "the saved token was rejected or expired" : "no token saved yet"}): press Log in on the account card.` : e.message); return { url, steps }; }
       try { const r = await this.login(); add("login tool", !!r.loginUrl, r.loginUrl ? `link received (${new URL(r.loginUrl).host}); session ${session?.sessionId ? "id issued" : "has NO session id"}` : `no link found in reply: ${r.message}`); } catch (e) { add("login tool", false, e.message); }
       try { const p = await this.profile(); add("get_profile (after login)", !!p, p ? `logged in as ${p.userId}` : "reply had no user id"); } catch (e) { add("get_profile (after login)", false, e.loginRequired ? `still not logged in: ${e.message} (expected until you finish signing in on Zerodha's page)` : e.message); }
       return { url, sessionId: session?.sessionId ? "present" : "missing", protocol: session?.protocol, steps };
     },
-    forget,
+    async forget() { await forget(); await loadOauth(); if (oauthState) await oauthStore.set({ ...oauthState, tokens: null, pending: null }); },
     async hasSession() { await loadSession(); return !!session; }
   };
 }
