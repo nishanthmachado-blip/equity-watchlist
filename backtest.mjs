@@ -84,3 +84,73 @@ export function perStock(results = []) {
   return results.filter(r => r.trades.length).map(r => { const s = summarize(r.trades); return { symbol: r.symbol, name: r.name, trades: s.trades, winRate: s.winRate, avgPct: s.avgPct, totalPct: r2(r.trades.reduce((a, x) => a + x.pct, 0)) }; })
     .sort((a, b) => b.totalPct - a.totalPct);
 }
+
+// ---- every setup at once (Trade desk) --------------------------------------------------------------------------------
+// One walk through the bars testing all setups side by side (same rules as backtestBars; one trade per setup at a time).
+// nifty: the index's daily bars (optional): needed for the momentum setup, which compares a stock with Nifty.
+export function backtestAll(bars, params = {}, nifty = null) {
+  const nb = (nifty || []).filter(x => x && fin(x.c) && x.c > 0), nDays = nb.map(x => dayOf(x.t)); let ni = 0;
+  const { exit, maxDays, costPct } = sanitizeBacktest(params), setups = Object.keys(BACKTEST_SETUPS);
+  const b = (bars || []).filter(x => x && fin(x.c) && x.c > 0).map(x => ({ ...x, o: fin(x.o) && x.o > 0 ? x.o : x.c, h: fin(x.h) ? x.h : x.c, l: fin(x.l) ? x.l : x.c }));
+  const A = atrSeries(b), out = Object.fromEntries(setups.map(k => [k, { trades: [], signals: 0 }])), busyUntil = Object.fromEntries(setups.map(k => [k, -1]));
+  for (let i = Math.min(260, b.length); i < b.length - 1; i++) {
+    if (setups.every(k => busyUntil[k] >= i)) continue;
+    const today = dayOf(b[i].t); while (ni < nDays.length && nDays[ni] <= today) ni++; // nb[0..ni) = index bars up to this day
+    const s = snapshot(b.slice(Math.max(0, i - WINDOW + 1), i + 1), ni > 64 ? nb.slice(Math.max(0, ni - 70), ni) : null); if (!s) continue;
+    for (const idea of detectSetups(s)) {
+      const k = idea.setup; if (!out[k] || busyUntil[k] >= i) continue;
+      out[k].signals++;
+      const e = i + 1, entry = b[e].o; let stop = idea.stop; if (!(entry > stop)) continue;
+      const target = exit === "t2" ? idea.t2 : exit === "t1" ? idea.t1 : null;
+      let j = e, px = null, why = null, high = entry;
+      for (; j < b.length && j <= e + maxDays; j++) {
+        const d = b[j];
+        if (d.l <= stop) { px = Math.min(d.o, stop); why = exit === "trail" && stop > idea.stop ? "trailing stop" : "stop"; break; }
+        if (target && d.h >= target) { px = Math.max(d.o, target); why = "target"; break; }
+        if (j === e + maxDays) { px = d.c; why = "time"; break; }
+        if (exit === "trail") { high = Math.max(high, d.c); if (fin(A[j])) stop = Math.max(stop, high - 2 * A[j]); }
+      }
+      if (px === null) { j = b.length - 1; px = b[j].c; why = "open"; }
+      out[k].trades.push({ entryDay: dayOf(b[e].t), entry: r2(entry), stop: r2(idea.stop), target: r2(target), exitDay: dayOf(b[j].t), exit: r2(px), pct: r2((px / entry - 1) * 100 - costPct), days: j - e + (why === "open" ? 0 : 1), why });
+      busyUntil[k] = j;
+    }
+  }
+  return out;
+}
+// Profit on ₹1 L a trade after short-term gains tax: each financial year's net gain is taxed, a losing year is not.
+export function afterTaxPer100k(trades = [], taxRate = 0.208) {
+  const fy = d => { const y = Number(d.slice(0, 4)); return Number(d.slice(5, 7)) >= 4 ? y : y - 1; }, by = new Map();
+  for (const t of trades) if (fin(t.pct)) by.set(fy(t.exitDay), (by.get(fy(t.exitDay)) || 0) + t.pct * 1000);
+  return Math.round([...by.values()].reduce((a, v) => a + (v > 0 ? v * (1 - taxRate) : v), 0));
+}
+// Days (YYYY-MM-DD) on which the index closed above its 200-day average: Map day → true / false
+export function indexUpDays(bars = []) {
+  const b = bars.filter(x => x && fin(x.c) && x.c > 0), m = new Map(); let sum = 0;
+  for (let i = 0; i < b.length; i++) { sum += b[i].c; if (i >= 200) sum -= b[i - 200].c; if (i >= 199) m.set(dayOf(b[i].t), b[i].c > sum / 200); }
+  return m;
+}
+// One row per setup for the comparison table. results: { [setup]: trades[] } over all stocks; upDays from indexUpDays.
+export function compareSetups(results = {}, { upDays = null, taxRate = 0.208 } = {}) {
+  const mini = t => { const s = summarize(t); return s.trades ? { trades: s.trades, winRate: s.winRate, avgPct: s.avgPct } : { trades: 0 }; };
+  return Object.keys(BACKTEST_SETUPS).map(k => {
+    const t = results[k] || [], s = summarize(t), known = upDays ? t.filter(x => upDays.has(x.entryDay)) : [];
+    return { setup: k, label: BACKTEST_SETUPS[k], ...s, best: undefined, worst: undefined, years: undefined, exits: s.exits, afterTaxPer100k: s.trades ? afterTaxPer100k(t, taxRate) : null,
+      marketUp: upDays ? mini(known.filter(x => upDays.get(x.entryDay))) : null, marketDown: upDays ? mini(known.filter(x => !upDays.get(x.entryDay))) : null,
+      verdict: !s.trades ? "none" : s.trades < 30 ? "few" : s.avgPct > 0.3 && (s.profitFactor ?? 0) >= 1.3 ? "good" : s.avgPct > 0 ? "thin" : "bad" };
+  }).sort((a, b) => (b.avgPct ?? -99) - (a.avgPct ?? -99));
+}
+// What the charts said when you bought: for each of your closed trades, was one of the scanner's setups on (the evening
+// before the buy, or within the two days before that), and was the stock in an uptrend? closed: [{ k, buyDay }]
+export function entryTags(closed = [], bars = [], upDays = null) {
+  const b = (bars || []).filter(x => x && fin(x.c) && x.c > 0), days = b.map(x => dayOf(x.t)), out = {};
+  for (const c of closed) {
+    if (!c.buyDay) continue;
+    let i = -1; for (let k = days.length - 1; k >= 0; k--) if (days[k] < c.buyDay) { i = k; break; } // the last bar before the buy
+    if (i < 60) continue;
+    const snap = snapshot(b.slice(Math.max(0, i - WINDOW + 1), i + 1)); if (!snap) continue;
+    let found = null;
+    for (let d = 0; d < 3 && !found && i - d >= 60; d++) { const s = d ? snapshot(b.slice(Math.max(0, i - d - WINDOW + 1), i - d + 1)) : snap; const ideas = s ? detectSetups(s) : []; if (ideas.length) found = ideas.sort((x, y) => SETUP_INFO[y.setup].base - SETUP_INFO[x.setup].base)[0].setup; }
+    out[c.k] = { setup: found, setupLabel: found ? SETUP_INFO[found].label : null, trendUp: fin(snap.sma200) ? snap.price > snap.sma200 : null, niftyUp: upDays?.has(days[i]) ? upDays.get(days[i]) : null };
+  }
+  return out;
+}

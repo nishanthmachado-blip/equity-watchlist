@@ -25,7 +25,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const PROTOCOL = "2025-06-18";
 
 export class KiteError extends Error {
-  constructor(message, { loginRequired = false, network = false, authRequired = false, wwwAuthenticate = null } = {}) { super(message); this.loginRequired = loginRequired; this.network = network; this.authRequired = authRequired; this.wwwAuthenticate = wwwAuthenticate; }
+  constructor(message, { loginRequired = false, network = false, authRequired = false, wwwAuthenticate = null, noTool = false } = {}) { super(message); this.loginRequired = loginRequired; this.network = network; this.authRequired = authRequired; this.wwwAuthenticate = wwwAuthenticate; this.noTool = noTool; }
 }
 const LOGIN_HINT = /(please\s+)?log\s?in\b|login (is )?required|not (logged in|authenticated)|unauthori[sz]ed|session (has )?(expired|invalid)|invalid (session|access token)|token (is )?(expired|invalid)|TokenException/i;
 
@@ -65,6 +65,70 @@ export function extractLoginUrl(text) {
   }
   return null;
 }
+// ---- which tool does what -----------------------------------------------------------------------------
+// Older servers have one tool per job (get_profile, get_holdings…). The hosted server now groups them into a few tools
+// (session, portfolio, market, mutual_funds, orders, gtt, alerts, help) that take an action argument. Each job this app
+// does is listed here with the old tool name, the grouped tools it may live in, and the read-only actions it may use;
+// nothing else can be called, so order / GTT / alert actions stay out of reach whatever the server offers.
+export const KITE_OPS = Object.freeze({
+  login: { legacy: "login", tools: ["session"], actions: [/^login$/i], guess: "login" },
+  profile: { legacy: "get_profile", tools: ["session", "portfolio"], actions: [/^(get_)?(user_)?profile$/i, /^(whoami|me|user|status|info)$/i], guess: "profile" },
+  holdings: { legacy: "get_holdings", tools: ["portfolio"], actions: [/^(get_)?holdings$/i], guess: "holdings" },
+  mfHoldings: { legacy: "get_mf_holdings", tools: ["mutual_funds"], actions: [/^(get_)?(mf_)?holdings$/i], guess: "holdings" },
+  ltp: { legacy: "get_ltp", tools: ["market"], actions: [/^(get_)?ltp$/i], guess: "ltp" },
+  quotes: { legacy: "get_quotes", tools: ["market"], actions: [/^(get_)?quotes?$/i], guess: "quotes" },
+  historical: { legacy: "get_historical_data", tools: ["market"], actions: [/^(get_)?historical(_data)?$/i, /^(candles|history)$/i], guess: "historical_data" },
+  trades: { legacy: "get_trades", tools: ["orders"], actions: [/^(get_)?trades$/i], guess: "trades" }
+});
+const WRITE_ACTION = /place|modify|cancel|delete|remove|create|update|buy|sell|exit|convert|logout|redeem|invest|sip/i;
+const ACTION_PROP = /^(action|operation|op|command|cmd|method|kind|type|resource|what|mode)$/i;
+// Arguments of a tool that take one of a fixed set of values: [{ prop, choices }], action-like names first.
+export function toolChoices(schema) {
+  const res = x => { if (x?.$ref) { const k = x.$ref.split("/").pop(); return schema.$defs?.[k] || schema.definitions?.[k] || x; } return x || {}; };
+  const out = [];
+  for (const [prop, raw] of Object.entries(schema?.properties || {})) {
+    const q = res(raw), choices = [];
+    for (const x of [q, ...(q.anyOf || []), ...(q.oneOf || [])].map(res)) { if (Array.isArray(x.enum)) choices.push(...x.enum); if (x.const !== undefined) choices.push(x.const); }
+    out.push({ prop, choices: [...new Set(choices.filter(v => typeof v === "string"))], isString: q.type === "string" || choices.length > 0 });
+  }
+  return out.sort((a, b) => ACTION_PROP.test(b.prop) - ACTION_PROP.test(a.prop));
+}
+// tools: [{ name, inputSchema }] from tools/list. → every { name, args } that can do the job, best first.
+export function resolveKiteOpAll(op, tools) {
+  const o = KITE_OPS[op], out = [], seen = new Set(); if (!o) return out;
+  const add = r => { const k = JSON.stringify(r); if (!seen.has(k)) { seen.add(k); out.push(r); } };
+  if (tools.some(t => t.name === o.legacy)) add({ name: o.legacy, args: {} });
+  for (const re of o.actions) for (const tn of o.tools) {
+    const t = tools.find(x => x.name === tn); if (!t) continue;
+    for (const { prop, choices } of toolChoices(t.inputSchema)) for (const c of choices) if (re.test(c) && !WRITE_ACTION.test(c)) add({ name: tn, args: { [prop]: c } });
+  }
+  // no list of values published: use the usual action name on an action-like text argument
+  for (const tn of o.tools) {
+    const t = tools.find(x => x.name === tn); if (!t) continue;
+    const props = toolChoices(t.inputSchema), free = props.find(x => ACTION_PROP.test(x.prop) && !x.choices.length);
+    if (free && !out.some(r => r.name === tn)) add({ name: tn, args: { [free.prop]: o.guess } });
+  }
+  return out;
+}
+export const resolveKiteOp = (op, tools) => resolveKiteOpAll(op, tools)[0] || null;
+// A Kite user id anywhere in a reply (grouped servers nest it differently): { userId, name } or null.
+export function findKiteUser(json, text = "") {
+  let id = null, name = null;
+  const walk = (v, d) => {
+    if (!v || typeof v !== "object" || d > 5) return;
+    for (const [k, x] of Object.entries(v)) {
+      if (typeof x === "string" || typeof x === "number") {
+        if (!id && /^(user_?id|client_?id|login_?id|ucc)$/i.test(k) && /^[A-Za-z0-9]{3,12}$/.test(String(x))) id = String(x);
+        if (!name && /^(user_?name|user_?shortname|full_?name|name)$/i.test(k) && typeof x === "string" && x.trim()) name = x.trim();
+      } else walk(x, d + 1);
+    }
+  };
+  walk(json, 0);
+  if (!id) id = /\b(?:user|client|login)[ _]?id\b["'`*\s:=-]{1,6}([A-Za-z]{2,3}\d{3,5}[A-Za-z]?)\b/i.exec(String(text))?.[1] || null;
+  return id ? { userId: id.toUpperCase(), name, email: null } : null;
+}
+// True when the server is the grouped kind with no `login` tool: sign-in is by OAuth only.
+export const oauthOnly = tools => !tools.some(t => t.name === "login") && tools.some(t => Object.values(KITE_OPS).some(o => o.tools.includes(t.name))) && !resolveKiteOp("login", tools);
 const unwrap = j => Array.isArray(j) ? j : (j && typeof j === "object" ? (j.holdings || j.data || j.result || j.items || j) : j);
 const n = v => { const x = Number(v); return Number.isFinite(x) ? x : null; };
 const r2 = v => v === null ? null : Math.round(v * 100) / 100;
@@ -128,14 +192,15 @@ export function normalizeQuotes(json) {
   return out;
 }
 export function normalizeProfile(json) {
-  const p = unwrap(json) || {};
+  let p = unwrap(json) || {};
+  if (!(p.user_id || p.userId || p.client_id) && typeof p === "object") p = p.profile || p.user || p.session || p;
   const id = p.user_id || p.userId || p.client_id || null;
   return id ? { userId: String(id), name: p.user_name || p.user_shortname || p.name || null, email: p.email || null } : null;
 }
 
 // ---- client ----------------------------------------------------------------------------------------
 export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mcp.kite.trade/mcp", enabled = process.env.KITE_MCP_ENABLED !== "0", fetchImpl = fetch, sessionFile = path.join(here, "data", "kite-session.json"), oauthFile = null, timeoutMs = 20000 } = {}) {
-  let session = null, loaded = false, chain = Promise.resolve(), nextId = 1;
+  let session = null, loaded = false, chain = Promise.resolve(), nextId = 1, toolCache = null;
   const cfg = { url, enabled, timeoutMs };
   // ---- OAuth (only used when the server answers 401) ----
   const oauthPath = oauthFile || (path.basename(sessionFile).startsWith("kite-session") ? path.join(path.dirname(sessionFile), path.basename(sessionFile).replace(/^kite-session/, "kite-oauth")) : `${sessionFile}.oauth.json`);
@@ -149,7 +214,7 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
     try { const s = JSON.parse(await fs.readFile(sessionFile, "utf8")); if (s.url === url && s.sessionId) session = s; } catch { /* none saved */ }
   }
   async function saveSession() { await fs.mkdir(path.dirname(sessionFile), { recursive: true }); await fs.writeFile(sessionFile, JSON.stringify(session), { mode: 0o600 }); }
-  async function forget() { session = null; loaded = true; await fs.rm(sessionFile, { force: true }); }
+  async function forget() { session = null; loaded = true; toolCache = null; await fs.rm(sessionFile, { force: true }); }
 
   async function post(body, { withSession = true } = {}) {
     const headers = { "Content-Type": "application/json", Accept: "application/json, text/event-stream", "MCP-Protocol-Version": session?.protocol || PROTOCOL };
@@ -174,7 +239,7 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
     return { result: msg.result, response };
   }
   async function initialize() {
-    session = null;
+    session = null; toolCache = null;
     const { result, response } = await rpc("initialize", { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: "equity-watchlist", version: "1.5.0" } }, { withSession: false });
     session = { url, sessionId: response.headers.get("mcp-session-id") || null, protocol: result?.protocolVersion || PROTOCOL, createdAt: new Date().toISOString() };
     await post({ jsonrpc: "2.0", method: "notifications/initialized" }).then(r => r.text()).catch(() => {});
@@ -185,8 +250,33 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
   // One request at a time: the hosted server ties login state to the session, and interleaved initialize calls would reset it.
   function serial(fn) { const run = chain.then(fn, fn); chain = run.catch(() => {}); return run; }
 
-  async function callTool(name, args = {}, { checkLogin = true } = {}) {
+  async function callTool(name, args = {}, opts) {
     if (!READ_ONLY_TOOLS.includes(name)) throw new KiteError(`Refusing to call "${name}": this app only uses read-only Kite tools.`);
+    return callRaw(name, args, opts);
+  }
+  // Everything the server offers, with each tool's argument schema (kept until the session changes).
+  async function toolList() {
+    if (!cfg.enabled) throw new KiteError("Kite MCP is switched off (KITE_MCP_ENABLED=0 in .env).");
+    if (toolCache) return toolCache;
+    return serial(async () => {
+      await ensure();
+      let r; try { r = await rpc("tools/list", {}); } catch (e) { if (e.message !== "session-gone") throw e; await initialize(); r = await rpc("tools/list", {}); }
+      return (toolCache = (r.result?.tools || []).map(t => ({ name: t.name, description: t.description || "", inputSchema: t.inputSchema || null })));
+    });
+  }
+  // One of this app's read-only jobs (KITE_OPS), on whichever tool the server has for it.
+  async function callOp(op, args = {}, opts) {
+    for (let attempt = 0; ; attempt++) {
+      const tools = await toolList(), r = resolveKiteOp(op, tools) || { name: KITE_OPS[op].legacy, args: {}, fallback: true }; // not listed: try the usual name anyway
+      try { return await callRaw(r.name, { ...r.args, ...args }, opts); }
+      catch (e) {
+        if (!/unknown tool|tool not found/i.test(e.message)) throw e;
+        if (attempt || r.fallback) throw new KiteError(`Zerodha's server has no tool this app knows for "${op}" (it offers: ${tools.map(t => t.name).join(", ") || "nothing"}). Press Diagnose and share the result.`, { noTool: true });
+        toolCache = null; // the server's tool list changed: read it again once
+      }
+    }
+  }
+  async function callRaw(name, args = {}, { checkLogin = true } = {}) {
     if (!cfg.enabled) throw new KiteError("Kite MCP is switched off (KITE_MCP_ENABLED=0 in .env).");
     return serial(async () => {
       await ensure();
@@ -208,13 +298,23 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
   return {
     config: cfg,
     callTool,
-    async listTools() { if (!cfg.enabled) throw new KiteError("Kite MCP is disabled."); return serial(async () => { await ensure(); const { result } = await rpc("tools/list", {}); return (result?.tools || []).map(t => ({ name: t.name, allowed: READ_ONLY_TOOLS.includes(t.name), description: (t.description || "").slice(0, 140) })); }); },
+    async listTools() {
+      const tools = await toolList(), used = new Map();
+      for (const op of Object.keys(KITE_OPS)) { const r = resolveKiteOp(op, tools); if (r) used.set(r.name, [...(used.get(r.name) || []), Object.values(r.args)[0] || op]); }
+      return tools.map(t => ({ name: t.name, allowed: READ_ONLY_TOOLS.includes(t.name) || used.has(t.name), uses: used.get(t.name) || [], description: t.description.slice(0, 140) }));
+    },
     // The server's own `login` tool gives a Zerodha link. A server that wants OAuth first (HTTP 401) gets the OAuth
     // authorization URL instead: open it, sign in on Zerodha, and the browser returns to redirectUri.
     async login({ redirectUri } = {}) {
-      try { const { text } = await callTool("login", {}, { checkLogin: false }); return { loginUrl: extractLoginUrl(text), message: text.slice(0, 600) }; }
-      catch (e) {
-        if (!e.authRequired || !redirectUri) throw e;
+      try {
+        if (oauthOnly(await toolList())) {
+          // Sign-in is by OAuth only. Already signed in → nothing to do; signed out on Zerodha's side → sign in again.
+          try { return { connected: true, profile: await this.profile(), message: "Already signed in to Zerodha." }; }
+          catch (e) { if (e.loginRequired && !e.authRequired) e.reauth = true; throw e; }
+        }
+        const { text } = await callOp("login", {}, { checkLogin: false }); return { loginUrl: extractLoginUrl(text), message: text.slice(0, 600) };
+      } catch (e) {
+        if (!(e.authRequired || e.reauth) || !redirectUri) throw e;
         try {
           const { authUrl } = await (await oauthFor()).start({ redirectUri, wwwAuthenticate: e.wwwAuthenticate });
           return { loginUrl: authUrl, authUrl, oauth: true, message: "Zerodha's server asks for an OAuth sign-in." };
@@ -226,30 +326,42 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
     // The browser came back from Zerodha with ?code=&state=: swap the code for a token and start a clean session.
     async finishOAuth({ code, state }) {
       await (await oauthFor()).finish({ code, state });
-      session = null; loaded = true; await fs.rm(sessionFile, { force: true });
+      session = null; loaded = true; toolCache = null; await fs.rm(sessionFile, { force: true });
     },
     async ownsState(state) { await loadOauth(); return !!state && oauthState?.pending?.state === state; },
     hasOAuthToken: async () => { await loadOauth(); return !!oauthState?.tokens?.accessToken; },
-    async profile() { const { json } = await callTool("get_profile"); return normalizeProfile(json); },
+    // Who is logged in. Grouped servers may answer under more than one action (profile, status…): take the first reply
+    // that names the user. null = the server answered but nowhere said who this is.
+    async profile() {
+      const tools = await toolList(), cands = resolveKiteOpAll("profile", tools);
+      if (cands.length < 2) { const { json, text } = await callOp("profile"); return normalizeProfile(json) || findKiteUser(json, text); }
+      let first = true;
+      for (const r of cands.slice(0, 4)) {
+        try { const { json, text } = await callRaw(r.name, r.args); const p = normalizeProfile(json) || findKiteUser(json, text); if (p) return p; }
+        catch (e) { if (first || e.loginRequired || e.network) throw e; }
+        first = false;
+      }
+      return null;
+    },
     async status() {
       if (!cfg.enabled) return { enabled: false, connected: false };
       try { const profile = await this.profile(); return { enabled: true, url, connected: true, profile }; }
       catch (e) { return { enabled: true, url, connected: false, loginRequired: !!e.loginRequired, error: e.loginRequired ? null : e.message }; }
     },
-    async holdings() { const { json, text } = await callTool("get_holdings"); if (json === null) throw new KiteError(`Unrecognised holdings response: ${text.slice(0, 120)}`); return normalizeHoldings(json); },
-    async trades() { const { json, text } = await callTool("get_trades"); if (json === null) { if (/no trades|\[\s*\]/i.test(text)) return []; throw new KiteError(`Unrecognised trades response: ${text.slice(0, 120)}`); } return normalizeKiteTrades(json); },
-    async mfHoldings() { const { json, text } = await callTool("get_mf_holdings"); if (json === null) { if (/no (mutual fund |mf )?holdings|\[\s*\]/i.test(text)) return []; throw new KiteError(`Unrecognised mutual fund holdings response: ${text.slice(0, 120)}`); } return normalizeMfHoldings(json); },
+    async holdings() { const { json, text } = await callOp("holdings"); if (json === null) throw new KiteError(`Unrecognised holdings response: ${text.slice(0, 120)}`); return normalizeHoldings(json); },
+    async trades() { const { json, text } = await callOp("trades"); if (json === null) { if (/no trades|\[\s*\]/i.test(text)) return []; throw new KiteError(`Unrecognised trades response: ${text.slice(0, 120)}`); } return normalizeKiteTrades(json); },
+    async mfHoldings() { const { json, text } = await callOp("mfHoldings"); if (json === null) { if (/no (mutual fund |mf )?holdings|\[\s*\]/i.test(text)) return []; throw new KiteError(`Unrecognised mutual fund holdings response: ${text.slice(0, 120)}`); } return normalizeMfHoldings(json); },
     async ltp(symbols, exchange = "NSE") {
       const instruments = [...new Set(symbols.map(s => String(s).toUpperCase()))].map(s => `${exchange}:${s}`);
       if (!instruments.length) return new Map();
-      const { json, text } = await callTool("get_ltp", { instruments });
+      const { json, text } = await callOp("ltp", { instruments });
       if (json === null) throw new KiteError(`Unrecognised LTP response: ${text.slice(0, 120)}`);
       return normalizeLtp(json);
     },
     async quotes(symbols, exchange = "NSE") {
       const all = [...new Set(symbols.map(x => String(x).toUpperCase()))], out = new Map();
       for (let i = 0; i < all.length; i += 200) {
-        const { json, text } = await callTool("get_quotes", { instruments: all.slice(i, i + 200).map(x => `${exchange}:${x}`) });
+        const { json, text } = await callOp("quotes", { instruments: all.slice(i, i + 200).map(x => `${exchange}:${x}`) });
         if (json === null) throw new KiteError(`Unrecognised quotes response: ${text.slice(0, 120)}`);
         for (const [k, v] of normalizeQuotes(json)) out.set(k, v);
       }
@@ -259,17 +371,37 @@ export function createKiteClient({ url = process.env.KITE_MCP_URL || "https://mc
     async historical(token, days = 380) {
       const pad = n => String(n).padStart(2, "0"), fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
       const to = new Date(), from = new Date(to.getTime() - days * 864e5);
-      const { json, text } = await callTool("get_historical_data", { instrument_token: Number(token), from_date: fmt(from), to_date: fmt(to), interval: "day" });
+      const { json, text } = await callOp("historical", { instrument_token: Number(token), from_date: fmt(from), to_date: fmt(to), interval: "day" });
       return normalizeCandles(json, text);
     },
     // Step-by-step probe for "login does not work": shows exactly where the conversation with the server stops.
     async diagnose() {
-      const steps = [], add = (step, ok, detail) => steps.push({ step, ok, detail: String(detail ?? "").slice(0, 400) });
+      const steps = [], add = (step, ok, detail) => steps.push({ step, ok, detail: String(detail ?? "").slice(0, 1200) });
       if (!cfg.enabled) return { steps: [{ step: "enabled", ok: false, detail: "KITE_MCP_ENABLED=0 switches Kite off" }] };
       try { const t = await this.listTools(); add("connect + tools/list", true, `${t.length} tools: ${t.map(x => x.name).join(", ")}`); } catch (e) { add("connect + tools/list", false, e.authRequired ? `${e.message}. The server wants an OAuth sign-in first (${oauthState?.tokens?.accessToken ? "the saved token was rejected or expired" : "no token saved yet"}): press Log in on the account card.` : e.message); return { url, steps }; }
-      try { const r = await this.login(); add("login tool", !!r.loginUrl, r.loginUrl ? `link received (${new URL(r.loginUrl).host}); session ${session?.sessionId ? "id issued" : "has NO session id"}` : `no link found in reply: ${r.message}`); } catch (e) { add("login tool", false, e.message); }
-      try { const p = await this.profile(); add("get_profile (after login)", !!p, p ? `logged in as ${p.userId}` : "reply had no user id"); } catch (e) { add("get_profile (after login)", false, e.loginRequired ? `still not logged in: ${e.message} (expected until you finish signing in on Zerodha's page)` : e.message); }
-      return { url, sessionId: session?.sessionId ? "present" : "missing", protocol: session?.protocol, steps };
+      const tools = await toolList().catch(() => []), short = (v, n) => { const t = typeof v === "string" ? v : JSON.stringify(v); return t.length > n ? `${t.slice(0, n)}…` : t; };
+      const grouped = tools.some(t => Object.values(KITE_OPS).some(o => o.tools.includes(t.name)));
+      add("how this app reads it", !grouped || Object.keys(KITE_OPS).filter(o => o !== "login").every(o => resolveKiteOp(o, tools)), Object.keys(KITE_OPS).map(o => { const r = resolveKiteOp(o, tools); return `${o} → ${r ? `${r.name}${Object.keys(r.args).length ? ` ${JSON.stringify(r.args)}` : ""}` : grouped ? "NOT FOUND" : `${KITE_OPS[o].legacy} (not listed, tried anyway)`}`; }).join("; "));
+      if (!oauthOnly(tools)) { try { const { text } = await callOp("login", {}, { checkLogin: false }), u = extractLoginUrl(text); add("login tool", !!u, u ? `link received (${new URL(u).host}); session ${session?.sessionId ? "id issued" : "has NO session id"}` : `no link found in reply: ${text.slice(0, 300)}`); } catch (e) { add("login tool", false, e.message); } }
+      else add("login tool", true, "none on this server: sign-in is by OAuth (Log in on the account card)");
+      try {
+        const p = await this.profile();
+        if (p) add("profile", true, `logged in as ${p.userId}`);
+        else { // say what came back (names of fields only, never their values) so the right field can be read next time
+          const shape = (v, d = 0) => Array.isArray(v) ? `[${v.length ? shape(v[0], d + 1) : ""}]` : v && typeof v === "object" ? `{${Object.entries(v).slice(0, 25).map(([k, x]) => x && typeof x === "object" && d < 2 ? `${k}:${shape(x, d + 1)}` : k).join(",")}}` : typeof v;
+          const seen = []; for (const r of resolveKiteOpAll("profile", tools).slice(0, 4)) { try { const { json, text } = await callRaw(r.name, r.args); seen.push(`${r.name} ${JSON.stringify(r.args)} → ${json === null ? `text of ${text.length} chars starting "${text.slice(0, 40).replace(/[A-Z]{2,3}\d{3,5}/g, "…")}"` : shape(json)}`); } catch (e) { seen.push(`${r.name} ${JSON.stringify(r.args)} → error: ${e.message.slice(0, 80)}`); } }
+          add("profile", false, `no user id in the reply (Sync still works: the account is named after the slot). Reply fields: ${seen.join(" | ") || "none"}`);
+        }
+      } catch (e) { add("profile", false, e.loginRequired ? `not logged in: ${e.message}` : e.message); }
+      for (const [op, label] of [["holdings", "holdings"], ["mfHoldings", "mutual fund holdings"]]) {
+        try { const { json, text } = await callOp(op); const list = Array.isArray(json) ? json : json && typeof json === "object" ? (json.holdings || json.data || json.result || json.items) : null; add(label, Array.isArray(list), Array.isArray(list) ? `${list.length} row(s)${Array.isArray(json) ? "" : `; reply also has: ${Object.keys(json).filter(k => !Array.isArray(json[k])).slice(0, 10).map(k => `${k}=${typeof json[k] === "object" ? "{…}" : String(json[k]).slice(0, 20)}`).join(", ") || "nothing else"}`}; fields: ${Object.keys(list[0] || {}).slice(0, 14).join(", ") || "(none)"}` : `reply was not a list: ${short(text, 300)}`); }
+        catch (e) { add(label, false, e.message); }
+      }
+      // What the server publishes about its tools (names of arguments and their allowed values; no account data).
+      let schemas = tools.map(t => `■ ${t.name}: ${short(t.description, 500)}\n  arguments: ${short(t.inputSchema || {}, 2500)}`).join("\n");
+      const help = tools.find(t => t.name === "help");
+      if (help) { try { const req = Object.fromEntries((help.inputSchema?.required || []).map(k => [k, toolChoices(help.inputSchema).find(x => x.prop === k)?.choices[0] ?? ""])); const { text } = await callRaw("help", req, { checkLogin: false }); schemas += `\n■ help says:\n${short(text, 6000)}`; } catch (e) { schemas += `\n■ help failed: ${e.message}`; } }
+      return { url, sessionId: session?.sessionId ? "present" : "missing", protocol: session?.protocol, steps, schemas };
     },
     async forget() { await forget(); await loadOauth(); if (oauthState) await oauthStore.set({ ...oauthState, tokens: null, pending: null }); },
     async hasSession() { await loadSession(); return !!session; }

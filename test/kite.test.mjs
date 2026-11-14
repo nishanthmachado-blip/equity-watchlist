@@ -94,7 +94,7 @@ test("login link is found in prose, markdown and JSON with Go-style \\u0026 esca
 });
 test("diagnose reports each step and where it stops", async () => {
   const srv = await fakeServer(); const k = createKiteClient({ url: srv.url, enabled: true, sessionFile: await tmp() });
-  try { const d = await k.diagnose(); assert.deepEqual(d.steps.map(s => [s.step, s.ok]), [["connect + tools/list", true], ["login tool", true], ["get_profile (after login)", true]]); } finally { srv.close(); }
+  try { const d = await k.diagnose(); assert.deepEqual(d.steps.slice(0, 5).map(s => [s.step, s.ok]), [["connect + tools/list", true], ["how this app reads it", true], ["login tool", true], ["profile", true], ["holdings", true]]); } finally { srv.close(); }
   const dead = createKiteClient({ url: "http://127.0.0.1:1/mcp", enabled: true, sessionFile: await tmp(), timeoutMs: 1500 });
   const d2 = await dead.diagnose(); assert.equal(d2.steps.length, 1); assert.equal(d2.steps[0].ok, false);
 });

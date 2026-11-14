@@ -6,6 +6,7 @@
 //   Breakout      close above the 55-day high on 1.5×+ volume, in an uptrend, not stretched (≤ 8% over the 20-day EMA).
 //   Bounce        long-term uptrend (above 200-DMA) but oversold (RSI ≤ 35, 8%+ off the 20-day high): mean reversion
 //                 to the 20-DMA.
+//   Golden cross  the 50-DMA has crossed above the 200-DMA in the last 10 days, price above both, RSI above 50.
 //   Value turn    the app's valuation says "in the buy zone" and the price has just turned up (back above the 20-day EMA).
 //
 // Not advice: a screen that finds candidates. Every idea shows why it qualified and where it is wrong (the stop).
@@ -83,6 +84,8 @@ export function snapshot(bars, niftyBars = null) {
     crossedAboveEma20: e20s.slice(-6).some((e, i, arr) => i > 0 && e && c[n - 6 + i - 1] < arr[i - 1] && c[n - 6 + i] > e) && price > e20s[n - 1]
   };
   s.atrPct = s.atr ? r2(s.atr / price * 100) : null;
+  // golden cross: trading days since the 50-DMA moved above the 200-DMA (looked for in the last 15 days), else null
+  if (n >= 216) { const above = k => sma(c, 50, n - k) > sma(c, 200, n - k); if (above(0)) for (let k = 1; k <= 15; k++) if (!above(k)) { s.goldenDays = k - 1; break; } }
   s.cup = findCup(b);
   if (niftyBars?.length > 64) { const nc = niftyBars.filter(x => fin(x.c)).map(x => x.c), m = nc.length; s.niftyRet3m = r1((nc[m - 1] / nc[m - 64] - 1) * 100); if (fin(s.ret3m)) s.rs3m = r1(s.ret3m - s.niftyRet3m); }
   return s;
@@ -95,7 +98,8 @@ const SETUP_INFO = {
   value: { label: "Value stock turning up", icon: "💎", base: 64 },
   high52: { label: "52-week high breakout", icon: "🏔", base: 62 },
   cup: { label: "Cup and handle", icon: "☕", base: 64 },
-  momentum: { label: "Momentum above 200-DMA", icon: "📈", base: 58 }
+  momentum: { label: "Momentum above 200-DMA", icon: "📈", base: 58 },
+  golden: { label: "Golden cross (50-DMA over 200-DMA)", icon: "✨", base: 56 }
 };
 export { SETUP_INFO };
 
@@ -154,6 +158,13 @@ export function detectSetups(s, verdict = null) {
     plan("momentum", stop, p + 2 * r, p + 3.5 * r,
       [`${r1((p / s.sma200 - 1) * 100)}% above a rising 200-day average (₹${s.sma200}); 50-DMA above 200-DMA`, `Up ${s.ret3m}% in 3 months, ${s.rs3m}% better than Nifty`,
         `Near its 20-day average (₹${s.ema20}), ${r1((1 - p / s.high52) * 100)}% under its 52-week high · RSI ${s.rsi}`, "Stop under the 20-day average / recent low: momentum is gone if it closes below"]);
+  }
+  // Golden cross: the 50-DMA has just moved above the 200-DMA, price above both and RSI above 50 (a slower, trend trade)
+  if (fin(s.goldenDays) && s.goldenDays <= 10 && fin(s.sma50) && fin(s.sma200) && p > s.sma50 && fin(s.rsi) && s.rsi > 50 && s.rsi <= 78 && (!fin(s.ema20) || p <= s.ema20 * 1.08)) {
+    const stop = Math.max(Math.min(s.sma200 * 0.98, s.low20 * 0.99), p - 3 * A), r = p - Math.min(stop, p - 0.5 * A);
+    plan("golden", stop, p + 2 * r, p + 3.5 * r,
+      [`Golden cross ${s.goldenDays === 0 ? "today" : `${s.goldenDays} trading day${s.goldenDays === 1 ? "" : "s"} ago`}: 50-DMA ₹${s.sma50} moved above 200-DMA ₹${s.sma200}`, `Price above both averages · RSI ${s.rsi} (above 50)`,
+        "A slower trend trade: give it weeks to months; stop under the 200-day average / 20-day low"]);
   }
   // Value stock turning up
   if (verdict?.inZone && verdict.key === "buy" && fin(verdict.fairBase) && verdict.fairBase > p && fin(s.ema20) && (s.crossedAboveEma20 || (s.rsiPrev < 40 && s.rsi > s.rsiPrev && p > s.ema20 * 0.99))) {

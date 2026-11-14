@@ -119,14 +119,15 @@
   document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#holdingModal").hidden) closeHolding(); });
   $("#intKiteRows").onclick = e => { const tr = e.target.closest("tr[data-sym]"); if (tr) openHolding(tr.dataset.sym); };
 
+  let kiteSlots = [];
   const slotMsgs = {}; // per-slot status text (login link etc.)
   async function renderKite() {
     const [sl, v] = await Promise.all([api("/api/kite/slots").catch(e => ({ enabled: false, slots: [], error: e.message })), api("/api/kite/holdings").catch(() => ({ accounts: [], holdings: [], totals: {} }))]);
-    kiteOn = !!sl.enabled;
+    kiteOn = !!sl.enabled; kiteSlots = sl.slots || [];
     $("#intKiteAdd").disabled = !kiteOn; $("#intKiteDiagnose").disabled = !kiteOn;
     $("#intKiteSlots").innerHTML = !kiteOn ? "Switched off by <code>KITE_MCP_ENABLED=0</code> in <code>.env</code>. Remove that line and restart to use Kite."
       : sl.slots.map(s => {
-        const state = s.connected ? `Connected as <b>${esc(s.profile?.name || s.profile?.userId || "your account")}</b> (${esc(s.profile?.userId || "")})`
+        const state = s.connected ? (s.profile?.userId ? `Connected as <b>${esc(s.profile.name || s.profile.userId)}</b> (${esc(s.profile.userId)})` : "Connected (Zerodha's server did not name the account)")
           : s.loginRequired ? "Not logged in" : `Unreachable: ${esc(s.error || "unknown error")}`;
         return `<div class="kslot" data-slot="${esc(s.id)}"><div class="kslot-head"><strong>${esc(s.label)}</strong><span class="hint">${state}</span></div>
           <div class="toolbar" style="margin:6px 0 0"><button type="button" class="primary" data-act="login">Log in</button><button type="button" class="primary" data-act="sync"${s.connected ? "" : " disabled"}>Sync holdings</button><button type="button" class="ghost" data-act="disconnect">Disconnect</button>${s.removable ? '<button type="button" class="ghost" data-act="remove">Remove slot</button>' : ""}<input data-label placeholder="Account label (optional), e.g. Zerodha - Nishanth" value="" style="min-width:240px;flex:none"></div>
@@ -159,10 +160,17 @@
     const card = btn.closest(".kslot"), id = card.dataset.slot, act = btn.dataset.act, msg = card.querySelector(".kmsg");
     const old = btn.textContent; btn.disabled = true;
     try {
+      if (act === "copylink") { try { await navigator.clipboard.writeText(btn.dataset.link); btn.textContent = "Copied ✓"; } catch { window.prompt("Copy this link:", btn.dataset.link); } return; }
       if (act === "login") {
         btn.textContent = "Requesting link…";
         const x = await post(`/api/kite/login${slotQ(id)}`);
-        if (x.loginUrl) {
+        if (x.connected) { slotMsgs[id] = '<span class="buy">Already signed in to Zerodha.</span> Press <b>Sync holdings</b>. To switch to another Zerodha account, press Disconnect first.'; await renderKite(); }
+        else if (x.oauth && kiteSlots.some(s => s.id !== id && s.connected)) {
+          // Another Zerodha account is already connected: Zerodha's page would sign this card in to the account this browser
+          // is logged in to, so the link is not opened here. A private window signs in afresh.
+          slotMsgs[id] = `<b>For a different Zerodha account</b> (e.g. a family member's):<br>1. <button type="button" class="ghost" data-act="copylink" data-link="${esc(x.loginUrl)}">Copy sign-in link</button> and paste it into a <b>private / incognito window</b> on this computer, then sign in with <b>that</b> account. (Or log out at <a href="https://kite.zerodha.com" target="_blank" rel="noopener">kite.zerodha.com</a> first, then <a href="${esc(x.loginUrl)}" target="_blank" rel="noopener">open the link here</a>.)<br>2. When the page says "✓ Connected", come back: this card turns to "Connected" by itself, then press <b>Sync holdings</b>.`;
+          msg.innerHTML = slotMsgs[id]; pollLogin(id);
+        } else if (x.loginUrl) {
           window.open(x.loginUrl, "_blank", "noopener"); // may be blocked by a popup blocker, so the link is always shown too
           slotMsgs[id] = `1. <a href="${esc(x.loginUrl)}" target="_blank" rel="noopener"><b>Open the Zerodha login page</b></a> (use this link if no tab opened) and sign in with <b>this</b> account.<br>2. Keep this tab open: it turns to "Connected" by itself, then press <b>Sync holdings</b>.`;
           msg.innerHTML = slotMsgs[id]; pollLogin(id);
@@ -174,7 +182,7 @@
       } else if (act === "disconnect") { await post(`/api/kite/disconnect${slotQ(id)}`); slotMsgs[id] = ""; await renderKite(); }
       else if (act === "remove") { if (await ui.confirm({ title: "Remove this Zerodha account slot?", message: "Its login is forgotten. Synced holdings stay until you remove them under Synced accounts.", okText: "Remove slot", danger: true })) { await post("/api/kite/slots/remove", { slot: id }); await renderKite(); } }
     } catch (err) { if (act === "sync") window.toast?.(`Sync failed: ${esc(err.loginRequired ? "not logged in, press Log in first" : err.message)}`, { kind: "bad" }); msg.textContent = act === "login" ? `Login failed: ${err.message}` : err.loginRequired ? "Not logged in yet: press Log in first." : `${act === "sync" ? "Sync" : "Action"} failed: ${err.message}`; }
-    finally { btn.textContent = old; btn.disabled = false; btn.classList.remove("is-loading"); }
+    finally { if (act !== "copylink") btn.textContent = old; btn.disabled = false; btn.classList.remove("is-loading"); }
   };
   $("#intKiteAdd").onclick = async () => {
     const label = await ui.prompt({ title: "Add a Zerodha account", message: "Each account gets its own login, so several can stay connected at once.", label: "Account name", placeholder: "e.g. Zerodha - Sophia", chips: ["Zerodha - Nishanth", "Zerodha - Sophia", "Zerodha - HUF"], okText: "Add account", icon: "🔗", required: false }); if (label === null) return;
@@ -182,7 +190,7 @@
   };
   $("#intKiteDiagnose").onclick = e => busy(e.target, "Checking…", async () => {
     const out = $("#intKiteDiag");
-    try { const d = await api("/api/kite/diagnose"); out.innerHTML = `<pre style="white-space:pre-wrap;font-size:12px;background:#f3f6fa;border:1px solid var(--line,#dce4ee);border-radius:8px;padding:10px">${esc(d.steps.map(x => `${x.ok ? "OK  " : "FAIL"} ${x.step}: ${x.detail}`).join("\n"))}</pre>`; }
+    try { const d = await api("/api/kite/diagnose"); out.innerHTML = `<pre style="white-space:pre-wrap;font-size:12px;background:#f3f6fa;border:1px solid var(--line,#dce4ee);border-radius:8px;padding:10px">${esc(d.steps.map(x => `${x.ok ? "OK  " : "FAIL"} ${x.step}: ${x.detail}`).join("\n") + (d.schemas ? `\n\n── Tools on Zerodha's server (no account data) ──\n${d.schemas}` : ""))}</pre>`; }
     catch (err) { out.innerHTML = `<p class="hint">Diagnose failed: ${esc(err.message)}</p>`; }
   });
   $("#intKiteAccounts").onclick = async e => {

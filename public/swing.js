@@ -700,7 +700,7 @@
     $("#swIdeasScan").onclick = () => loadIdeas(true);
     $("#swIdeasAlert").onclick = async () => {
       const A = ideas?.alerts || { on: false, setups: ["cup", "momentum"], minScore: 60 };
-      const opts = [["cup", "☕ Cup and handle breakouts"], ["momentum", "📈 Momentum above 200-DMA"], ["high52", "🏔 52-week high breakouts"], ["breakout", "🚀 Breakouts on volume"], ["pullback", "↘↗ Pullbacks in an uptrend"], ["bounce", "🪃 Oversold bounces"], ["value", "💎 Value stocks turning up"]];
+      const opts = [["cup", "☕ Cup and handle breakouts"], ["momentum", "📈 Momentum above 200-DMA"], ["high52", "🏔 52-week high breakouts"], ["breakout", "🚀 Breakouts on volume"], ["pullback", "↘↗ Pullbacks in an uptrend"], ["bounce", "🪃 Oversold bounces"], ["value", "💎 Value stocks turning up"], ["golden", "✨ Golden crosses"]];
       const out = await window.ui.dialog({ title: "Alert me on new swing ideas", icon: "🔔", okText: "Save",
         bodyHtml: `<p class="hint">After each daily scan (after the close), new ideas of these setups go to your alerts, and to Telegram if it's connected (Alerts → 📱 Phone alerts). One alert per stock and setup every 10 days.</p>
           <label class="ui-opt"><input type="checkbox" name="on"${A.on ? " checked" : ""}><span><b>Idea alerts on</b></span></label>

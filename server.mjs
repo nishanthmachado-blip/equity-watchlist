@@ -45,7 +45,8 @@ import { moneyMapData, buildMoneyMap } from "./moneymap.mjs";
 import { peopleOf, settleUp, sanitizeSettlement, DEFAULT_MODES, CATEGORIES as EXP_CATEGORIES, PLAN_TYPES, MONTH_RE, sanitizeEntry as sanitizeSpend, sanitizePlanLine, sanitizeIncome, newMonth, toTemplate, parsePlanPaste, parseLogPaste, monthSummary, yearReport, toCsv as expensesCsv, guessCategory } from "./expenses.mjs";
 import { parseMfapi, seriesStats, barsToSeries, reviewFunds, fundIdeas, diffFundAlerts, portfolioChurn } from "./mfreview.mjs";
 import { sanitizeThemePlan, parseThemePaste, themePlanView, diffThemeAlerts, themeDefaults, THEME_ICONS } from "./themeplan.mjs";
-import { backtestBars, summarize, perStock, sanitizeBacktest, BACKTEST_SETUPS, BACKTEST_EXITS } from "./backtest.mjs";
+import { backtestBars, summarize, perStock, sanitizeBacktest, BACKTEST_SETUPS, BACKTEST_EXITS, backtestAll, compareSetups, indexUpDays, entryTags } from "./backtest.mjs";
+import { marketRegime, openRisk, checkTrade, edgeReport, sanitizeDesk, DESK_DEFAULTS } from "./tradedesk.mjs";
 import { sanitizeTrail, applyTrail, trailChanges, TRAIL_RULES } from "./trailstop.mjs";
 import { PROFILES, STYLES, buildModel, assetMix } from "./model.mjs";
 import { SWING_DEFAULTS, setupFromIdea, parseTargets, parseBookPlan, parseAmount as parseSwingAmount, sanitizePosition, sanitizeWatch, parseDipText, DIP_ALIASES, applyBuy, applySell, reopenTrade, parseSheet, evaluateSwing, diffSwingAlerts, moveCash, scorecard, swingTaxRows, bookedSummary, sanitizeTaxPayment, editHeldBuy, editSale, editSoldBuy, tradeDate, setLots, buildLedger, mergePositions, dedupePositions, SETUPS, MISTAKES, sanitizeReview, journalStats, sellTaxEstimate, lotsForSale, ltExemptionLeft, lotsOf, CHARGE_DEFAULTS } from "./swing.mjs";
@@ -814,6 +815,82 @@ async function backtestView() {
   const j = btJobs.get(currentUser().id) || null, last = await readJson(backtestFile(), null);
   return { job: j ? { running: j.running, done: j.done, total: j.total, params: j.params, error: j.error || null } : null, last, setups: BACKTEST_SETUPS, exits: BACKTEST_EXITS };
 }
+// ---- Trade desk (tradedesk.mjs): market regime, open risk, a size check for the next trade, your edge from broker trades,
+// and every swing setup backtested side by side. Everything on the page comes from saved data; only "Test all setups"
+// fetches price history, as a background job per user.
+const deskFile = () => userFile("desk.json"), deskCompareFile = () => userFile("desk-compare.json");
+const deskJobs = new Map(); // userId -> { running, done, total, params }
+async function deskSettings() {
+  const [d, sw] = await Promise.all([readJson(deskFile(), {}), readJson(swingFile(), {})]);
+  return { ...DESK_DEFAULTS, riskPct: sw.settings?.riskPct ?? DESK_DEFAULTS.riskPct, target: sw.settings?.incomeTarget || DESK_DEFAULTS.target, positionsFrom: "auto", ...(d.settings || {}) };
+}
+// Closed swing trades of every year on file (Swing book rows) and the current year's book (for open positions)
+async function deskClosed() {
+  const fys = (await pnlPage(null).catch(() => ({ fys: [] }))).fys || [];
+  const [cur, ...books] = await Promise.all([swingBookPage(null).catch(() => null), ...fys.map(f => swingBookPage(f).catch(() => null))]);
+  const seen = new Set(), closed = [];
+  for (const b of [cur, ...books]) for (const c of b?.closed || []) { const k = c.sellDay ? c.k : `${b.fy}|${c.k}`; if (seen.has(k)) continue; seen.add(k); closed.push({ ...c, k }); }
+  return { closed, book: cur };
+}
+async function deskRegime() {
+  const cache = await readJson(swingScanFile, { snaps: {} });
+  return marketRegime({ nifty: (cache.nifty?.bars || []).map(b => b.c), snaps: Object.values(cache.snaps || {}).map(e => e.s).filter(Boolean), asOf: (t => (t && !Number.isNaN(new Date(t).getTime()) ? new Date(t).toISOString() : null))(cache.lastRun || cache.nifty?.at), indexName: "Nifty" });
+}
+async function deskContext() {
+  const [settings, { closed, book }, regime, fundamentals, sw, stocks] = await Promise.all([deskSettings(), deskClosed(), deskRegime(), readFundamentals(), readJson(swingFile(), {}), readWatchlist()]);
+  const wl = new Map(stocks.map(x => [symOf(x), x]));
+  const priceOf = sym => { const k = String(sym || "").toUpperCase(); return livePriceCache.get(`NSE:${k}`)?.price ?? quoteCache.get(`NSE:${k}`)?.price ?? wl.get(k)?.price ?? null; };
+  const stops = new Map((sw.positions || []).filter(p => p.stopLoss > 0).map(p => [p.symbol, p.stopLoss]));
+  const journal = (sw.positions || []).map(p => ({ symbol: p.symbol, name: p.name, qty: p.qty, avg: p.avgPrice, price: priceOf(p.symbol), stop: p.stopLoss ?? null }));
+  const brokers = (book?.open || []).map(o => ({ symbol: o.symbol, name: o.name || o.symbol, qty: o.qty, avg: o.avg, price: o.price ?? priceOf(o.symbol), stop: stops.get(o.symbol) ?? null, account: o.accountLabel }));
+  const source = settings.positionsFrom === "brokers" && brokers.length ? "brokers" : settings.positionsFrom === "journal" && journal.length ? "journal" : journal.length ? "journal" : brokers.length ? "brokers" : "journal";
+  const sectorOf = sym => fundamentals[sym]?.sector || wl.get(sym)?.sector || null;
+  const risk = openRisk({ positions: source === "brokers" ? brokers : journal, settings, cash: Number.isFinite(sw.cash?.balance) ? sw.cash.balance : null, sectorOf });
+  return { settings, closed, book, regime, risk: { ...risk, source, counts: { journal: journal.length, brokers: brokers.length } }, sectorOf };
+}
+async function deskView() {
+  const c = await deskContext(), cmp = await readJson(deskCompareFile(), null), j = deskJobs.get(currentUser().id) || null;
+  const edge = edgeReport(c.closed, { tags: cmp?.tags || {}, target: c.settings.target, today: istDay() });
+  return { settings: c.settings, regime: c.regime, risk: c.risk, edge, hasBroker: !!c.book?.hasBroker,
+    compare: { job: j ? { running: j.running, done: j.done, total: j.total, params: j.params, error: j.error || null } : null, last: cmp ? { ...cmp, tags: undefined } : null, exits: BACKTEST_EXITS } };
+}
+async function deskCheck(body) {
+  const c = await deskContext(), symbol = String(body.symbol || "").trim().toUpperCase().replace(/^NSE:/, "");
+  const cache = symbol ? await readJson(swingScanFile, { snaps: {} }) : null, snap = cache?.snaps?.[symbol]?.s || null;
+  let eventSoon = null;
+  if (symbol) { try { const ce = await Promise.race([corpEvents(), new Promise(r => setTimeout(() => r(null), 1500))]); const e = ce && eventsFor(symbol, { events: ce.events || [], actions: ce.actions || [], today: istDay(), pastDays: 0, aheadDays: 10 }).find(x => x.kind === "results" || x.kind === "board-dividend"); if (e) eventSoon = `${e.label || "Results"} ${e.days === 0 ? "today" : e.days === 1 ? "tomorrow" : `in ${e.days} days`} (${e.date}): the price can gap past your stop.`; } catch { /* events are optional */ } }
+  return { ...checkTrade(body, { settings: c.settings, risk: c.risk, regime: c.regime, snap, sector: symbol ? c.sectorOf(symbol) : null, eventSoon }), sector: symbol ? c.sectorOf(symbol) : null, hasChart: !!snap, capital: c.risk.capital };
+}
+function startDeskCompare(params) {
+  const uid = currentUser().id, job = deskJobs.get(uid);
+  if (job?.running) return job;
+  const p = sanitizeBacktest({ ...params, setup: "high52" }), j = { running: true, done: 0, total: 0, startedAt: Date.now(), params: { exit: p.exit, maxDays: p.maxDays, costPct: p.costPct } };
+  deskJobs.set(uid, j);
+  (async () => {
+    const [{ closed }, list] = await Promise.all([deskClosed(), backtestUniverse()]);
+    const inList = new Set(list.map(x => x.symbol)), mine = closed.filter(c => c.buyDay && /^[A-Z0-9&-]{1,20}$/.test(c.symbol || ""));
+    const extra = [...new Set(mine.map(c => c.symbol))].filter(x => !inList.has(x)).slice(0, 60).map(symbol => ({ symbol, name: symbol, exchange: "NSE", tagOnly: true }));
+    j.total = list.length + extra.length + 1;
+    const nifty = await backtestBarsFor({ symbol: "NIFTYBEES", exchange: "NSE" }).catch(() => ({ bars: [] })); j.done++;
+    const upDays = nifty.bars.length >= 250 ? indexUpDays(nifty.bars) : null;
+    const res = {}, tags = {}, skipped = [], spans = []; let tested = 0;
+    for (const x of [...list, ...extra]) {
+      try {
+        const v = await backtestBarsFor(x);
+        if (!x.tagOnly) {
+          if (v.bars.length < 300) skipped.push({ symbol: x.symbol, why: v.bars.length ? `only ${v.bars.length} days of prices` : "no price history" });
+          else { const r = backtestAll(v.bars, p, nifty.bars); for (const [k, o] of Object.entries(r)) (res[k] ||= []).push(...o.trades.map(t => ({ ...t, symbol: x.symbol }))); tested++; spans.push(istDay(new Date(v.bars[0].t * 1000)), istDay(new Date(v.bars.at(-1).t * 1000))); }
+        }
+        const own = mine.filter(c => c.symbol === x.symbol); if (own.length && v.bars.length >= 80) Object.assign(tags, entryTags(own, v.bars, upDays));
+      } catch (e) { if (!x.tagOnly) skipped.push({ symbol: x.symbol, why: String(e.message).slice(0, 80) }); }
+      j.done++; await new Promise(r => setTimeout(r, BACKTEST_GAP_MS));
+    }
+    spans.sort();
+    await writeJson(deskCompareFile(), { at: new Date().toISOString(), params: j.params, exitLabel: BACKTEST_EXITS[p.exit], stocks: list.length, tested, skipped, from: spans[0] || null, to: spans.at(-1) || null, niftyOk: !!upDays,
+      rows: compareSetups(res, { upDays }), tags, tagged: Object.keys(tags).length, myTrades: mine.length });
+  })().catch(e => { j.error = e.message; console.error(`[desk] ${e.message}`); }).finally(() => { j.running = false; j.endedAt = Date.now(); });
+  return j;
+}
 // ---- Long-term plan by theme (themeplan.mjs): your Growth / Dividends / Others stocks and when to buy them in bulk ----
 const themePlanFile = () => userFile("theme-plan.json");
 const themeTrackAt = new Map(); // userId -> last time missing stocks were queued for valuation
@@ -1141,12 +1218,47 @@ function clean(text) { return String(text || "").replace(/<[^>]*>/g, "").replace
 async function readHistory() { try { return JSON.parse(await fs.readFile(U.historyFile, "utf8")); } catch { return { changes: [], priceSeries: {} }; } }
 async function writeHistory(history) { await fs.mkdir(path.dirname(U.historyFile), { recursive: true }); await fs.writeFile(U.historyFile, JSON.stringify(history, null, 2)); }
 // One Zerodha login: stocks (get_holdings) and mutual funds (get_mf_holdings, Coin) stored together, keyed by Kite user id.
+// Zerodha's OAuth page sends the browser back to /api/kite/callback?code=&state=. The slot that started the login owns
+// the state. Runs for the signed-in user; when the sign-in was done in a private window (the way to connect a second
+// Zerodha account, since Zerodha reuses the account the browser is already logged in to) there is no app session, and
+// the owner is found by the state among all accounts: the state is random, single-use and expires in 15 minutes.
+async function kiteOAuthCallback(url) {
+  const code = url.searchParams.get("code"), state = url.searchParams.get("state"), err = url.searchParams.get("error_description") || url.searchParams.get("error");
+  if (err) return { ok: false, msg: `Zerodha said: ${err}` };
+  let owner = null, label = null; if (code && state) for (const sl of await kiteSlotList()) { const c = await kiteFor(sl.id); if (await c.ownsState(state)) { owner = c; label = sl.label; break; } }
+  if (!owner) return { ok: false, stale: true, msg: "This login link is stale or was not started from this app. Press Log in again." };
+  try { await owner.finishOAuth({ code, state }); return { ok: true, msg: `Zerodha is connected for "${label}". Go back to the app and press Sync holdings on that card.` }; }
+  catch (e) { return { ok: false, msg: e.message }; }
+}
+const kiteCallbackPage = ({ ok, msg }) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${ok ? "Connected" : "Login failed"}</title><body style="font:15px system-ui;margin:40px;max-width:560px"><h2>${ok ? "✓ Connected" : "Login did not finish"}</h2><p>${msg.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</p><p>You can close this tab and return to the Integrations tab.</p></body>`;
+// Who a Zerodha slot is. The hosted server's grouped tools may not name the user: then the account already synced on
+// this slot is reused (so holdings are replaced, never doubled), and a first sync is named after the slot.
+async function kiteIdentity(kc, slotId, { guess = true } = {}) {
+  const p = await kc.profile(); if (p?.userId) return p;
+  const store = await readJson(U.kiteHoldingsFile, { accounts: {} });
+  const prev = Object.entries(store.accounts || {}).find(([, a]) => brokerOf(a) === "zerodha" && !isImportedAcct(a) && (a.slot || "main") === slotId);
+  if (prev) return { userId: prev[0], name: prev[1].name || null, assumed: true };
+  return guess ? { userId: `ZERODHA-${slotId === "main" ? "1" : slotId}`.toUpperCase(), name: null, assumed: true } : null;
+}
 async function syncKiteSlot(kc, slotId, slotLabel, label) {
-  const profile = await kc.profile(); if (!profile) throw new Error("Kite did not return a user id for this login.");
+  const profile = await kiteIdentity(kc, slotId);
   const holdings = await kc.holdings();
+  // Zerodha's sign-in page reuses the account the browser is logged in to, so two cards can end up on one login. Checked
+  // against what the other cards are signed in to right now (not against older synced data, which may be stale).
+  const finger = hs => (hs || []).map(h => `${h.symbol}:${h.qty}:${h.avgPrice}`).sort().join("|"), mine = finger(holdings);
+  for (const sl of await kiteSlotList()) {
+    if (sl.id === slotId) continue;
+    const oc = await kiteFor(sl.id); if (!oc.config.enabled || !(await oc.hasSession())) continue;
+    let same = false;
+    try { const op = await oc.profile(); same = op?.userId && !profile.assumed ? op.userId === profile.userId : holdings.length > 0 && finger(await oc.holdings()) === mine; }
+    catch { continue; } // that card is not logged in or cannot be reached: it is not on this login
+    if (same) throw Object.assign(new Error(`This card and "${sl.label}" are signed in to the same Zerodha account, so nothing was synced. Pick the card that should hold the other account, press Disconnect on it, press Log in there, and open the sign-in link in a private (incognito) window (or log out of Kite in this browser first). Then sync both cards.`), { sameAccount: true });
+  }
   let mf = null, mfError = null;
   try { mf = await kc.mfHoldings(); } catch (e) { if (e.loginRequired) throw e; mfError = String(e.message || e).slice(0, 200); }
   const store = await readJson(U.kiteHoldingsFile, { accounts: {} }); store.accounts ||= {};
+  // an older copy of these same holdings saved under another card (synced while that card was on this login) is dropped
+  if (mine) for (const [id, a] of Object.entries(store.accounts)) if (id !== profile.userId && brokerOf(a) === "zerodha" && !isImportedAcct(a) && (a.slot || "main") !== slotId && finger(a.holdings) === mine) delete store.accounts[id];
   const prev = store.accounts[profile.userId] || {};
   store.accounts[profile.userId] = { ...prev, broker: "zerodha", slot: slotId, clientId: profile.userId, label: String(label || "").trim().slice(0, 60) || prev.label || (slotId !== "main" ? slotLabel : null) || profile.name || profile.userId, name: profile.name, syncedAt: new Date().toISOString(), holdings,
     ...(mf ? { mf, mfSyncedAt: new Date().toISOString(), mfError: null } : { mfError }) };
@@ -1370,7 +1482,7 @@ async function captureBrokerTrades({ dhanFrom = null } = {}) {
   for (const slot of await kiteSlotList()) {
     const kc = await kiteFor(slot.id); if (!kc.config.enabled || !(await kc.hasSession())) continue;
     try {
-      const prof = await kc.profile(); if (!prof?.userId) continue;
+      const prof = await kiteIdentity(kc, slot.id, { guess: false }); if (!prof?.userId) continue; // trades need the real account id
       const t = (await kc.trades()).map(x => { const isin = isinOf.get(x.symbol) || null; return { ...x, isin, key: isin || x.key, account: prof.userId }; });
       got.push(...t); res.kite.push({ account: prof.userId, rows: t.length });
     } catch (e) { res.kite.push({ slot: slot.id, error: e.loginRequired ? "Zerodha login needed today (Integrations → Log in)" : String(e.message).slice(0, 120) }); }
@@ -4053,16 +4165,7 @@ async function appHandler(req, res, url) {
     if (url.pathname.startsWith("/api/kite/")) {
       const op = url.pathname.slice("/api/kite/".length);
       const fail = e => reply(res, e.loginRequired ? 401 : 502, { message: e.message, loginRequired: !!e.loginRequired });
-      if (op === "callback" && req.method === "GET") {
-        // Zerodha's OAuth page sends the browser back here with ?code=&state=; the slot that started the login owns the state.
-        const code = url.searchParams.get("code"), state = url.searchParams.get("state"), err = url.searchParams.get("error_description") || url.searchParams.get("error");
-        const page = (ok, msg) => reply(res, ok ? 200 : 400, `<!doctype html><meta charset="utf-8"><title>${ok ? "Connected" : "Login failed"}</title><body style="font:15px system-ui;margin:40px;max-width:560px"><h2>${ok ? "✓ Connected" : "Login did not finish"}</h2><p>${msg.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</p><p>You can close this tab and return to the Integrations tab.</p></body>`, "text/html; charset=utf-8");
-        if (err) return page(false, `Zerodha said: ${err}`);
-        let owner = null; if (code && state) for (const sl of await kiteSlotList()) { const c = await kiteFor(sl.id); if (await c.ownsState(state)) { owner = c; break; } }
-        if (!owner) return page(false, "This login link is stale or was not started from this app. Press Log in again.");
-        try { await owner.finishOAuth({ code, state }); return page(true, "Zerodha is connected. Press Sync holdings in the Zerodha card."); }
-        catch (e) { return page(false, e.message); }
-      }
+      if (op === "callback" && req.method === "GET") { const out = await kiteOAuthCallback(url); return reply(res, out.ok ? 200 : 400, kiteCallbackPage(out), "text/html; charset=utf-8"); }
       if (op === "slots" && req.method === "GET") {
         const list = await kiteSlotList();
         const slots = await Promise.all(list.map(async sl => { const c = await kiteFor(sl.id); return { ...sl, removable: sl.id !== "main", ...(await c.status()) }; }));
@@ -4205,6 +4308,21 @@ async function appHandler(req, res, url) {
           await writeJson(muhuratFile(), st);
         });
         return reply(res, 200, { ...(await muhuratPage()), notice });
+      } catch (e) { return reply(res, 400, { message: e.message }); }
+    }
+    if (url.pathname === "/api/desk" || url.pathname.startsWith("/api/desk/")) {
+      const op = url.pathname.slice("/api/desk".length).replace(/^\//, "");
+      try {
+        if (req.method === "GET" && !op) return reply(res, 200, await deskView());
+        if (req.method !== "POST") return reply(res, 404, { message: "Unknown trade desk operation." });
+        const b = await readBody(req);
+        if (op === "settings") {
+          await withUserLock(async () => { const d = await readJson(deskFile(), {}), cur = await deskSettings(); const next = sanitizeDesk(b, cur); if (["auto", "journal", "brokers"].includes(b.positionsFrom)) next.positionsFrom = b.positionsFrom; await writeJson(deskFile(), { ...d, settings: next }); });
+          return reply(res, 200, await deskView());
+        }
+        if (op === "check") return reply(res, 200, await deskCheck(b));
+        if (op === "compare") { startDeskCompare(b); return reply(res, 200, await deskView()); }
+        return reply(res, 404, { message: "Unknown trade desk operation." });
       } catch (e) { return reply(res, 400, { message: e.message }); }
     }
     if (url.pathname.startsWith("/api/swingbook")) {
@@ -4510,8 +4628,8 @@ async function appHandler(req, res, url) {
           notice = `Recorded ${done.length} buy${done.length === 1 ? "" : "s"}: ${done.join(", ")}.${b.keep ? " Their dip levels stay on the list." : ""}`;
         }
         else if (op === "idea-alerts") { // alerts (and Telegram) when the daily scan finds a new idea of these setups
-          const ok = new Set(["cup", "momentum", "high52", "breakout", "pullback", "bounce", "value"]);
-          st.ideaAlerts = { on: !!b.on, setups: (Array.isArray(b.setups) ? b.setups : ["cup", "momentum"]).filter(x => ok.has(x)).slice(0, 7), minScore: Math.max(40, Math.min(90, Number(b.minScore) || 60)), seen: st.ideaAlerts?.seen || {} };
+          const ok = new Set(["cup", "momentum", "high52", "breakout", "pullback", "bounce", "value", "golden"]);
+          st.ideaAlerts = { on: !!b.on, setups: (Array.isArray(b.setups) ? b.setups : ["cup", "momentum"]).filter(x => ok.has(x)).slice(0, 8), minScore: Math.max(40, Math.min(90, Number(b.minScore) || 60)), seen: st.ideaAlerts?.seen || {} };
           notice = st.ideaAlerts.on ? "You'll get an alert when the daily scan finds a new idea of these setups." : "Idea alerts off.";
         }
         else if (op === "settings") {
@@ -5548,6 +5666,13 @@ const server = http.createServer(async (req, res) => {
       if (p === "/sw.js") res.setHeader("Service-Worker-Allowed", "/");
       if (user && (p === "/login" || p === "/login.html")) { res.writeHead(302, { Location: "/" }); return res.end(); }
       return serveFile(res, p === "/login" ? "login.html" : p.slice(1), req);
+    }
+    if (!user && p === "/api/kite/callback" && req.method === "GET" && url.searchParams.get("state")) {
+      // sign-in finished in a private window: find which account's Zerodha card started it
+      let out = null;
+      for (const u of auth.listUsers()) { const r = await asUser(u, () => kiteOAuthCallback(url)).catch(e => ({ ok: false, msg: e.message })); if (!r.stale) { out = r; break; } }
+      out ||= { ok: false, msg: "This login link is stale or was not started from this app. Press Log in again." };
+      return reply(res, out.ok ? 200 : 400, kiteCallbackPage(out), "text/html; charset=utf-8");
     }
     if (!user) {
       if (p.startsWith("/api/")) return reply(res, 401, { message: "Please sign in.", authRequired: true, signIn: true });

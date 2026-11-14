@@ -30,6 +30,7 @@
       <button id="viewReview" class="viewTab" data-goto="review" title="Holdings clean-up"><span class="ico" aria-hidden="true">🧹</span><span class="lbl">Holdings clean-up</span></button>
       <button id="viewSwing" class="viewTab" title="Swing trading"><span class="ico" aria-hidden="true">⚡</span><span class="lbl">Swing trading</span></button>
       <button id="viewMuhurat" class="viewTab" data-goto="muhurat" title="Diwali Muhurat picks: held for the long run, CAGR year by year"><span class="ico" aria-hidden="true">🪔</span><span class="lbl">Muhurat picks</span></button>
+      <button id="viewDesk" class="viewTab" data-goto="desk" title="Trade desk: market regime, risk, position size, your edge, setup backtests"><span class="ico" aria-hidden="true">🎯</span><span class="lbl">Trade desk</span></button>
       <button id="viewSwingBook" class="viewTab" data-goto="swingbook" title="Swing book: from your brokers' records"><span class="ico" aria-hidden="true">📗</span><span class="lbl">Swing book (brokers)</span></button>
       <button id="viewReturns" class="viewTab" data-goto="returns" title="Returns vs index"><span class="ico" aria-hidden="true">📈</span><span class="lbl">Returns vs index</span></button>
       <button id="viewEvents" class="viewTab" data-goto="events" title="Results &amp; dividends calendar"><span class="ico" aria-hidden="true">📅</span><span class="lbl">Results &amp; dividends</span></button>
@@ -202,7 +203,7 @@
       <section class="table-wrap"><table class="sw-table sw-watch"><thead><tr><th>Stock</th><th class="num">LTP</th><th class="num">Buy below</th><th class="num">Distance</th><th class="num">Amount</th><th>Signal</th><th></th></tr></thead><tbody id="swWatchRows"></tbody></table></section>
       <section class="report-card sw-ideas" id="swIdeasBox">
         <div class="nw-head"><h3>💡 Swing ideas <span class="hint">new setups from daily charts</span></h3><span class="hint" id="swIdeasStatus"></span></div>
-        <div class="toolbar sw-ideas-tools"><label class="hint">Setup <select class="ui-input" id="swIdeasSetup"><option value="">All setups</option><option value="cup">☕ Cup and handle</option><option value="momentum">📈 Momentum above 200-DMA</option><option value="high52">🏔 52-week high breakout (above 200-DMA)</option><option value="pullback">↘↗ Pullback in an uptrend</option><option value="breakout">🚀 Breakout on volume</option><option value="bounce">🪃 Oversold bounce</option><option value="value">💎 Value stock turning up</option></select></label>
+        <div class="toolbar sw-ideas-tools"><label class="hint">Setup <select class="ui-input" id="swIdeasSetup"><option value="">All setups</option><option value="cup">☕ Cup and handle</option><option value="momentum">📈 Momentum above 200-DMA</option><option value="high52">🏔 52-week high breakout (above 200-DMA)</option><option value="pullback">↘↗ Pullback in an uptrend</option><option value="breakout">🚀 Breakout on volume</option><option value="bounce">🪃 Oversold bounce</option><option value="value">💎 Value stock turning up</option><option value="golden">✨ Golden cross</option></select></label>
           <label class="hint">From <select class="ui-input" id="swIdeasSrc"><option value="">Market + my lists</option><option value="mine">Only my watchlists</option></select></label>
           <button type="button" class="ghost" id="swIdeasScan">⟳ Scan now</button><button type="button" class="ghost" id="swIdeasAlert">🔔 Alert me</button></div>
         <div id="swIdeas" class="sw-ideas-grid"></div>
@@ -247,6 +248,10 @@
     <section id="mhView" data-feature-view="muhurat" hidden>
       <section class="toolbar"><span class="hint">The stocks you buy each Diwali in the Muhurat session, kept for 10–20 years: what each year's picks are worth now and how fast they compound.</span><button type="button" class="ghost" id="mhReload">⟳ Refresh</button></section>
       <div id="mhBody"><p class="hint">Loading…</p></div>
+    </section>
+    <section id="dkView" data-feature-view="desk" hidden>
+      <section class="toolbar"><span class="hint">Before a trade: is the market helping, how much is already at risk, how big may this one be. After: what your own trades and the setups' history say.</span><button type="button" class="ghost" id="dkReload">⟳ Refresh</button></section>
+      <div id="dkBody"><p class="hint">Loading…</p></div>
     </section>
     <section id="sbView" data-feature-view="swingbook" hidden>
       <section class="toolbar"><span class="hint">Your swing trades exactly as your brokers report them: imported tax P&L and tradebooks, the daily pick-up and trades you add. The old Swing trading journal stays as it is and isn't used here.</span><button type="button" class="ghost" id="sbReload">⟳ Refresh</button></section>

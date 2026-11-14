@@ -1,5 +1,60 @@
 # Equity Watchlist MVP
 
+## v5.76.0: Trade desk: market regime, risk guard, your edge from real trades, every setup backtested
+A new screen, **🎯 Trade desk** (side menu), with four tools for swing trading. Everything on the page is read from data the app already has; only "Test all setups" fetches price history, in the background.
+
+**🌦 Market regime: full size, half size, or stay in liquid funds**
+- Reads Nifty (NIFTYBEES) against its 200-day and 50-day averages, whether the 200-day average is rising, and breadth from the Swing ideas scan: the share of scanned stocks above their 50-day and 200-day averages, and how many sit near 1-year highs against lows.
+- Scores it (out of 8) into **Market is helping: full size**, **Mixed market: half size** or **Weak market: stay mostly in liquid funds**, with each check shown as a tick or a cross. Breadth is measured on the stocks the scan reads, not the whole market.
+
+**🛡 Risk on the table, and 🧮 Size the next trade**
+- *If every stop is hit today*: the loss across open swing positions as ₹ and % of your swing capital, against your limit; room left for new risk; positions without a stop-loss (counted as a 10% loss each and listed); the largest position and sector.
+- Positions come from your Swing trading journal (it has the stops), or from the brokers' records (shares bought in the last 12 months, stops looked up in the journal); one click switches.
+- **Size the next trade**: enter a stock, buy price, stop-loss and target. The size is the smallest of: your risk per trade (cut to half or a quarter in a mixed or weak market), the open-risk room left, the largest-position and largest-sector limits, and swing cash. It checks stop distance (and against the stock's average daily range), reward against risk (under 1 : 1 is refused), the 200-day trend, results due in the next 10 days, and whether you already hold it; the verdict is *Fits your rules*, *Fits, with warnings* or *Skip or resize*.
+- **⚙ Limits**: swing capital, risk per trade (default 1%), total open risk (6%), largest position (25%), largest sector (35%), loss assumed without a stop (10%), monthly target, and whether the market regime cuts size. Kept per login in `desk.json`.
+
+**📊 Your edge, from your brokers' records**
+- From every closed swing trade in the Swing book (all years): profit per trade (expectancy), win rate against the break-even win rate for your payoff, average win and loss, profit factor.
+- Plain findings: whether losses are too big for the win rate, how much of all losses the 3 biggest ones are, the best and worst holding period and trade size, repeat losers.
+- Tables by holding period and trade size; the stocks that paid and cost you most. After "Test all setups" also by **setup at entry** (was one of the scanner's setups on in the three days before you bought?), **trend at entry** (above the 200-day average or not) and **market at entry** (Nifty above its 200-day average or not).
+- **What ₹1 L a month after tax needs**: the pre-tax figure, what you booked a month over the last 12 months, and the number of trades or the trade size your own per-trade result would need. Sales without dates (Dhan) count in totals only.
+
+**🧪 Which setups have paid on your stocks**
+- One run tests all seven setups side by side on about 5 years of daily prices of the stocks you hold, trade and track: trades, win rate, average trade, profit factor, profit on ₹1 L a trade after costs and **after 20.8% tax** (per financial year), worst dip, and the results split by **Nifty above / below its 200-day average** on the entry day (the test of the regime rule). Verdicts: *Has paid* (30+ trades, profit factor 1.3+, more than 0.3% a trade), *Thin edge*, *Lost money*, *Too few trades*.
+- The momentum setup is now tested too (it needs Nifty's history, which the single-setup backtest did not pass in).
+- New setup **✨ Golden cross**: the 50-day average moved above the 200-day in the last 10 days, price above both, RSI above 50. It appears in Swing ideas (filter and alerts) after the next scan, and in both backtests.
+
+Notes: results are arithmetic on your own trades and public prices, not advice. The backtest uses today's list of stocks, so it flatters the past. Files: `tradedesk.mjs`, `public/desk.js`, additions to `backtest.mjs` / `swingideas.mjs`; API `/api/desk` (+ `settings`, `check`, `compare`). Tests: `test/v576-desk.test.mjs`. First page load is 898 KB of the 900 KB budget.
+
+## v5.75.6: Zerodha: the "same account" check looks at the cards' current logins, not at older synced data
+- Fix: Sync holdings could be refused with "This card is signed in to the same Zerodha account as …" because of data saved earlier (a card that was synced while it sat on the other login), even after the cards were on different logins.
+- The check now asks each other connected Zerodha card who it is signed in to right now (its Zerodha id, or its current holdings when Zerodha's server does not name the account). A card that is logged out or unreachable never blocks a sync.
+- When two cards really are on one login, neither syncs and the message names the other card and the fix (Disconnect one, Log in there through a private window).
+- An older copy of the same holdings saved under another card is removed on the next sync, so nothing is counted twice.
+
+## v5.75.5: Zerodha (Kite MCP): two accounts (yours and a family member's) can be connected again
+- Fix: the second Zerodha card always signed in to the first account. Zerodha's OAuth sign-in page reuses whichever Kite account the browser is already logged in to, so both cards ended up on the same login.
+- **Log in** on a card while another Zerodha card is connected no longer opens the page by itself. It shows **Copy sign-in link** with the steps: paste the link into a **private / incognito window** on the same computer and sign in with the other account (or log out at kite.zerodha.com first and open the link normally). The card turns to *Connected* by itself.
+- The return page (`/api/kite/callback`) now works from a private window, where there is no app sign-in: the card that started the login is found by the one-time OAuth state (random, single-use, 15 minutes). Nothing else in the app opens without a sign-in.
+- **Sync holdings** refuses a card that is signed in to the same Zerodha account as another card (same Zerodha id, or identical holdings when Zerodha's server does not name the account) and says how to fix it, so holdings are never counted twice. Press **Disconnect** on that card, then **Log in** again.
+- The return page names the card it connected ("Zerodha is connected for …").
+- Tests: `test/v5755-kite-private-window.test.mjs`, more cases in `test/v5754-kite-sync.test.mjs`.
+
+## v5.75.4: Zerodha (Kite MCP): Sync holdings works when the server does not name the account
+- Fix: after v5.75.3, Diagnose showed holdings (22 rows) and mutual funds (10 rows) reading fine, but **Sync holdings** failed (HTTP 502) because the server's session reply had no user id where the app looked ("profile: reply had no user id").
+- The app now looks for the user id anywhere in the reply, and tries each read-only profile / status action the server offers. If none names the user, the sync still goes through: the account already synced on that slot is reused (holdings are replaced, never doubled), and a first-time sync is named after the slot (`ZERODHA-1`) with your label.
+- The card says "Connected (Zerodha's server did not name the account)" in that case. Daily trade capture only runs for a slot whose real Zerodha id is known (from the server or an earlier sync), so trades never land under a made-up account.
+- **Diagnose**: when no user id is found it lists the field names of the reply (never the values), and for holdings it shows any extra fields in the reply (such as paging).
+- Tests: `test/v5754-kite-sync.test.mjs` (the whole Sync path against a fake grouped server).
+
+## v5.75.3: Zerodha (Kite MCP): works with the hosted server's new grouped tools
+- Fix: after the OAuth sign-in the card said `Unreachable: Kite MCP error -32602: unknown tool "get_profile"` and Log in said `unknown tool "login"`. The hosted server replaced its one-tool-per-job list (`get_profile`, `get_holdings`, `login`…) with 8 grouped tools: `alerts, gtt, help, market, mutual_funds, orders, portfolio, session`, each taking an action.
+- The app now reads the server's tool list and finds, for each of its read-only jobs, the tool and action to use (profile → `session`, holdings → `portfolio`, mutual funds → `mutual_funds`, prices / quotes / history → `market`, today's trades → `orders`). Old and self-hosted servers keep working with the old names.
+- Still read-only: only the actions listed in `KITE_OPS` can be chosen; anything that places, modifies, cancels, deletes or creates is refused, and `gtt` / `alerts` are never called.
+- **Log in** on a server with no `login` tool: says "Already signed in" when you are, and starts the Zerodha sign-in again when Zerodha has signed you out. To switch accounts, press Disconnect first.
+- **Diagnose** now shows which tool and action the app uses for each job, tests profile, holdings and mutual fund holdings, and prints the server's tool descriptions, argument lists and its `help` text (no account data), so a future change on Zerodha's side can be read straight from the screen.
+- Tests: `test/v5753-kite-grouped.test.mjs`.
+
 ## v5.75.2: Zerodha (Kite MCP) login works again: OAuth sign-in for the hosted server
 - Fix: **Log in** on a Zerodha card failed with `Login failed: Kite MCP HTTP 401: no bearer token`. The hosted Kite MCP server now wants an OAuth sign-in before it answers anything, and the app sent no token.
 - **Log in** now does it: when the server answers 401, the app finds the server's OAuth details, registers itself, and opens Zerodha's sign-in page (a new tab, plus a link if the tab is blocked). After you sign in the browser returns to `/api/kite/callback`, the card turns to *Connected*, and **Sync holdings** works as before.

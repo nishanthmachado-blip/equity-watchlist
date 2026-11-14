@@ -28,7 +28,7 @@ export const DEVICES = [
   pick("iPad Mini", "iPad Mini (768)"), pick("Galaxy Tab S9", "Galaxy Tab S9"), pick("iPhone 13 landscape", "iPhone 13 landscape"), pick("Pixel 7 landscape", "Pixel 7 landscape")
 ];
 // every screen in the side menu (setView names) and the tabs inside some of them
-export const VIEWS = ["home", "watchlist", "portfolio", "swing", "swingbook", "networth", "buckets", "fire", "expenses", "tax", "dividends", "muhurat", "mf", "us", "returns", "events",
+export const VIEWS = ["home", "watchlist", "portfolio", "swing", "swingbook", "desk", "networth", "buckets", "fire", "expenses", "tax", "dividends", "muhurat", "mf", "us", "returns", "events",
   "accumulate", "alerts", "integrations", "market", "indices", "lists", "favs", "orders", "review", "longterm", "fundreview", "decide", "opportunity", "model", "focus", "invest", "reports",
   "valuation", "plan", "picks", "growth", "thesis", "funds"];
 const TABS = { dividends: ['[data-dvtab="received"]'] };
